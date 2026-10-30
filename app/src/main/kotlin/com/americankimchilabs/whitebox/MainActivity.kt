@@ -1,0 +1,54 @@
+package com.americankimchilabs.whitebox
+
+import android.content.Intent
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import com.americankimchilabs.whitebox.recorder.AppGraph
+import com.americankimchilabs.whitebox.recorder.RecorderService
+import com.americankimchilabs.whitebox.recorder.SourceMode
+import com.americankimchilabs.whitebox.ui.WhiteBoxApp
+import com.americankimchilabs.whitebox.ui.WhiteBoxTheme
+
+/**
+ * Opening the app (re)starts the recorder service — also how a stopped package (fresh install, Force Stop) comes back.
+ *
+ *   adb shell am start --user 10 -n com.americankimchilabs.whitebox/.MainActivity --es source REPLAY
+ *
+ * `source` = LIVE (car) or REPLAY (scripted demo drive, restarted from the top each time).
+ */
+class MainActivity : ComponentActivity() {
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) startFrom(intent) // not again on a configuration change
+        setContent {
+            WhiteBoxTheme {
+                Surface(Modifier.fillMaxSize()) {
+                    val session by AppGraph.session.collectAsState()
+                    WhiteBoxApp(
+                        session,
+                        onSource = { RecorderService.start(this, it, restartReplay = it == SourceMode.REPLAY) },
+                        // Re-run the grant guard, so restored grants are written into the chain.
+                        onGrantsChanged = { RecorderService.start(this) },
+                    )
+                }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        startFrom(intent)
+    }
+
+    private fun startFrom(intent: Intent) {
+        val source = intent.getStringExtra(RecorderService.EXTRA_SOURCE)?.let(SourceMode::valueOf)
+        RecorderService.start(this, source, restartReplay = source == SourceMode.REPLAY)
+    }
+}

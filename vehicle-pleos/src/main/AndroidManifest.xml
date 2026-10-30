@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Exactly what the typed calls need. Never CONTROL_* or PRIVATE_*. -->
+    <!-- Brake, steering angle -->
+    <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />
+    <!-- Turn signal -->
+    <uses-permission android:name="pleos.car.permission.CAR_LIGHTS" />
+    <!-- Airbag deployed -->
+    <uses-permission android:name="pleos.car.permission.CAR_SAFETY" />
+
+    <!-- AAOS speed: dangerous, granted at runtime during first-run setup while parked. -->
+    <uses-permission android:name="android.car.permission.CAR_SPEED" />
+    <!-- AAOS gear (GEAR_SELECTION) and ignition state -->
+    <uses-permission android:name="android.car.permission.CAR_POWERTRAIN" />
+
+</manifest>

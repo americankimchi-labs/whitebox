@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Korean is the default locale (values/). -->
+<resources>
+    <string name="app_name">White Box</string>
+
+    <!-- Service -->
+    <string name="notification_channel">White Box 기록</string>
+    <string name="notification_title">White Box 기록 중</string>
+    <string name="starting">기록 서비스 시작 중…</string>
+
+    <!-- Status header -->
+    <string name="mode_live">실차</string>
+    <string name="mode_replay">데모 재생 중</string>
+    <string name="stat_speed">속도</string>
+    <string name="stat_gear">기어</string>
+    <string name="stat_brake">브레이크</string>
+    <string name="stat_turn">방향지시등</string>
+    <string name="stat_steering">조향</string>
+    <string name="speed_kmh">%1$.0f km/h</string>
+    <string name="none">–</string>
+
+    <string name="level_normal">정상 기록</string>
+    <string name="level_alert">급제동 감지</string>
+    <string name="level_triggered">사고 감지 · 봉인</string>
+
+    <string name="brake_on">밟음</string>
+    <string name="brake_off">뗌</string>
+    <string name="turn_left">좌측 점멸</string>
+    <string name="turn_right">우측 점멸</string>
+    <string name="turn_off">꺼짐</string>
+
+    <!-- Tabs and controls -->
+    <string name="tab_timeline">타임라인</string>
+    <string name="tab_capsules">캡슐 %1$d</string>
+    <string name="action_replay">데모 재생</string>
+    <string name="action_live">실차 기록</string>
+    <string name="no_capsules">봉인된 캡슐이 없습니다.</string>
+    <string name="capsule_final">최종 봉인</string>
+    <string name="capsule_provisional">임시 봉인 (정차 대기)</string>
+    <string name="capsule_meta">%1$s · 기록 #%2$d–#%3$d · %4$s</string>
+
+    <!-- Timeline rows -->
+    <string name="row_brake">브레이크 %1$s</string>
+    <string name="row_turn">방향지시등 %1$s</string>
+    <string name="row_gear">기어 %1$s</string>
+    <string name="row_airbag">에어백 전개 (%1$s)</string>
+    <string name="row_started">기록 시작</string>
+    <string name="row_started_gap">기록 시작 · %1$s %2$.1f초 공백</string>
+    <string name="row_stopped">기록 정상 종료</string>
+    <string name="row_degraded">권한 없음: %1$s (주차 중 재요청)</string>
+    <string name="row_restored">권한 복구: %1$s</string>
+    <string name="row_level">▶ %1$s</string>
+    <string name="row_trigger">■ %1$s · %2$+.1f km/h</string>
+    <string name="row_offered">보관 여부 확인 대기 중</string>
+    <string name="row_answered_keep">✓ 운전자가 보관을 선택</string>
+    <string name="row_answered_drop">운전자가 보관하지 않음</string>
+
+    <string name="gap_clean">정상 종료 후</string>
+    <string name="gap_power">전원 재시작 후</string>
+    <string name="gap_died">기록 프로세스 재시작 후</string>
+    <string name="gap_forced">재시작 없이 중단된 후</string>
+
+    <string name="perm_location">위치</string>
+    <string name="perm_background">백그라운드 위치</string>
+    <string name="perm_speed">차량 속도</string>
+    <string name="perm_notifications">알림</string>
+
+    <!-- Triggers -->
+    <string name="trigger_airbag">에어백 전개</string>
+    <string name="trigger_delta_v">급격한 속도 변화</string>
+    <string name="trigger_short_delta_v">급격한 속도 변화 (단시간)</string>
+    <string name="trigger_braked_spike">제동 중 충격</string>
+    <string name="trigger_rear_shove">정차·제동 중 후방 충격</string>
+    <string name="trigger_alert_resolved">급제동 후 정차 (보관 요청)</string>
+    <string name="trigger_manual">수동 보관</string>
+    <string name="window_300">300ms 창</string>
+    <string name="window_200">200ms 창</string>
+    <string name="window_120">120ms 이내</string>
+    <string name="window_shove">200ms 이내</string>
+
+    <!-- Incident prompt -->
+    <string name="incident_title">방금 상황을 보관할까요?</string>
+    <string name="incident_body">급제동 전후 기록을 봉인된 캡슐로 보관합니다. 보관하지 않으면 기록은 보관 기간이 지나면 자동 삭제됩니다.</string>
+    <string name="incident_keep">보관</string>
+    <string name="incident_drop">아니요</string>
+
+    <!-- Evidence packet -->
+    <string name="packet_title">증거 패킷</string>
+    <string name="packet_back">← 목록</string>
+    <string name="packet_verifying">검증 중…</string>
+    <string name="packet_verified">✓ 체인 검증됨 · 서명 유효 · 변조 없음</string>
+    <string name="packet_failed">✗ 검증 실패: %1$s</string>
+    <string name="packet_time">사건 시각</string>
+    <string name="packet_type">유형</string>
+    <string name="packet_location">위치</string>
+    <string name="packet_location_value">%1$.5f, %2$.5f (±%3$.0f m)</string>
+    <string name="packet_no_location">위치 기록 없음 (권한 미허용)</string>
+    <string name="packet_speed">속도</string>
+    <string name="packet_speed_transition">%1$.0f → %2$.0f km/h (ΔV %3$+.1f km/h · %4$s)</string>
+    <string name="packet_controls">조작 상태</string>
+    <string name="packet_controls_value">브레이크 %1$s · 방향지시등 %2$s · 기어 %3$s · 조향 %4$s</string>
+    <string name="packet_range">기록 범위</string>
+    <string name="packet_range_value">#%1$d–#%2$d · %3$d건 · 사건 전 최대 120초</string>
+    <string name="packet_seal">봉인</string>
+    <string name="packet_seal_final">최종 · %1$s</string>
+    <string name="packet_seal_provisional">임시 · %1$s</string>
+    <string name="packet_hash">체인 해시</string>
+    <string name="packet_key">기기 서명 키</string>
+    <string name="packet_qr">QR\n(폰 열람 링크)</string>
+    <string name="packet_trace">사건 전후 속도 (−10초 ~ +3초)</string>
+
+    <!-- First run -->
+    <string name="intro_title">White Box는 운전자의 조작을 기록합니다</string>
+    <string name="intro_what_title">무엇을 기록하나요</string>
+    <string name="intro_what">브레이크, 방향지시등, 조향각, 기어, 속도, 위치. 영상과 음성은 기록하지 않습니다.</string>
+    <string name="intro_where_title">어디에 보관되나요</string>
+    <string name="intro_where">기록 원본은 이 차량 안에 저장되며, 해시 체인과 기기 서명으로 위·변조를 막습니다.</string>
+    <string name="intro_whose_title">누구의 기록인가요</string>
+    <string name="intro_whose">운전자 본인의 증거입니다. 제조사나 보험사로 자동 전송되지 않으며, 공유 여부는 운전자가 정합니다.</string>
+    <string name="intro_start">시작하기</string>
+    <string name="setup_parked_only">설정은 주차(P) 상태에서만 진행할 수 있습니다.</string>
+    <string name="step_count">%1$d / %2$d</string>
+    <string name="step_speed_title">차량 속도</string>
+    <string name="step_speed_body">급제동과 충격을 감지하려면 차량 속도가 필요합니다.</string>
+    <string name="step_location_title">위치</string>
+    <string name="step_location_body">사건 장소와 블랙박스 영상과의 시간 맞춤(GPS 시각)에 사용합니다.</string>
+    <string name="step_background_title">위치 \'항상 허용\'</string>
+    <string name="step_background_body">앱을 열지 않아도 시동과 함께 기록이 시작되려면 필요합니다. 다음 화면에서 \'항상 허용\'을 선택해 주세요.</string>
+    <string name="step_notifications_title">알림</string>
+    <string name="step_notifications_body">기록 중임을 알림 영역에 표시합니다.</string>
+    <string name="step_allow">허용</string>
+    <string name="step_skip">건너뛰기</string>
+    <string name="done_title">준비되었습니다</string>
+    <string name="done_body">이제 시동을 켜면 기록이 자동으로 시작됩니다. 허용하지 않은 항목은 기록에 \'권한 없음\'으로 남습니다.</string>
+    <string name="done_granted">✓ %1$s</string>
+    <string name="done_denied">✗ %1$s (나중에 주차 중 다시 허용 가능)</string>
+    <string name="done_finish">기록 시작</string>
+
+    <!-- Re-grant -->
+    <string name="regrant_banner">기록에 필요한 권한이 꺼져 있습니다: %1$s</string>
+    <string name="regrant_action">다시 허용</string>
+    <string name="regrant_later">나중에</string>
+</resources>

@@ -1,0 +1,115 @@
+package com.americankimchilabs.whitebox.data
+
+import com.americankimchilabs.whitebox.domain.CapsuleTrigger
+import com.americankimchilabs.whitebox.domain.ChainEntry
+import com.americankimchilabs.whitebox.domain.EscalationEvent
+import com.americankimchilabs.whitebox.domain.EscalationLevel
+import com.americankimchilabs.whitebox.domain.Gap
+import com.americankimchilabs.whitebox.domain.GapCause
+import com.americankimchilabs.whitebox.domain.GearPosition
+import com.americankimchilabs.whitebox.domain.IgnitionState
+import com.americankimchilabs.whitebox.domain.IncidentCapsule
+import com.americankimchilabs.whitebox.domain.LocationFix
+import com.americankimchilabs.whitebox.domain.RecorderEvent
+import com.americankimchilabs.whitebox.domain.RecorderPermission
+import com.americankimchilabs.whitebox.domain.SignalKind
+import com.americankimchilabs.whitebox.domain.SignalSample
+import com.americankimchilabs.whitebox.domain.StartReason
+import com.americankimchilabs.whitebox.domain.TelltaleState
+import com.americankimchilabs.whitebox.domain.Timestamp
+import com.americankimchilabs.whitebox.domain.TurnSignalState
+import com.americankimchilabs.whitebox.domain.VehicleSignal
+
+/**
+ * Canonical text form of a [ChainEntry]: what the hash covers is exactly what is stored, byte for byte.
+ * Fields are '|'-separated, never contain tab or newline (the store's separators), and decode back to an equal entry.
+ * Floats use Kotlin's shortest round-trip form.
+ */
+object EntryCodec {
+
+    fun encode(e: ChainEntry): String = when (e) {
+        is ChainEntry.Signal -> listOf("S", e.sample.signal.kind.name, value(e.sample.signal), ts(e.at), e.sample.sourceElapsedNanos ?: "-")
+        is ChainEntry.Location -> with(e.fix) { listOf("L", latitude, longitude, accuracyMeters ?: "-", gpsTimeMillis, ts(e.at)) }
+        is ChainEntry.Recorder -> listOf("R", ts(e.at)) + recorder(e.event)
+        is ChainEntry.Escalation -> listOf("E", ts(e.at)) + when (val v = e.event) {
+            is EscalationEvent.LevelChanged -> listOf("LEVEL", v.level, v.causeSeq)
+            is EscalationEvent.Triggered -> listOf("TRIGGER", v.trigger, v.causeSeq, v.measuredKmh)
+            is EscalationEvent.IncidentOffered -> with(v.capsule) { listOf("OFFER", id, trigger, firstSeq, lastSeq) }
+            is EscalationEvent.IncidentAnswered -> listOf("ANSWER", v.capsuleId, v.keep)
+        }
+    }.joinToString("|") { clean(it.toString()) }
+
+    fun decode(s: String): ChainEntry {
+        val f = s.split("|")
+        return when (f[0]) {
+            "S" -> ChainEntry.Signal(
+                SignalSample(signal(SignalKind.valueOf(f[1]), f[2]), ts(f[3]), f[4].takeIf { it != "-" }?.toLong()),
+            )
+            "L" -> ChainEntry.Location(
+                LocationFix(f[1].toDouble(), f[2].toDouble(), f[3].takeIf { it != "-" }?.toFloat(), f[4].toLong(), ts(f[5])),
+            )
+            "R" -> ChainEntry.Recorder(recorder(f.drop(2)), ts(f[1]))
+            "E" -> ChainEntry.Escalation(
+                when (f[2]) {
+                    "LEVEL" -> EscalationEvent.LevelChanged(EscalationLevel.valueOf(f[3]), f[4].toLong())
+                    "TRIGGER" -> EscalationEvent.Triggered(CapsuleTrigger.valueOf(f[3]), f[4].toLong(), f[5].toFloat())
+                    "OFFER" -> EscalationEvent.IncidentOffered(IncidentCapsule(f[3], CapsuleTrigger.valueOf(f[4]), f[5].toLong(), f[6].toLong()))
+                    "ANSWER" -> EscalationEvent.IncidentAnswered(f[3], f[4].toBooleanStrict())
+                    else -> error("unknown escalation ${f[2]}")
+                },
+                ts(f[1]),
+            )
+            else -> error("unknown entry type ${f[0]}")
+        }
+    }
+
+    private fun ts(t: Timestamp) = "${t.elapsedNanos};${t.wallMillis}"
+
+    private fun ts(s: String) = s.split(";").let { Timestamp(it[0].toLong(), it[1].toLong()) }
+
+    private fun clean(s: String) = s.replace('|', '_').replace('\t', ' ').replace('\n', ' ')
+
+    private fun value(s: VehicleSignal): String = when (s) {
+        is VehicleSignal.BrakePedal -> s.pressed.toString()
+        is VehicleSignal.TurnSignal -> s.state.name
+        is VehicleSignal.SteeringAngle -> s.degrees.toString()
+        is VehicleSignal.Gear -> s.position.name
+        is VehicleSignal.Speed -> s.metersPerSecond.toString()
+        is VehicleSignal.Ignition -> s.state.name
+        is VehicleSignal.AirbagDeployed -> "${clean(s.seat).replace(';', '_')};${s.deployed}"
+        is VehicleSignal.Telltale -> "${clean(s.name).replace(';', '_')};${s.state.name}"
+    }
+
+    private fun signal(kind: SignalKind, v: String): VehicleSignal = when (kind) {
+        SignalKind.BRAKE_PEDAL -> VehicleSignal.BrakePedal(v.toBooleanStrict())
+        SignalKind.TURN_SIGNAL -> VehicleSignal.TurnSignal(TurnSignalState.valueOf(v))
+        SignalKind.STEERING_ANGLE -> VehicleSignal.SteeringAngle(v.toFloat())
+        SignalKind.GEAR -> VehicleSignal.Gear(GearPosition.valueOf(v))
+        SignalKind.SPEED -> VehicleSignal.Speed(v.toFloat())
+        SignalKind.IGNITION -> VehicleSignal.Ignition(IgnitionState.valueOf(v))
+        SignalKind.AIRBAG -> v.split(";").let { VehicleSignal.AirbagDeployed(it[0], it[1].toBooleanStrict()) }
+        SignalKind.TELLTALE -> v.split(";").let { VehicleSignal.Telltale(it[0], TelltaleState.valueOf(it[1])) }
+    }
+
+    private fun recorder(e: RecorderEvent): List<Any> = when (e) {
+        is RecorderEvent.RecordingStarted -> listOf("STARTED", e.reason, e.restartCount) + (
+            e.gap?.let { listOf(it.cause, it.fromWallMillis, it.untilWallMillis, it.durationMillis, it.acrossBoots) }
+                ?: listOf("-")
+            )
+        RecorderEvent.RecordingStopped -> listOf("STOPPED")
+        is RecorderEvent.PermissionDegraded -> listOf("DEGRADED", e.permission)
+        is RecorderEvent.PermissionRestored -> listOf("RESTORED", e.permission)
+    }
+
+    private fun recorder(f: List<String>): RecorderEvent = when (f[0]) {
+        "STARTED" -> RecorderEvent.RecordingStarted(
+            StartReason.valueOf(f[1]),
+            gap = if (f[3] == "-") null else Gap(GapCause.valueOf(f[3]), f[4].toLong(), f[5].toLong(), f[6].toLong(), f[7].toBooleanStrict()),
+            restartCount = f[2].toInt(),
+        )
+        "STOPPED" -> RecorderEvent.RecordingStopped
+        "DEGRADED" -> RecorderEvent.PermissionDegraded(RecorderPermission.valueOf(f[1]))
+        "RESTORED" -> RecorderEvent.PermissionRestored(RecorderPermission.valueOf(f[1]))
+        else -> error("unknown recorder event ${f[0]}")
+    }
+}

@@ -1,0 +1,37 @@
+# macOS
+.DS_Store
+
+# Gradle / build output
+.gradle/
+build/
+**/build/
+.kotlin/
+captures/
+.cxx/
+.externalNativeBuild/
+*.apk.tmp
+output-metadata.json
+
+# Local machine config
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Signing material — never commit
+*.keystore
+*.jks
+keystore.properties
+
+# Read-only vendor reference (Pleos sample apps)
+vendor/
+
+# Local tool state
+.claude/
+
+# Logs
+*.log
+# ...except the recorded evidence chains kept as artifacts (docs/artifacts/README.md)
+!docs/artifacts/**/*.log
