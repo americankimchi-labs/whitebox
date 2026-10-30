@@ -6,8 +6,8 @@
         android:required="true" />
 
     <!-- Vehicle permissions are declared in :vehicle-pleos and merged in. -->
-    <!-- Platform location (Pleos FusedLocation not open yet). Runtime grants at first run, parked; background location
-         lets the location-type service start from boot. -->
+    <!-- Platform location (fallback behind the same port as the Pleos FusedLocation SDK). Runtime grants at first run,
+         parked; background location lets the location-type service start from boot. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />

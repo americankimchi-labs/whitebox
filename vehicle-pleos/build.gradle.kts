@@ -26,6 +26,10 @@ dependencies {
     implementation(project(":vehicle-core"))
     // implementation, not api: Pleos classes must not leak onto :app's compile classpath.
     implementation(libs.vehicle.sdk)
+    implementation(libs.navihelper.sdk)
+    implementation(libs.stt.sdk)
+    implementation(libs.tts.sdk)
+    implementation(libs.fusedlocation.sdk)
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
 }

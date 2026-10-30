@@ -1,5 +1,6 @@
 package com.americankimchilabs.whitebox.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -160,6 +161,8 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
         }
         val shown = open
         if (shown != null) {
+            // Back (touch or the CCP Back key) leaves the packet first; only the top screen hides the app.
+            BackHandler { open = null }
             EvidencePacket(labels, shown, session, onBack = { open = null })
             return@Column
         }

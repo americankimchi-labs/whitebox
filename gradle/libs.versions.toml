@@ -3,6 +3,10 @@ agp = "8.8.2"
 kotlin = "2.0.0"
 # Pinned: 2.3.1 (the vendor sample's pin) does not exist in the Pleos repo. See research-notes §1, R8.
 vehicleSdk = "2.3.2"
+naviHelperSdk = "3.0.5"
+sttSdk = "3.3.1"
+ttsSdk = "3.3.1"
+fusedLocationSdk = "1.1.3"
 coroutines = "1.8.1"
 coreKtx = "1.16.0"
 lifecycle = "2.9.0"
@@ -12,6 +16,10 @@ junit = "4.13.2"
 
 [libraries]
 vehicle-sdk = { module = "ai.pleos.playground:Vehicle", version.ref = "vehicleSdk" }
+navihelper-sdk = { module = "ai.pleos.playground:NaviHelper", version.ref = "naviHelperSdk" }
+stt-sdk = { module = "ai.pleos.playground:SpeechToText", version.ref = "sttSdk" }
+tts-sdk = { module = "ai.pleos.playground:TextToSpeech", version.ref = "ttsSdk" }
+fusedlocation-sdk = { module = "ai.pleos.playground:FusedLocation", version.ref = "fusedLocationSdk" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }

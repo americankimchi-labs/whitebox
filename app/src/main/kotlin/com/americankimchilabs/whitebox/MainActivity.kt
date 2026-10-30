@@ -3,6 +3,7 @@ package com.americankimchilabs.whitebox
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
@@ -27,6 +28,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) startFrom(intent) // not again on a configuration change
+        // Pleos review rule: Back (incl. the CCP Back key) on the top screen hides the app instead of finishing it.
+        // Screens above the top one (the evidence packet) register their own handler, which takes precedence.
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                moveTaskToBack(true)
+            }
+        })
         setContent {
             WhiteBoxTheme {
                 Surface(Modifier.fillMaxSize()) {
