@@ -38,6 +38,7 @@ import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.EscalationEvent
 import com.americankimchilabs.whitebox.domain.EscalationLevel
 import com.americankimchilabs.whitebox.domain.LocationFix
+import com.americankimchilabs.whitebox.domain.MeasureUnit
 import com.americankimchilabs.whitebox.domain.VehicleSignal
 import com.americankimchilabs.whitebox.recorder.ActiveSession
 import kotlinx.coroutines.Dispatchers
@@ -61,7 +62,9 @@ private class Packet(
 private fun buildPacket(seal: CapsuleSeal, session: ActiveSession): Packet {
     val events = session.store.read(seal.capsule.firstSeq, seal.capsule.lastSeq)
     val escalations = events.mapNotNull { (it.entry as? ChainEntry.Escalation)?.event }
-    val triggered = escalations.filterIsInstance<EscalationEvent.Triggered>().firstOrNull()
+    // The trigger that names the capsule (a crash escalates a near-miss capsule), else its first.
+    val triggers = escalations.filterIsInstance<EscalationEvent.Triggered>()
+    val triggered = triggers.lastOrNull { it.trigger == seal.capsule.trigger } ?: triggers.firstOrNull()
     val causeSeq = triggered?.causeSeq
         ?: escalations.filterIsInstance<EscalationEvent.LevelChanged>().firstOrNull { it.level == EscalationLevel.ALERT }?.causeSeq
         ?: seal.capsule.lastSeq
@@ -78,7 +81,7 @@ private fun buildPacket(seal: CapsuleSeal, session: ActiveSession): Packet {
     return Packet(
         causeWallMillis = upToCause.last().entry.at.wallMillis,
         triggered = triggered,
-        speedBefore = if (after != null && triggered != null) after - triggered.measuredKmh else null,
+        speedBefore = if (after != null && triggered?.trigger?.unit == MeasureUnit.DELTA_KMH) after - triggered.measured else null,
         speedAfter = after,
         state = state,
         location = upToCause.mapNotNull { (it.entry as? ChainEntry.Location)?.fix }.lastOrNull(),
@@ -112,7 +115,7 @@ fun EvidencePacket(labels: Labels, seal: CapsuleSeal, session: ActiveSession, on
                     if (p.triggered != null && p.speedBefore != null && p.speedAfter != null) {
                         stringResource(
                             R.string.packet_speed_transition,
-                            p.speedBefore, p.speedAfter, p.triggered.measuredKmh,
+                            p.speedBefore, p.speedAfter, p.triggered.measured,
                             labels.window(p.triggered.trigger) ?: "",
                         )
                     } else {

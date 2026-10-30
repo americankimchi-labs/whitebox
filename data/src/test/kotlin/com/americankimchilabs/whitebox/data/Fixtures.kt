@@ -2,6 +2,9 @@ package com.americankimchilabs.whitebox.data
 
 import com.americankimchilabs.whitebox.core.MirrorStore
 import com.americankimchilabs.whitebox.domain.ChainEntry
+import com.americankimchilabs.whitebox.domain.CruiseState
+import com.americankimchilabs.whitebox.domain.Lamp
+import com.americankimchilabs.whitebox.domain.RoadContextType
 import com.americankimchilabs.whitebox.domain.DriveEvent
 import com.americankimchilabs.whitebox.domain.Gap
 import com.americankimchilabs.whitebox.domain.GapCause
@@ -70,11 +73,30 @@ fun everyEntryShape(): List<ChainEntry> = listOf(
         ts(14),
     ),
     ChainEntry.Escalation(com.americankimchilabs.whitebox.domain.EscalationEvent.IncidentAnswered("I7", false), ts(15)),
+) + contextSignals().mapIndexed { i, s -> ChainEntry.Signal(SignalSample(s, ts(16L + i))) }
+
+/** Every context and reserved signal kind, including labels with separator characters the codec must neutralise. */
+fun contextSignals(): List<VehicleSignal> = listOf(
+    VehicleSignal.CruiseControl(CruiseState.ACTIVATED),
+    VehicleSignal.CruiseTargetSpeed(13.8889f),
+    VehicleSignal.Odometer(12345.6f),
+    VehicleSignal.Door("ROW_1_LEFT", true),
+    VehicleSignal.SeatBelt("ROW_1_RIGHT", false),
+    VehicleSignal.SeatOccupancy("ROW_2_LEFT", true),
+    VehicleSignal.Light(Lamp.HIGH_BEAM, true),
+    VehicleSignal.Wiper("FRONT_WINDSHIELD", "CONTINUOUS_LEVEL_1"),
+    VehicleSignal.Window("ROW_1_LEFT", 7),
+    VehicleSignal.ParkingBrake(true),
+    VehicleSignal.RoadContext(RoadContextType.SPEED_LIMIT, "50"),
+    VehicleSignal.RoadContext(RoadContextType.CAUTION_POINT, "SCHOOL_ZONE"),
+    VehicleSignal.AcceleratorPedal(42.5f),
+    VehicleSignal.BrakePressure(87.5f),
 )
 
-fun randomEntry(r: Random, ms: Long): ChainEntry = when (r.nextInt(4)) {
+fun randomEntry(r: Random, ms: Long): ChainEntry = when (r.nextInt(5)) {
     0 -> ChainEntry.Signal(SignalSample(VehicleSignal.Speed(r.nextFloat() * 30), ts(ms), sourceElapsedNanos = ms * 1_000_000 - 50))
     1 -> ChainEntry.Signal(SignalSample(VehicleSignal.BrakePedal(r.nextBoolean()), ts(ms)))
     2 -> ChainEntry.Signal(SignalSample(VehicleSignal.SteeringAngle(r.nextInt(-90, 90).toFloat()), ts(ms)))
+    3 -> ChainEntry.Signal(SignalSample(contextSignals().random(r), ts(ms)))
     else -> ChainEntry.Location(LocationFix(37 + r.nextDouble(), 127 + r.nextDouble(), 5f, 1_700_000_000_000 + ms, ts(ms)))
 }

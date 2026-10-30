@@ -36,6 +36,23 @@ class ChainTest {
     }
 
     @Test
+    fun separatorsInContextLabelsAreNeutralised() {
+        val dirty = "x|y;z\tw"
+        val signals = listOf(
+            com.americankimchilabs.whitebox.domain.VehicleSignal.Door(dirty, true),
+            com.americankimchilabs.whitebox.domain.VehicleSignal.Wiper(dirty, dirty),
+            com.americankimchilabs.whitebox.domain.VehicleSignal.RoadContext(com.americankimchilabs.whitebox.domain.RoadContextType.CAUTION_POINT, dirty),
+        )
+        for (s in signals) {
+            val encoded = EntryCodec.encode(com.americankimchilabs.whitebox.domain.ChainEntry.Signal(com.americankimchilabs.whitebox.domain.SignalSample(s, ts(1))))
+            val decoded = (EntryCodec.decode(encoded) as com.americankimchilabs.whitebox.domain.ChainEntry.Signal).sample.signal
+            assertEquals(s.kind, decoded.kind)
+            assertEquals(false, encoded.contains('\t'))
+            assertEquals(true, decoded.toString().contains("x_y_z w"))
+        }
+    }
+
+    @Test
     fun appendIsDurableAcrossInstances() {
         val dir = tmp.newFolder()
         val a = FileEventStore(dir)

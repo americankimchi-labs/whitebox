@@ -9,9 +9,33 @@ enum class SignalKind {
     IGNITION,
     AIRBAG,
     TELLTALE,
+    CRUISE_CONTROL,
+    CRUISE_TARGET_SPEED,
+    ODOMETER,
+    DOOR,
+    SEAT_BELT,
+    SEAT_OCCUPANCY,
+    LIGHT,
+    WIPER,
+    WINDOW,
+    PARKING_BRAKE,
+    ROAD_CONTEXT,
+
+    /** Reserved: no vehicle API exposes pedal position today; the kind exists so a future source plugs in unchanged. */
+    ACCELERATOR_PEDAL,
+
+    /** Reserved: the brake is reported as on/off only today. */
+    BRAKE_PRESSURE,
 }
 
 enum class TurnSignalState { OFF, LEFT, RIGHT }
+
+enum class CruiseState { OTHER, ENABLED, ACTIVATED, USER_OVERRIDE, SUSPENDED, FORCED_DEACTIVATION_WARNING, UNKNOWN }
+
+/** HAZARD is not readable by third-party apps today; kept so a future source needs no new kind. */
+enum class Lamp { LOW_BEAM, HIGH_BEAM, TAIL_LAMP, HAZARD }
+
+enum class RoadContextType { SPEED_LIMIT, CAUTION_POINT, ENFORCEMENT_CAMERA }
 
 enum class GearPosition { PARK, REVERSE, NEUTRAL, DRIVE, MANUAL, UNKNOWN }
 
@@ -56,6 +80,66 @@ sealed interface VehicleSignal {
     /** [name] is the telltale type as the vehicle names it, e.g. "ABS", "ESC". */
     data class Telltale(val name: String, val state: TelltaleState) : VehicleSignal {
         override val kind get() = SignalKind.TELLTALE
+    }
+
+    data class CruiseControl(val state: CruiseState) : VehicleSignal {
+        override val kind get() = SignalKind.CRUISE_CONTROL
+    }
+
+    data class CruiseTargetSpeed(val metersPerSecond: Float) : VehicleSignal {
+        override val kind get() = SignalKind.CRUISE_TARGET_SPEED
+    }
+
+    /** Total distance driven, in the unit the vehicle reports (not converted). */
+    data class Odometer(val distance: Float) : VehicleSignal {
+        override val kind get() = SignalKind.ODOMETER
+    }
+
+    /** [area] is an SDK-neutral label such as "ROW_1_LEFT". */
+    data class Door(val area: String, val open: Boolean) : VehicleSignal {
+        override val kind get() = SignalKind.DOOR
+    }
+
+    data class SeatBelt(val seat: String, val buckled: Boolean) : VehicleSignal {
+        override val kind get() = SignalKind.SEAT_BELT
+    }
+
+    data class SeatOccupancy(val seat: String, val occupied: Boolean) : VehicleSignal {
+        override val kind get() = SignalKind.SEAT_OCCUPANCY
+    }
+
+    data class Light(val lamp: Lamp, val on: Boolean) : VehicleSignal {
+        override val kind get() = SignalKind.LIGHT
+    }
+
+    /** [mode] is the wiper switch position as the vehicle names it, e.g. "OFF", "AUTO", "CONTINUOUS_LEVEL_1". */
+    data class Wiper(val area: String, val mode: String) : VehicleSignal {
+        override val kind get() = SignalKind.WIPER
+    }
+
+    /** [position] in the vehicle's own range for that window (see its capability bounds). */
+    data class Window(val area: String, val position: Int) : VehicleSignal {
+        override val kind get() = SignalKind.WINDOW
+    }
+
+    data class ParkingBrake(val engaged: Boolean) : VehicleSignal {
+        override val kind get() = SignalKind.PARKING_BRAKE
+    }
+
+    /**
+     * What the navigation knows about the road here: the speed limit in km/h ("0" when unknown), or the type of the
+     * caution point / enforcement camera ahead (e.g. "SCHOOL_ZONE"), "NONE" when it clears.
+     */
+    data class RoadContext(val type: RoadContextType, val value: String) : VehicleSignal {
+        override val kind get() = SignalKind.ROAD_CONTEXT
+    }
+
+    data class AcceleratorPedal(val percent: Float) : VehicleSignal {
+        override val kind get() = SignalKind.ACCELERATOR_PEDAL
+    }
+
+    data class BrakePressure(val percent: Float) : VehicleSignal {
+        override val kind get() = SignalKind.BRAKE_PRESSURE
     }
 }
 

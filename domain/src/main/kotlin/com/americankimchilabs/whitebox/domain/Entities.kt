@@ -41,13 +41,22 @@ enum class EscalationLevel { NORMAL, ALERT, TRIGGERED }
 sealed interface EscalationEvent {
     data class LevelChanged(val level: EscalationLevel, val causeSeq: Long) : EscalationEvent
 
-    /** [measuredKmh] is the speed change that met the condition (negative = drop). */
-    data class Triggered(val trigger: CapsuleTrigger, val causeSeq: Long, val measuredKmh: Float) : EscalationEvent
+    /**
+     * [measured] is the value that met the condition, in [CapsuleTrigger.unit]: the speed change for ΔV triggers
+     * (negative = drop), the speed for gear and parking-brake triggers, the steering rate, the press count.
+     */
+    data class Triggered(val trigger: CapsuleTrigger, val causeSeq: Long, val measured: Float) : EscalationEvent
 
-    /** The parked prompt "방금 상황을 보관할까요?" was queued; it survives process death because it is in the chain. */
+    /**
+     * The voice question "방금 상황을 보관할까요?" was asked about an already-sealed near-miss capsule (the car was still
+     * driving after it). Older chains used it for the parked prompt that sealed only on consent.
+     */
     data class IncidentOffered(val capsule: IncidentCapsule) : EscalationEvent
 
-    /** The driver's answer; [keep] seals the offered capsule. */
+    /**
+     * The driver's answer. The capsule stays sealed in the chain either way; [keep] = false releases it from the
+     * driver's library (no slot), and the answer becomes the capsule's label.
+     */
     data class IncidentAnswered(val capsuleId: String, val keep: Boolean) : EscalationEvent
 }
 
@@ -55,8 +64,8 @@ sealed interface EscalationEvent {
  * Why a capsule exists. Telltales are unreadable without PRIVATE_CAR_SAFETY, so there is no
  * telltale trigger.
  */
-enum class CapsuleTrigger(val severe: Boolean) {
-    AIRBAG(true),
+enum class CapsuleTrigger(val severe: Boolean, val unit: MeasureUnit = MeasureUnit.DELTA_KMH) {
+    AIRBAG(true, MeasureUnit.NONE),
 
     /** Primary: ΔV over the sliding 300 ms window. */
     DELTA_V(true),
@@ -70,11 +79,50 @@ enum class CapsuleTrigger(val severe: Boolean) {
     /** S3: speed increase while braked (struck from behind / 추돌). */
     REAR_SHOVE(true),
 
-    /** ALERT that ended in stillness without a trigger; sealed only if the driver agrees (parked prompt). */
+    /** Older chains only: ALERT that ended in stillness, sealed on the driver's consent. Superseded by [HARD_BRAKE]. */
     ALERT_RESOLVED(false),
 
-    MANUAL(false),
+    /** Voice or Gleo bookmark ("방금 저장해"). */
+    MANUAL(false, MeasureUnit.NONE),
+
+    // Near-miss and 급발진 patterns: kept without asking (see Tuning).
+
+    /** Brake on and slowing hard (the ALERT precursor). */
+    HARD_BRAKE(false),
+
+    /** Steering-wheel rate at speed above the evasive threshold. */
+    EVASIVE_STEER(false, MeasureUnit.DEG_PER_S),
+
+    /** Evasive steering with the brake on (the classic avoidance move). */
+    BRAKE_SWERVE(false, MeasureUnit.DEG_PER_S),
+
+    /** Gear to N while moving. */
+    SHIFT_TO_NEUTRAL(false, MeasureUnit.KMH),
+
+    /** Speed rising while the brake has been held. */
+    BRAKE_SPEED_RISE(false),
+
+    /**
+     * Brake held without slowing down. Indistinguishable from drag braking downhill on speed alone, so it needs a
+     * road-grade or motor-power signal before it may fire; not raised until one is available.
+     */
+    BRAKE_NO_DECEL(false),
+
+    /** Repeated brake presses while moving. */
+    BRAKE_PUMPING(false, MeasureUnit.COUNT),
+
+    /** Parking brake engaged while moving. */
+    PARKING_BRAKE_MOVING(false, MeasureUnit.KMH),
+
+    /** Sudden jump from standstill. */
+    LURCH(false),
+
+    /** A door opened while stopped shortly after a dangerous moment. */
+    POST_EVENT_EXIT(false, MeasureUnit.NONE),
 }
+
+/** What [EscalationEvent.Triggered.measured] holds: a speed change, the speed at the moment, a steering rate, a count. */
+enum class MeasureUnit { DELTA_KMH, KMH, DEG_PER_S, COUNT, NONE }
 
 /** A sealed excerpt of the event stream. Seq range is inclusive. */
 data class IncidentCapsule(

@@ -9,6 +9,7 @@ import com.americankimchilabs.whitebox.domain.EscalationEngine
 import com.americankimchilabs.whitebox.domain.EscalationEvent
 import com.americankimchilabs.whitebox.domain.EscalationLevel
 import com.americankimchilabs.whitebox.domain.IncidentCapsule
+import com.americankimchilabs.whitebox.domain.Tuning
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,10 +47,12 @@ class Recorder(
     private val _capsules = MutableStateFlow(seals.all())
     val capsules: StateFlow<List<CapsuleSeal>> = _capsules.asStateFlow()
 
-    private val _incident = MutableStateFlow(restorePendingIncident())
+    private val _incident = MutableStateFlow<IncidentCapsule?>(null)
+    private var incidentAskedNs = 0L
     /**
-     * ALERT ended in stillness: "방금 상황을 보관할까요?" waits here until answered (shown parked only). Offer and answer
-     * are chain records, so an unanswered offer is restored after process death.
+     * A sealed near-miss capsule whose car drove on: "방금 상황을 보관할까요?" is asked by voice and waits here until
+     * answered or until [Tuning.KEEP_ANSWER_WINDOW_S] passes. Silence keeps the capsule, so an offer is not carried
+     * across a process restart.
      */
     val pendingIncident: StateFlow<IncidentCapsule?> = _incident.asStateFlow()
 
@@ -60,39 +63,40 @@ class Recorder(
         for (output in engine.onEvent(event)) {
             when (output) {
                 is EngineOutput.Append -> append(ChainEntry.Escalation(output.event, clock.now()))
-                is EngineOutput.Seal -> seal(
-                    IncidentCapsule(output.capsuleId, output.trigger, output.firstSeq, store.head()!!.lastSeq),
-                    output.final,
-                )
+                is EngineOutput.Seal -> {
+                    // A crash signature inside the asked-about capsule: it is no longer the driver's to release.
+                    if (output.trigger.severe && _incident.value?.id == output.capsuleId) _incident.value = null
+                    seal(IncidentCapsule(output.capsuleId, output.trigger, output.firstSeq, store.head()!!.lastSeq), output.final)
+                }
                 is EngineOutput.IncidentPrompt -> {
                     append(ChainEntry.Escalation(EscalationEvent.IncidentOffered(output.capsule), clock.now()))
                     _incident.value = output.capsule
+                    incidentAskedNs = event.entry.at.elapsedNanos
                 }
             }
         }
+        expireIncident(event.entry.at.elapsedNanos)
         _level.value = engine.level
         event
     }
 
-    /** The driver's answer to the incident prompt. Declined incidents simply age out with the rolling stream. */
+    /**
+     * The driver's answer to the keep question. The capsule is already sealed and stays in the chain either way; the
+     * answer is recorded as its label ("아니" releases it from the driver's library).
+     */
     suspend fun answerIncident(keep: Boolean) = mutex.withLock {
+        expireIncident(clock.now().elapsedNanos)
         val capsule = _incident.value ?: return@withLock
         append(ChainEntry.Escalation(EscalationEvent.IncidentAnswered(capsule.id, keep), clock.now()))
         _incident.value = null
-        if (keep) seal(capsule, final = true)
     }
 
-    /** The last offer in the recent chain with no answer after it (≈ the last hour of records is scanned). */
-    private fun restorePendingIncident(): IncidentCapsule? {
-        val head = store.head() ?: return null
-        val recent = store.read(maxOf(0, head.lastSeq - RESTORE_SCAN), head.lastSeq)
-            .mapNotNull { (it.entry as? ChainEntry.Escalation)?.event }
-        val offer = recent.filterIsInstance<EscalationEvent.IncidentOffered>().lastOrNull() ?: return null
-        val answered = recent.filterIsInstance<EscalationEvent.IncidentAnswered>().any { it.capsuleId == offer.capsule.id }
-        return if (answered) null else offer.capsule
+    /** The answer window closed without an answer: silence, the capsule stays in the library. */
+    private fun expireIncident(nowNs: Long) {
+        if (_incident.value != null && nowNs - incidentAskedNs > Tuning.KEEP_ANSWER_WINDOW_S * 1_000_000_000L) _incident.value = null
     }
 
-    private fun append(entry: ChainEntry) = store.append(entry).also { _events.tryEmit(it) }
+        private fun append(entry: ChainEntry) = store.append(entry).also { _events.tryEmit(it) }
 
     private suspend fun seal(capsule: IncidentCapsule, final: Boolean) {
         val seal = CapsuleSeal.create(capsule, store.hashAt(capsule.lastSeq), final, clock.now().wallMillis, signer)
@@ -101,5 +105,3 @@ class Recorder(
         mirror.uploadSealManifest(capsule, seal.headHash)
     }
 }
-
-private const val RESTORE_SCAN = 50_000L

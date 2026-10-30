@@ -8,17 +8,25 @@ sealed interface EngineOutput {
     data class Append(val event: EscalationEvent) : EngineOutput
 
     /**
-     * Seal [capsuleId] from [firstSeq] up to the chain head at the moment of sealing. The first seal of a TRIGGERED
-     * capsule is provisional (durability first: the pre-window is sealed at once); the final one comes at stillness.
+     * Seal [capsuleId] from [firstSeq] up to the chain head at the moment of sealing. The first seal of a capsule is
+     * provisional (durability first: the pre-window is sealed at once); the final one comes when the capsule closes.
      */
     data class Seal(val capsuleId: String, val trigger: CapsuleTrigger, val firstSeq: Long, val final: Boolean) : EngineOutput
 
-    /** ALERT ended in stillness without a trigger: offer "방금 상황을 보관할까요?" (parked only); sealed on consent. */
+    /**
+     * A near-miss capsule (already sealed) whose car is still driving [Tuning.KEEP_PROMPT_DELAY_S] later: ask
+     * "방금 상황을 보관할까요?" by voice. The answer only labels the capsule; silence keeps it.
+     */
     data class IncidentPrompt(val capsule: IncidentCapsule) : EngineOutput
 }
 
 /**
  * NORMAL → ALERT → TRIGGERED (constants and rationale in [Tuning]).
+ *
+ * Every dangerous pattern opens a capsule at once, without asking: a near-miss pattern (non-severe trigger) raises
+ * ALERT, a crash signature (severe trigger) raises TRIGGERED. A severe trigger inside a near-miss capsule always
+ * counts and escalates it. Near-miss capsules close at stillness or [Tuning.CAPSULE_POST_WINDOW_S] after their last
+ * trigger; severe ones only at stillness (or [Tuning.CAPSULE_MAX_OPEN_S]).
  *
  * Pure and deterministic: fed the same chain it makes the same decisions, so a replay reproduces a capsule exactly.
  * All speed conditions use |speed| (AAOS reports reverse as negative) and the VHAL source timestamp when present.
@@ -27,21 +35,34 @@ class EscalationEngine {
 
     private class SpeedPoint(val tNs: Long, val kmh: Float, val seq: Long)
     private class Mark(val seq: Long, val tNs: Long)
-    private class OpenCapsule(val id: String, val trigger: CapsuleTrigger, val firstSeq: Long, val openedNs: Long, var lastTriggerNs: Long)
-    private class PendingIncident(val firstSeq: Long, val alertNs: Long, var lastSeq: Long)
+    private class OpenCapsule(val id: String, var trigger: CapsuleTrigger, val firstSeq: Long, val openedNs: Long, var lastTriggerNs: Long) {
+        var stoppedSinceOpen = false
+        var promptDecided = false
+    }
     private class SpikeCandidate(val seq: Long, val kmh: Float, val dropKmh: Float)
+    private class SteerPoint(val tNs: Long, val degrees: Float)
 
     var level = EscalationLevel.NORMAL
         private set
 
     private val speeds = ArrayDeque<SpeedPoint>()
     private val timeline = ArrayDeque<Mark>()
+    private var lastSpeedKmh: Float? = null
+    private var lastSpeedReceivedNs = 0L
     private var brakeOn = false
+    private var brakeOnSinceNs = 0L
     private var brakeReleasedNs: Long? = null
+    private val brakePresses = ArrayDeque<Long>()
+    private var riseFired = false
+    private var lurchFired = false
+    private var steer: SteerPoint? = null
+    private var steerOver = false
+    private var gear: GearPosition? = null
+    private var parkingBrake: Boolean? = null
+    private var lastDangerNs: Long? = null
     private var stillSinceNs: Long? = null
     private var calmSinceNs: Long? = null
     private var capsule: OpenCapsule? = null
-    private var incident: PendingIncident? = null
     private var spike: SpikeCandidate? = null
 
     fun onEvent(event: DriveEvent): List<EngineOutput> {
@@ -54,6 +75,8 @@ class EscalationEngine {
             // Never difference across a restart; across a boot the monotonic clock itself restarted.
             speeds.clear()
             spike = null
+            steer = null
+            lastSpeedKmh = null
             val gap = (entry.event as RecorderEvent.RecordingStarted).gap
             if (gap == null || gap.acrossBoots) timeline.clear()
         }
@@ -62,22 +85,82 @@ class EscalationEngine {
 
         if (entry is ChainEntry.Signal) {
             when (val s = entry.sample.signal) {
-                is VehicleSignal.BrakePedal -> {
-                    if (brakeOn && !s.pressed) brakeReleasedNs = nowNs
-                    brakeOn = s.pressed
-                }
+                is VehicleSignal.BrakePedal -> onBrake(s.pressed, event.seq, nowNs, out)
                 is VehicleSignal.AirbagDeployed -> if (s.deployed) trigger(CapsuleTrigger.AIRBAG, event.seq, 0f, nowNs, out)
                 is VehicleSignal.Speed -> onSpeed(event.seq, entry.sample, out)
+                is VehicleSignal.SteeringAngle -> onSteering(s.degrees, event.seq, entry.sample, out)
+                is VehicleSignal.Gear -> {
+                    val kmh = currentKmh(nowNs)
+                    if (s.position == GearPosition.NEUTRAL && gear != GearPosition.NEUTRAL && kmh != null && kmh >= Tuning.NEUTRAL_MIN_SPEED_KMH) {
+                        trigger(CapsuleTrigger.SHIFT_TO_NEUTRAL, event.seq, kmh, nowNs, out)
+                    }
+                    gear = s.position
+                }
+                is VehicleSignal.ParkingBrake -> {
+                    val kmh = currentKmh(nowNs)
+                    if (s.engaged && parkingBrake != true && kmh != null && kmh >= Tuning.PARKING_BRAKE_MIN_KMH) {
+                        trigger(CapsuleTrigger.PARKING_BRAKE_MOVING, event.seq, kmh, nowNs, out)
+                    }
+                    parkingBrake = s.engaged
+                }
+                is VehicleSignal.Door -> {
+                    val kmh = currentKmh(nowNs)
+                    val danger = lastDangerNs
+                    if (s.open && kmh != null && kmh < Tuning.STILL_SPEED_KMH && danger != null &&
+                        ms(nowNs - danger) <= Tuning.EXIT_DANGER_LOOKBACK_S * 1_000L
+                    ) {
+                        lastDangerNs = null // once per dangerous moment
+                        trigger(CapsuleTrigger.POST_EVENT_EXIT, event.seq, 0f, nowNs, out)
+                    }
+                }
                 else -> Unit
             }
         }
-        incident?.let { if (nowNs - it.alertNs <= Tuning.CAPSULE_MAX_OPEN_S * 1_000_000_000L) it.lastSeq = event.seq }
         return out
+    }
+
+    private fun onBrake(pressed: Boolean, seq: Long, nowNs: Long, out: MutableList<EngineOutput>) {
+        if (brakeOn && !pressed) brakeReleasedNs = nowNs
+        if (!brakeOn && pressed) {
+            brakeOnSinceNs = nowNs
+            riseFired = false
+            val kmh = currentKmh(nowNs)
+            if (kmh != null && kmh >= Tuning.BRAKE_PUMP_MIN_KMH) {
+                brakePresses.addLast(nowNs)
+                while (ms(nowNs - brakePresses.first()) > Tuning.BRAKE_PUMP_WINDOW_MS) brakePresses.removeFirst()
+                if (brakePresses.size >= Tuning.BRAKE_PUMP_COUNT) {
+                    val count = brakePresses.size
+                    brakePresses.clear()
+                    trigger(CapsuleTrigger.BRAKE_PUMPING, seq, count.toFloat(), nowNs, out)
+                }
+            }
+        }
+        brakeOn = pressed
+    }
+
+    private fun onSteering(degrees: Float, seq: Long, sample: SignalSample, out: MutableList<EngineOutput>) {
+        val tNs = sample.sourceElapsedNanos ?: sample.receivedAt.elapsedNanos
+        val prev = steer
+        if (prev != null && tNs > prev.tNs && ms(tNs - prev.tNs) < MIN_STEER_GAP_MS) return // too close to difference
+        steer = SteerPoint(tNs, degrees)
+        if (prev == null || tNs <= prev.tNs || ms(tNs - prev.tNs) > Tuning.STEER_MAX_SAMPLE_GAP_MS) {
+            steerOver = false
+            return
+        }
+        val rate = abs(degrees - prev.degrees) * 1_000_000_000f / (tNs - prev.tNs)
+        val wasOver = steerOver
+        steerOver = rate >= Tuning.STEER_RATE_DPS
+        val kmh = currentKmh(sample.receivedAt.elapsedNanos) ?: return
+        if (!steerOver || wasOver || kmh < Tuning.STEER_MIN_SPEED_KMH) return
+        val braking = brakeOn || brakeReleasedNs?.let { ms(sample.receivedAt.elapsedNanos - it) <= Tuning.SWERVE_BRAKE_WINDOW_MS } ?: false
+        trigger(if (braking) CapsuleTrigger.BRAKE_SWERVE else CapsuleTrigger.EVASIVE_STEER, seq, rate, sample.receivedAt.elapsedNanos, out)
     }
 
     private fun onSpeed(seq: Long, sample: SignalSample, out: MutableList<EngineOutput>) {
         val tNs = sample.sourceElapsedNanos ?: sample.receivedAt.elapsedNanos
         val kmh = abs((sample.signal as VehicleSignal.Speed).metersPerSecond) * 3.6f
+        lastSpeedKmh = kmh
+        lastSpeedReceivedNs = sample.receivedAt.elapsedNanos
         speeds.lastOrNull()?.let { last ->
             if (tNs <= last.tNs || ms(tNs - last.tNs) > Tuning.TRIGGER_MAX_SAMPLE_GAP_MS) {
                 speeds.clear()
@@ -86,16 +169,19 @@ class EscalationEngine {
         }
         val now = SpeedPoint(tNs, kmh, seq)
         speeds.addLast(now)
-        while (ms(tNs - speeds.first().tNs) > 1_000) speeds.removeFirst()
+        while (ms(tNs - speeds.first().tNs) > SPEED_HISTORY_MS) speeds.removeFirst()
 
         spike?.let { c ->
             spike = null
             if (kmh <= c.kmh + Tuning.TRIGGER_REBOUND_KMH) trigger(CapsuleTrigger.BRAKED_SPIKE, c.seq, -c.dropKmh, tNs, out)
         }
         evaluateTriggers(now, out)
-        if (level == EscalationLevel.NORMAL) evaluateAlert(now, out)
+        if (level == EscalationLevel.NORMAL) evaluateHardBrake(now, out)
+        evaluateBrakeRise(now, out)
+        evaluateLurch(now, out)
         if (level == EscalationLevel.ALERT) evaluateCalm(now, out)
-        evaluateStillness(now, out)
+        evaluateKeepPrompt(now, out)
+        evaluateClose(now, out)
     }
 
     private fun evaluateTriggers(now: SpeedPoint, out: MutableList<EngineOutput>) {
@@ -124,18 +210,52 @@ class EscalationEngine {
         }
     }
 
-    private fun evaluateAlert(now: SpeedPoint, out: MutableList<EngineOutput>) {
+    /** Brake on and slowing hard: the ALERT precursor, kept as a near-miss capsule. */
+    private fun evaluateHardBrake(now: SpeedPoint, out: MutableList<EngineOutput>) {
         if (!brakeOn) return
         val oldest = speeds.firstOrNull { ms(now.tNs - it.tNs) <= Tuning.ALERT_DECEL_WINDOW_MS } ?: return
         val spanMs = ms(now.tNs - oldest.tNs)
         if (spanMs < Tuning.ALERT_DECEL_WINDOW_MS * 3 / 5 || oldest.kmh < Tuning.ALERT_MIN_SPEED_KMH) return
         if ((oldest.kmh - now.kmh) * 1000f / spanMs < Tuning.ALERT_DECEL_KMHPS) return
-        setLevel(EscalationLevel.ALERT, now.seq, out)
-        calmSinceNs = null
-        if (incident == null) incident = PendingIncident(preWindowFirstSeq(), now.tNs, now.seq)
+        trigger(CapsuleTrigger.HARD_BRAKE, now.seq, now.kmh - oldest.kmh, now.tNs, out)
     }
 
-    /** ALERT drops back to NORMAL after calm driving; the incident stays pending until the next stillness. */
+    /**
+     * 급발진 signature: over the last [Tuning.BRAKE_RISE_HELD_MS] of a continuous brake hold, speed gained at least
+     * [Tuning.BRAKE_RISE_KMH] and rose in every second of it. Fires once per hold.
+     */
+    private fun evaluateBrakeRise(now: SpeedPoint, out: MutableList<EngineOutput>) {
+        if (!brakeOn || riseFired || ms(now.tNs - brakeOnSinceNs) < Tuning.BRAKE_RISE_HELD_MS) return
+        val seconds = Tuning.BRAKE_RISE_HELD_MS / 1_000
+        // Speed at each whole second back from now; the history must reach the start without a gap.
+        val marks = (seconds downTo 0).map { k ->
+            val target = now.tNs - k * 1_000_000_000L
+            speeds.lastOrNull { it.tNs <= target }?.takeIf { ms(target - it.tNs) <= SAMPLE_SLACK_MS } ?: return
+        }
+        if (marks.first().tNs < brakeOnSinceNs - SAMPLE_SLACK_MS * 1_000_000L) return
+        if (marks.zipWithNext().any { (a, b) -> b.kmh - a.kmh < Tuning.BRAKE_RISE_STEP_KMH }) return
+        val gain = now.kmh - marks.first().kmh
+        if (gain < Tuning.BRAKE_RISE_KMH) return
+        riseFired = true
+        trigger(CapsuleTrigger.BRAKE_SPEED_RISE, now.seq, gain, now.tNs, out)
+    }
+
+    /** From standstill (at least [Tuning.LURCH_STILL_MS]) to [Tuning.LURCH_KMH] within [Tuning.LURCH_WINDOW_MS]. */
+    private fun evaluateLurch(now: SpeedPoint, out: MutableList<EngineOutput>) {
+        if (now.kmh < Tuning.STILL_SPEED_KMH) {
+            lurchFired = false
+            return
+        }
+        if (lurchFired || now.kmh < Tuning.LURCH_KMH) return
+        val lastStill = speeds.lastOrNull { it.kmh < Tuning.STILL_SPEED_KMH && ms(now.tNs - it.tNs) <= Tuning.LURCH_WINDOW_MS } ?: return
+        val runStartNs = lastStill.tNs - Tuning.LURCH_STILL_MS * 1_000_000L
+        if (speeds.first().tNs > runStartNs + SAMPLE_SLACK_MS * 1_000_000L) return // history does not reach back
+        if (speeds.any { it.tNs in runStartNs..lastStill.tNs && it.kmh >= Tuning.STILL_SPEED_KMH }) return
+        lurchFired = true
+        trigger(CapsuleTrigger.LURCH, now.seq, now.kmh - lastStill.kmh, now.tNs, out)
+    }
+
+    /** ALERT drops back to NORMAL after calm driving; the near-miss capsule stays open until it closes. */
     private fun evaluateCalm(now: SpeedPoint, out: MutableList<EngineOutput>) {
         val calm = !brakeOn && now.kmh >= Tuning.STILL_SPEED_KMH
         calmSinceNs = if (calm) calmSinceNs ?: now.tNs else null
@@ -144,44 +264,60 @@ class EscalationEngine {
         }
     }
 
-    private fun evaluateStillness(now: SpeedPoint, out: MutableList<EngineOutput>) {
+    /** Asked once, [Tuning.KEEP_PROMPT_DELAY_S] after a near-miss, only if the car never stopped and is still driving. */
+    private fun evaluateKeepPrompt(now: SpeedPoint, out: MutableList<EngineOutput>) {
+        val open = capsule ?: return
+        if (open.promptDecided) return
+        if (now.kmh < Tuning.STILL_SPEED_KMH) open.stoppedSinceOpen = true
+        if (ms(now.tNs - open.openedNs) < Tuning.KEEP_PROMPT_DELAY_S * 1_000L) return
+        open.promptDecided = true
+        if (!open.trigger.severe && !open.stoppedSinceOpen && now.kmh >= Tuning.KEEP_PROMPT_MIN_KMH) {
+            out += EngineOutput.IncidentPrompt(IncidentCapsule(open.id, open.trigger, open.firstSeq, now.seq))
+        }
+    }
+
+    private fun evaluateClose(now: SpeedPoint, out: MutableList<EngineOutput>) {
         stillSinceNs = if (now.kmh < Tuning.STILL_SPEED_KMH) stillSinceNs ?: now.tNs else null
         val still = stillSinceNs?.let { ms(now.tNs - it) >= Tuning.CAPSULE_STILLNESS_CLOSE_S * 1_000L } ?: false
-        val open = capsule
-        if (open != null && (still || ms(now.tNs - open.openedNs) >= Tuning.CAPSULE_MAX_OPEN_S * 1_000L)) {
+        val open = capsule ?: return
+        val drovePast = !open.trigger.severe && ms(now.tNs - open.lastTriggerNs) >= Tuning.CAPSULE_POST_WINDOW_S * 1_000L
+        if (still || drovePast || ms(now.tNs - open.openedNs) >= Tuning.CAPSULE_MAX_OPEN_S * 1_000L) {
             setLevel(EscalationLevel.NORMAL, now.seq, out) // marker first, so the final seal covers it
             out += EngineOutput.Seal(open.id, open.trigger, open.firstSeq, final = true)
             capsule = null
-            incident = null
-        } else if (open == null && still) {
-            incident?.let {
-                out += EngineOutput.IncidentPrompt(IncidentCapsule("I${it.firstSeq}", CapsuleTrigger.ALERT_RESOLVED, it.firstSeq, it.lastSeq))
-                incident = null
-            }
-            if (level == EscalationLevel.ALERT) setLevel(EscalationLevel.NORMAL, now.seq, out)
         }
     }
 
     /**
      * A trigger opens a capsule. Inside an open capsule (chain collision, 연쇄 추돌) a later trigger is still recorded
-     * and re-sealed at once, after a refractory period so one impact's consecutive samples count once.
+     * and re-sealed at once, after a refractory period so one moment's consecutive samples count once; a severe
+     * trigger inside a near-miss capsule always counts and escalates it.
      */
-    private fun trigger(trigger: CapsuleTrigger, causeSeq: Long, measuredKmh: Float, nowNs: Long, out: MutableList<EngineOutput>) {
+    private fun trigger(trigger: CapsuleTrigger, causeSeq: Long, measured: Float, nowNs: Long, out: MutableList<EngineOutput>) {
+        if (trigger != CapsuleTrigger.POST_EVENT_EXIT) lastDangerNs = nowNs
+        val target = if (trigger.severe) EscalationLevel.TRIGGERED else EscalationLevel.ALERT
         capsule?.let { open ->
-            if (ms(nowNs - open.lastTriggerNs) < Tuning.TRIGGER_REFRACTORY_MS) return
+            val escalates = trigger.severe && !open.trigger.severe
+            if (!escalates && ms(nowNs - open.lastTriggerNs) < Tuning.TRIGGER_REFRACTORY_MS) return
             open.lastTriggerNs = nowNs
-            out += EngineOutput.Append(EscalationEvent.Triggered(trigger, causeSeq, measuredKmh))
+            if (escalates) open.trigger = trigger
+            raise(target, causeSeq, out)
+            out += EngineOutput.Append(EscalationEvent.Triggered(trigger, causeSeq, measured))
             out += EngineOutput.Seal(open.id, open.trigger, open.firstSeq, final = false)
             stillSinceNs = null
             return
         }
-        setLevel(EscalationLevel.TRIGGERED, causeSeq, out)
-        out += EngineOutput.Append(EscalationEvent.Triggered(trigger, causeSeq, measuredKmh))
-        val open = OpenCapsule("C$causeSeq", trigger, incident?.firstSeq ?: preWindowFirstSeq(), nowNs, nowNs)
+        raise(target, causeSeq, out)
+        out += EngineOutput.Append(EscalationEvent.Triggered(trigger, causeSeq, measured))
+        val open = OpenCapsule("C$causeSeq", trigger, preWindowFirstSeq(), nowNs, nowNs)
         capsule = open
-        incident = null
         stillSinceNs = null
         out += EngineOutput.Seal(open.id, trigger, open.firstSeq, final = false)
+    }
+
+    private fun raise(target: EscalationLevel, causeSeq: Long, out: MutableList<EngineOutput>) {
+        if (target > level) setLevel(target, causeSeq, out)
+        if (target == EscalationLevel.ALERT) calmSinceNs = null
     }
 
     private fun setLevel(next: EscalationLevel, causeSeq: Long, out: MutableList<EngineOutput>) {
@@ -189,6 +325,9 @@ class EscalationEngine {
         level = next
         out += EngineOutput.Append(EscalationEvent.LevelChanged(next, causeSeq))
     }
+
+    /** The last speed received within [Tuning.SPEED_STALE_MS], or null. */
+    private fun currentKmh(nowNs: Long) = lastSpeedKmh?.takeIf { ms(nowNs - lastSpeedReceivedNs) <= Tuning.SPEED_STALE_MS }
 
     private fun steadyBefore(base: SpeedPoint) = speeds
         .filter { it.tNs < base.tNs && ms(base.tNs - it.tNs) <= Tuning.TRIGGER_SHOVE_BASELINE_MS }
@@ -200,4 +339,15 @@ class EscalationEngine {
     private fun preWindowFirstSeq() = timeline.first().seq
 
     private fun ms(ns: Long) = ns / 1_000_000
+
+    private companion object {
+        /** Speed history kept for the brake-rise and lurch patterns (longest span plus slack). */
+        const val SPEED_HISTORY_MS = 3_500
+
+        /** Tolerance for one 10 Hz sampling step when checking that a history reaches back far enough. */
+        const val SAMPLE_SLACK_MS = 150
+
+        /** Steering samples closer than this are not differenced (rate would be noise). */
+        const val MIN_STEER_GAP_MS = 20
+    }
 }

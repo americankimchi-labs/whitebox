@@ -28,6 +28,7 @@ class EscalationEngineTest {
         fun signal(s: VehicleSignal) = feed(ChainEntry.Signal(SignalSample(s, at(t))))
         fun brake(on: Boolean) = signal(VehicleSignal.BrakePedal(on))
         fun speed(kmh: Float) = signal(VehicleSignal.Speed(kmh / 3.6f))
+        fun steer(degrees: Float) = signal(VehicleSignal.SteeringAngle(degrees))
 
         /** Samples every 100 ms from the current time for [ms], linearly from [from] to [to]. */
         fun ramp(ms: Long, from: Float, to: Float = from) {
@@ -48,6 +49,7 @@ class EscalationEngineTest {
         )
 
         val triggers get() = out.filterIsInstance<Append>().map { it.event }.filterIsInstance<EscalationEvent.Triggered>()
+        val severe get() = triggers.filter { it.trigger.severe }
         val levels get() = out.filterIsInstance<Append>().map { it.event }.filterIsInstance<EscalationEvent.LevelChanged>().map { it.level }
         val seals get() = out.filterIsInstance<Seal>()
         val prompts get() = out.filterIsInstance<IncidentPrompt>()
@@ -64,26 +66,26 @@ class EscalationEngineTest {
     }
 
     @Test
-    fun emergencyStopAt1gIsAlertThenIncidentPromptNoTrigger() {
+    fun emergencyStopAt1gIsANearMissCapsuleKeptWithoutAsking() {
         val tr = Trace()
         tr.ramp(130_000, 80f)
         tr.stop(80f, kmhPerSecond = 35f)
-        assertTrue(tr.triggers.isEmpty())
+        assertEquals(listOf(CapsuleTrigger.HARD_BRAKE), tr.triggers.map { it.trigger })
         assertEquals(listOf(EscalationLevel.ALERT, EscalationLevel.NORMAL), tr.levels)
-        val prompt = tr.prompts.single().capsule
-        assertEquals(CapsuleTrigger.ALERT_RESOLVED, prompt.trigger)
+        assertEquals(listOf(false, true), tr.seals.map { it.final })
         // ALERT fires at 130.3 s (the first sample with a 300 ms span of 35 km/h/s), so the pre-window starts at 10.3 s.
-        assertEquals(tr.seqAt[10_300], prompt.firstSeq)
+        assertTrue(tr.seals.all { it.firstSeq == tr.seqAt[10_300] && it.trigger == CapsuleTrigger.HARD_BRAKE })
+        assertTrue(tr.prompts.isEmpty()) // the car stopped: nothing to ask while driving
         assertEquals(EscalationLevel.NORMAL, tr.engine.level)
     }
 
     @Test
-    fun maxBrakingAt42KmhPerSecondNeverTriggers() {
+    fun maxBrakingAt42KmhPerSecondNeverTriggersACrash() {
         val tr = Trace()
         tr.ramp(5_000, 100f)
         tr.stop(100f, kmhPerSecond = 42f)
-        assertTrue(tr.triggers.isEmpty())
-        assertEquals(1, tr.prompts.size)
+        assertTrue(tr.severe.isEmpty())
+        assertEquals(listOf(CapsuleTrigger.HARD_BRAKE), tr.triggers.map { it.trigger })
     }
 
     @Test
@@ -95,9 +97,9 @@ class EscalationEngineTest {
         tr.step(35f) // 25 km/h in 100 ms
         tr.ramp(2_000, 35f, 0f)
         tr.ramp(11_000, 0f)
-        val trig = tr.triggers.single()
+        val trig = tr.severe.single()
         assertEquals(CapsuleTrigger.DELTA_V, trig.trigger)
-        assertEquals(-25f, trig.measuredKmh, 0.01f)
+        assertEquals(-25f, trig.measured, 0.01f)
         assertEquals(listOf(false, true), tr.seals.map { it.final })
         assertTrue(tr.seals.all { it.firstSeq == tr.seqAt[10_100] })
         assertEquals(EscalationLevel.NORMAL, tr.engine.level)
@@ -122,7 +124,7 @@ class EscalationEngineTest {
         tr.step(40f)
         tr.step(31f) // 9 km/h in 100 ms
         tr.step(31f)
-        assertEquals(listOf(CapsuleTrigger.BRAKED_SPIKE), tr.triggers.map { it.trigger })
+        assertEquals(listOf(CapsuleTrigger.BRAKED_SPIKE), tr.severe.map { it.trigger })
     }
 
     @Test
@@ -133,7 +135,7 @@ class EscalationEngineTest {
         tr.step(40f)
         tr.step(31f)
         tr.step(38f)
-        assertTrue(tr.triggers.isEmpty())
+        assertTrue(tr.severe.isEmpty())
     }
 
     @Test
@@ -164,7 +166,7 @@ class EscalationEngineTest {
         tr.step(0f)
         tr.step(7f)
         assertEquals(CapsuleTrigger.REAR_SHOVE, tr.triggers.single().trigger)
-        assertEquals(7f, tr.triggers.single().measuredKmh, 0.01f)
+        assertEquals(7f, tr.triggers.single().measured, 0.01f)
     }
 
     @Test
@@ -237,17 +239,212 @@ class EscalationEngineTest {
     }
 
     @Test
-    fun alertClearsAfterCalmDrivingButThePromptWaitsForStillness() {
+    fun hardBrakeThenDrivingOnAsksOnceAfterFiveSecondsAndClosesAfterThePostWindow() {
         val tr = Trace()
         tr.ramp(3_000, 60f)
         tr.brake(true)
-        tr.ramp(600, 60f, 45f) // 25 km/h/s → ALERT
+        tr.ramp(600, 60f, 45f) // 25 km/h/s → ALERT + near-miss capsule
         tr.brake(false)
-        tr.ramp(6_000, 45f) // calm → NORMAL
-        assertEquals(listOf(EscalationLevel.ALERT, EscalationLevel.NORMAL), tr.levels)
+        tr.ramp(4_000, 45f)
         assertTrue(tr.prompts.isEmpty())
-        tr.ramp(3_000, 45f, 0f)
-        tr.ramp(11_000, 0f)
+        tr.ramp(2_000, 45f) // calm → NORMAL; 5 s after the trigger, still driving → asked
+        assertEquals(listOf(EscalationLevel.ALERT, EscalationLevel.NORMAL), tr.levels)
+        val asked = tr.prompts.single().capsule
+        assertEquals(CapsuleTrigger.HARD_BRAKE, asked.trigger)
+        assertEquals(asked.id, tr.seals.single().capsuleId) // already sealed before asking
+        tr.ramp(30_000, 45f)
         assertEquals(1, tr.prompts.size)
+        assertEquals(listOf(false, true), tr.seals.map { it.final }) // closed by the post-window while driving
+    }
+
+    @Test
+    fun aCrashInsideANearMissCapsuleEscalatesItAndIsNeverAsked() {
+        val tr = Trace()
+        tr.ramp(3_000, 60f)
+        tr.brake(true)
+        tr.ramp(600, 60f, 45f) // HARD_BRAKE
+        tr.step(45f)
+        tr.step(20f) // −25 km/h: inside the refractory period of the near-miss, still counts
+        tr.ramp(6_000, 20f)
+        assertEquals(listOf(CapsuleTrigger.HARD_BRAKE, CapsuleTrigger.DELTA_V), tr.triggers.map { it.trigger })
+        assertEquals(listOf(EscalationLevel.ALERT, EscalationLevel.TRIGGERED), tr.levels)
+        assertEquals(1, tr.seals.map { it.capsuleId }.distinct().size)
+        assertEquals(CapsuleTrigger.DELTA_V, tr.seals.last().trigger)
+        assertTrue(tr.prompts.isEmpty())
+        tr.ramp(40_000, 20f)
+        assertTrue(tr.seals.none { it.final }) // a severe capsule stays open while driving on
+    }
+
+    @Test
+    fun evasiveSteeringAtSpeedIsANearMiss() {
+        val tr = Trace()
+        tr.ramp(3_000, 60f)
+        tr.steer(0f)
+        tr.t += 100
+        tr.steer(45f) // 450°/s
+        tr.t += 100
+        tr.steer(90f) // same manoeuvre: counted once
+        tr.ramp(500, 60f)
+        val trig = tr.triggers.single()
+        assertEquals(CapsuleTrigger.EVASIVE_STEER, trig.trigger)
+        assertEquals(450f, trig.measured, 1f)
+        assertEquals(listOf(EscalationLevel.ALERT), tr.levels)
+    }
+
+    @Test
+    fun steeringWithTheBrakeIsBrakeAndSwerve() {
+        val tr = Trace()
+        tr.ramp(3_000, 60f)
+        tr.brake(true)
+        tr.steer(0f)
+        tr.t += 100
+        tr.steer(-40f)
+        assertEquals(CapsuleTrigger.BRAKE_SWERVE, tr.triggers.single().trigger)
+    }
+
+    @Test
+    fun laneChangeRateAndParkingManoeuvresAreNotEvasive() {
+        val tr = Trace()
+        tr.ramp(3_000, 60f)
+        for (d in listOf(0f, 5f, 10f, 15f)) { tr.steer(d); tr.t += 100 } // 50°/s lane change
+        tr.ramp(3_000, 60f, 10f)
+        tr.ramp(1_000, 10f)
+        for (d in listOf(0f, 60f, 120f)) { tr.steer(d); tr.t += 100 } // 600°/s, but at parking speed
+        tr.steer(400f)
+        tr.t += 400
+        tr.steer(0f) // no rate across a 400 ms gap
+        assertTrue(tr.triggers.none { it.trigger == CapsuleTrigger.EVASIVE_STEER || it.trigger == CapsuleTrigger.BRAKE_SWERVE })
+    }
+
+    @Test
+    fun shiftToNeutralWhileMovingIsKept() {
+        val tr = Trace()
+        tr.ramp(3_000, 70f)
+        tr.signal(VehicleSignal.Gear(GearPosition.DRIVE))
+        tr.signal(VehicleSignal.Gear(GearPosition.NEUTRAL))
+        tr.signal(VehicleSignal.Gear(GearPosition.NEUTRAL)) // repeated report
+        assertEquals(CapsuleTrigger.SHIFT_TO_NEUTRAL, tr.triggers.single().trigger)
+    }
+
+    @Test
+    fun neutralWhileStoppedOrWithStaleSpeedIsNot() {
+        val tr = Trace()
+        tr.ramp(3_000, 0f)
+        tr.signal(VehicleSignal.Gear(GearPosition.NEUTRAL))
+        tr.signal(VehicleSignal.Gear(GearPosition.DRIVE))
+        tr.ramp(6_000, 0f, 50f)
+        tr.t += 2_000 // speed went quiet
+        tr.signal(VehicleSignal.Gear(GearPosition.NEUTRAL))
+        assertTrue(tr.triggers.isEmpty())
+    }
+
+    @Test
+    fun speedRisingThroughoutAThreeSecondBrakeHoldIsTheUnintendedAccelerationSignature() {
+        val tr = Trace()
+        tr.ramp(3_000, 30f)
+        tr.brake(true)
+        tr.ramp(5_000, 30f, 55f) // 5 km/h/s against the held brake
+        val trig = tr.triggers.single()
+        assertEquals(CapsuleTrigger.BRAKE_SPEED_RISE, trig.trigger)
+        assertEquals(15f, trig.measured, 0.01f)
+        assertEquals(tr.seqAt[6_000], trig.causeSeq) // the first sample 3 s into the hold
+    }
+
+    @Test
+    fun downhillDragBrakingGainingSpeedSlowlyIsNothing() {
+        val tr = Trace()
+        tr.ramp(3_000, 50f)
+        tr.brake(true)
+        tr.ramp(6_000, 50f, 59f) // 1.5 km/h/s: gravity on a steep grade, light braking
+        assertTrue(tr.triggers.isEmpty())
+    }
+
+    @Test
+    fun aRiseThatStallsWithinTheHoldIsNothing() {
+        val tr = Trace()
+        tr.ramp(3_000, 30f)
+        tr.brake(true)
+        tr.ramp(2_000, 30f, 45f) // +15 in 2 s, then flat for over a second
+        tr.ramp(1_500, 45f)
+        assertTrue(tr.triggers.isEmpty())
+    }
+
+    @Test
+    fun aRiseThatStartsBeforeTheBrakeDoesNotCount() {
+        val tr = Trace()
+        tr.ramp(3_000, 30f, 45f)
+        tr.brake(true)
+        tr.ramp(2_500, 45f, 47f) // the hold itself gains only 2 km/h
+        assertTrue(tr.triggers.isEmpty())
+    }
+
+    @Test
+    fun brakeHeldAtSteadySpeedIsNotFlaggedWithoutAGradeSignal() {
+        val tr = Trace()
+        tr.ramp(3_000, 80f)
+        tr.brake(true)
+        tr.ramp(6_000, 80f) // indistinguishable from drag braking downhill
+        tr.ramp(6_000, 80f, 50f) // and ordinary slowing
+        assertTrue(tr.triggers.isEmpty())
+    }
+
+    @Test
+    fun repeatedBrakePressesWhileMovingAreKept() {
+        val tr = Trace()
+        tr.ramp(3_000, 50f)
+        repeat(3) {
+            tr.brake(true)
+            tr.ramp(400, 50f)
+            tr.brake(false)
+            tr.ramp(400, 50f)
+        }
+        val trig = tr.triggers.single()
+        assertEquals(CapsuleTrigger.BRAKE_PUMPING, trig.trigger)
+        assertEquals(3f, trig.measured, 0f)
+    }
+
+    @Test
+    fun parkingBrakeWhileMovingIsKept() {
+        val tr = Trace()
+        tr.signal(VehicleSignal.ParkingBrake(false))
+        tr.ramp(3_000, 40f)
+        tr.signal(VehicleSignal.ParkingBrake(true))
+        assertEquals(CapsuleTrigger.PARKING_BRAKE_MOVING, tr.triggers.single().trigger)
+    }
+
+    @Test
+    fun aLurchFromStandstillIsKeptButBriskPullingAwayIsNot() {
+        val brisk = Trace()
+        brisk.ramp(3_000, 0f)
+        brisk.ramp(4_000, 0f, 40f) // 10 km/h/s
+        assertTrue(brisk.triggers.isEmpty())
+
+        val lurch = Trace()
+        lurch.ramp(3_000, 0f)
+        lurch.ramp(1_000, 0f, 20f)
+        lurch.ramp(500, 20f)
+        assertEquals(CapsuleTrigger.LURCH, lurch.triggers.single().trigger)
+    }
+
+    @Test
+    fun aDoorOpenedSoonAfterADangerousMomentMarksThePostEventStop() {
+        val tr = Trace()
+        tr.ramp(130_000, 80f)
+        tr.stop(80f, kmhPerSecond = 35f) // HARD_BRAKE, capsule closes at stillness
+        tr.ramp(30_000, 0f)
+        tr.signal(VehicleSignal.Door("ROW_1_LEFT", open = true))
+        tr.signal(VehicleSignal.Door("ROW_1_RIGHT", open = true)) // once per dangerous moment
+        assertEquals(listOf(CapsuleTrigger.HARD_BRAKE, CapsuleTrigger.POST_EVENT_EXIT), tr.triggers.map { it.trigger })
+        assertEquals(2, tr.seals.map { it.capsuleId }.distinct().size)
+    }
+
+    @Test
+    fun aDoorOpenedOnAnOrdinaryStopIsNothing() {
+        val tr = Trace()
+        tr.ramp(3_000, 30f)
+        tr.ramp(6_000, 30f, 0f)
+        tr.ramp(2_000, 0f)
+        tr.signal(VehicleSignal.Door("ROW_1_LEFT", open = true))
+        assertTrue(tr.triggers.isEmpty())
     }
 }

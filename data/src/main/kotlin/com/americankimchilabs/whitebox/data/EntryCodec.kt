@@ -2,6 +2,9 @@ package com.americankimchilabs.whitebox.data
 
 import com.americankimchilabs.whitebox.domain.CapsuleTrigger
 import com.americankimchilabs.whitebox.domain.ChainEntry
+import com.americankimchilabs.whitebox.domain.CruiseState
+import com.americankimchilabs.whitebox.domain.Lamp
+import com.americankimchilabs.whitebox.domain.RoadContextType
 import com.americankimchilabs.whitebox.domain.EscalationEvent
 import com.americankimchilabs.whitebox.domain.EscalationLevel
 import com.americankimchilabs.whitebox.domain.Gap
@@ -33,7 +36,7 @@ object EntryCodec {
         is ChainEntry.Recorder -> listOf("R", ts(e.at)) + recorder(e.event)
         is ChainEntry.Escalation -> listOf("E", ts(e.at)) + when (val v = e.event) {
             is EscalationEvent.LevelChanged -> listOf("LEVEL", v.level, v.causeSeq)
-            is EscalationEvent.Triggered -> listOf("TRIGGER", v.trigger, v.causeSeq, v.measuredKmh)
+            is EscalationEvent.Triggered -> listOf("TRIGGER", v.trigger, v.causeSeq, v.measured)
             is EscalationEvent.IncidentOffered -> with(v.capsule) { listOf("OFFER", id, trigger, firstSeq, lastSeq) }
             is EscalationEvent.IncidentAnswered -> listOf("ANSWER", v.capsuleId, v.keep)
         }
@@ -77,8 +80,24 @@ object EntryCodec {
         is VehicleSignal.Speed -> s.metersPerSecond.toString()
         is VehicleSignal.Ignition -> s.state.name
         is VehicleSignal.AirbagDeployed -> "${clean(s.seat).replace(';', '_')};${s.deployed}"
-        is VehicleSignal.Telltale -> "${clean(s.name).replace(';', '_')};${s.state.name}"
+        is VehicleSignal.Telltale -> "${label(s.name)};${s.state.name}"
+        is VehicleSignal.CruiseControl -> s.state.name
+        is VehicleSignal.CruiseTargetSpeed -> s.metersPerSecond.toString()
+        is VehicleSignal.Odometer -> s.distance.toString()
+        is VehicleSignal.Door -> "${label(s.area)};${s.open}"
+        is VehicleSignal.SeatBelt -> "${label(s.seat)};${s.buckled}"
+        is VehicleSignal.SeatOccupancy -> "${label(s.seat)};${s.occupied}"
+        is VehicleSignal.Light -> "${s.lamp.name};${s.on}"
+        is VehicleSignal.Wiper -> "${label(s.area)};${label(s.mode)}"
+        is VehicleSignal.Window -> "${label(s.area)};${s.position}"
+        is VehicleSignal.ParkingBrake -> s.engaged.toString()
+        is VehicleSignal.RoadContext -> "${s.type.name};${label(s.value)}"
+        is VehicleSignal.AcceleratorPedal -> s.percent.toString()
+        is VehicleSignal.BrakePressure -> s.percent.toString()
     }
+
+    /** A free-form label inside a ';'-separated value. */
+    private fun label(s: String) = clean(s).replace(';', '_')
 
     private fun signal(kind: SignalKind, v: String): VehicleSignal = when (kind) {
         SignalKind.BRAKE_PEDAL -> VehicleSignal.BrakePedal(v.toBooleanStrict())
@@ -89,6 +108,19 @@ object EntryCodec {
         SignalKind.IGNITION -> VehicleSignal.Ignition(IgnitionState.valueOf(v))
         SignalKind.AIRBAG -> v.split(";").let { VehicleSignal.AirbagDeployed(it[0], it[1].toBooleanStrict()) }
         SignalKind.TELLTALE -> v.split(";").let { VehicleSignal.Telltale(it[0], TelltaleState.valueOf(it[1])) }
+        SignalKind.CRUISE_CONTROL -> VehicleSignal.CruiseControl(CruiseState.valueOf(v))
+        SignalKind.CRUISE_TARGET_SPEED -> VehicleSignal.CruiseTargetSpeed(v.toFloat())
+        SignalKind.ODOMETER -> VehicleSignal.Odometer(v.toFloat())
+        SignalKind.DOOR -> v.split(";").let { VehicleSignal.Door(it[0], it[1].toBooleanStrict()) }
+        SignalKind.SEAT_BELT -> v.split(";").let { VehicleSignal.SeatBelt(it[0], it[1].toBooleanStrict()) }
+        SignalKind.SEAT_OCCUPANCY -> v.split(";").let { VehicleSignal.SeatOccupancy(it[0], it[1].toBooleanStrict()) }
+        SignalKind.LIGHT -> v.split(";").let { VehicleSignal.Light(Lamp.valueOf(it[0]), it[1].toBooleanStrict()) }
+        SignalKind.WIPER -> v.split(";").let { VehicleSignal.Wiper(it[0], it[1]) }
+        SignalKind.WINDOW -> v.split(";").let { VehicleSignal.Window(it[0], it[1].toInt()) }
+        SignalKind.PARKING_BRAKE -> VehicleSignal.ParkingBrake(v.toBooleanStrict())
+        SignalKind.ROAD_CONTEXT -> v.split(";").let { VehicleSignal.RoadContext(RoadContextType.valueOf(it[0]), it[1]) }
+        SignalKind.ACCELERATOR_PEDAL -> VehicleSignal.AcceleratorPedal(v.toFloat())
+        SignalKind.BRAKE_PRESSURE -> VehicleSignal.BrakePressure(v.toFloat())
     }
 
     private fun recorder(e: RecorderEvent): List<Any> = when (e) {

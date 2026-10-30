@@ -60,6 +60,63 @@ object Tuning {
     /** A capsule that never reaches stillness is closed after this long. */
     const val CAPSULE_MAX_OPEN_S = 600
 
+    /** A near-miss capsule (non-severe trigger) closes this long after its last trigger if the car drives on. */
+    const val CAPSULE_POST_WINDOW_S = 30
+
     /** Below this the car counts as still. */
     const val STILL_SPEED_KMH = 1
+
+    // Near-miss and 급발진 patterns. Every one opens a capsule without asking (non-severe). Provisional values from
+    // the emulator spikes and published reference points; tune on real driving data.
+
+    /**
+     * Evasive steering: steering-wheel rate between consecutive samples. Measured on the emulator: an ordinary lane
+     * change 51°/s, evasive manoeuvres 350–670°/s; reference points: ~99.5 % of normal-driving samples < 90°/s,
+     * ~140°/s "sharp", 300°/s used to recognise evasion.
+     */
+    const val STEER_RATE_DPS = 300
+    const val STEER_MIN_SPEED_KMH = 30
+    const val STEER_MAX_SAMPLE_GAP_MS = 250
+
+    /** Brake on (or released) within this of an evasive steer makes it brake + swerve. */
+    const val SWERVE_BRAKE_WINDOW_MS = 1000
+
+    /** Gear to N while moving at least this fast (the advised response to unintended acceleration). */
+    const val NEUTRAL_MIN_SPEED_KMH = 20
+
+    /**
+     * Speed rising while the brake is held: the strongest 급발진 signature we can read. Brake held continuously for
+     * the whole window, a total gain of at least BRAKE_RISE_KMH (12 km/h in 3 s ≈ 0.11 g, more than gravity gives on
+     * a grade under ~11 % even with no braking at all, so downhill drag braking does not qualify), and rising in
+     * every second of it (no single bump).
+     */
+    const val BRAKE_RISE_HELD_MS = 3000
+    const val BRAKE_RISE_KMH = 12
+    const val BRAKE_RISE_STEP_KMH = 1
+
+    /** Repeated brake presses while moving. */
+    const val BRAKE_PUMP_COUNT = 3
+    const val BRAKE_PUMP_WINDOW_MS = 3000
+    const val BRAKE_PUMP_MIN_KMH = 20
+
+    /** Parking brake engaged while moving at least this fast. */
+    const val PARKING_BRAKE_MIN_KMH = 10
+
+    /** Lurch: from standstill to this speed within the window (scenario 2's '울컥'). */
+    const val LURCH_KMH = 15
+    const val LURCH_WINDOW_MS = 1000
+    const val LURCH_STILL_MS = 1000
+
+    /** A door opening while stopped this soon after a dangerous moment marks a post-event stop. */
+    const val EXIT_DANGER_LOOKBACK_S = 180
+
+    /** The voice "방금 상황을 보관할까요?" is asked only if the car is still driving this fast this long after a near-miss. */
+    const val KEEP_PROMPT_DELAY_S = 5
+    const val KEEP_PROMPT_MIN_KMH = 10
+
+    /** How long an answer to the keep question is accepted; no answer by then counts as silence (kept). */
+    const val KEEP_ANSWER_WINDOW_S = 8
+
+    /** A speed sample older than this does not count as the current speed. */
+    const val SPEED_STALE_MS = 500
 }
