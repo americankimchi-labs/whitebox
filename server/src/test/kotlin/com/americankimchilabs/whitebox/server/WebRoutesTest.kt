@@ -37,7 +37,7 @@ class WebRoutesTest {
     private class Texts : SmsSender {
         val sent = mutableListOf<Pair<String, String>>()
         override fun send(phone: String, text: String) { sent += phone to text }
-        fun code(phone: String) = Regex("인증번호 (\\d{6})").find(sent.last { it.first == phone }.second)!!.groupValues[1]
+        fun code(phone: String) = Regex("인증번호 \\[(\\d{6})]").find(sent.last { it.first == phone }.second)!!.groupValues[1]
     }
 
     private class Car : Signer {

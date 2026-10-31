@@ -18,7 +18,7 @@ class IdentityTest {
     private class Texts : SmsSender {
         val sent = mutableListOf<Pair<String, String>>()
         override fun send(phone: String, text: String) { sent += phone to text }
-        fun code(phone: String) = sent.last { it.first == phone }.second.let { Regex("인증번호 (\\d{6})").find(it)!!.groupValues[1] }
+        fun code(phone: String) = sent.last { it.first == phone }.second.let { Regex("인증번호 \\[(\\d{6})]").find(it)!!.groupValues[1] }
         fun last(phone: String) = sent.last { it.first == phone }.second
     }
 
@@ -104,7 +104,7 @@ class IdentityTest {
         val again = r.claim(phoneKey = "NEW-PHONE") as Identity.ClaimResult.Claimed
         assertEquals(ownerId, again.ownerId)
         assertEquals("NEW-PHONE", r.id.owner(ownerId)!!.ecdhKey)
-        assertTrue(r.texts.sent.none { "연결을 요청" in it.second }) // the owner is not bothered
+        assertTrue(r.texts.sent.none { "연결하려고 합니다" in it.second }) // the owner is not bothered
     }
 
     @Test
@@ -113,7 +113,7 @@ class IdentityTest {
         val ownerId = r.ownerId()
         val pending = r.claim(r.buyer) as Identity.ClaimResult.Pending
         assertEquals(ownerId, r.id.ownerOf("car1")!!.id) // nothing changed yet
-        assertTrue("연결을 요청" in r.texts.last(r.owner))
+        assertTrue("연결하려고 합니다" in r.texts.last(r.owner))
         val t = r.id.transfersFrom(ownerId).single()
         assertEquals(pending.transfer.id, t.id)
         assertEquals(t.createdMs + 3 * 24 * 3600_000L, t.autoAtMs)

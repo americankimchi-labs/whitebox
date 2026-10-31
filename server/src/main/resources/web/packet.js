@@ -121,11 +121,11 @@
   // ---- words (the car's own) ----
 
   const TRIGGER = {
-    AIRBAG: '에어백 전개', DELTA_V: '급격한 속도 변화', SHORT_DELTA_V: '급격한 속도 변화 (단시간)', BRAKED_SPIKE: '제동 중 충격',
-    REAR_SHOVE: '정차·제동 중 후방 충격', ALERT_RESOLVED: '급제동 후 정차', MANUAL: '음성으로 보관', HARD_BRAKE: '급제동',
-    EVASIVE_STEER: '급조향 (회피)', BRAKE_SWERVE: '급제동 + 급조향', SHIFT_TO_NEUTRAL: '주행 중 N단 변속', BRAKE_SPEED_RISE: '제동 중 속도 상승',
-    BRAKE_NO_DECEL: '제동 중 감속 없음', BRAKE_PUMPING: '반복 제동', PARKING_BRAKE_MOVING: '주행 중 주차 브레이크', LURCH: '정지 상태에서 급출발',
-    POST_EVENT_EXIT: '위험 상황 직후 하차', SERVER_SEAL: '사고 뒤 연락 끊김 (서버 봉인)',
+    AIRBAG: '에어백 전개', DELTA_V: '충격 감지', SHORT_DELTA_V: '짧은 충격 감지', BRAKED_SPIKE: '제동 중 충격',
+    REAR_SHOVE: '후방 충격 (정차·제동 중)', ALERT_RESOLVED: '급제동 후 정차', MANUAL: '음성으로 보관', HARD_BRAKE: '급제동',
+    EVASIVE_STEER: '급핸들 (회피)', BRAKE_SWERVE: '급제동 + 급핸들', SHIFT_TO_NEUTRAL: '주행 중 중립(N) 변속', BRAKE_SPEED_RISE: '브레이크를 밟는데 속도 상승',
+    BRAKE_NO_DECEL: '브레이크를 밟는데 감속 없음', BRAKE_PUMPING: '브레이크 반복 조작', PARKING_BRAKE_MOVING: '주행 중 주차 브레이크', LURCH: '정차 중 급출발',
+    POST_EVENT_EXIT: '위험 상황 직후 하차', SERVER_SEAL: '사고 뒤 신호 끊김 (서버 봉인)',
   };
   const GEAR = { PARK: 'P', REVERSE: 'R', NEUTRAL: 'N', DRIVE: 'D', MANUAL: 'M', UNKNOWN: '?' };
   const TURN = { OFF: '꺼짐', LEFT: '좌측 점멸', RIGHT: '우측 점멸' };
@@ -144,9 +144,9 @@
     const what = l.type === 'BRAKE' ? (l.value ? '브레이크 밟음' : '브레이크 뗌')
       : l.type === 'TURN' ? `방향지시등 ${TURN[l.value] || l.value}`
       : l.type === 'GEAR' ? `기어 ${GEAR[l.value] || l.value}`
-      : l.type === 'STEERING_PEAK' ? `최대 조향 ${degrees(l.value)}`
-      : '상향등 번쩍임';
-    return l.beforeMs == null ? `${what} · 기록 내내 유지` : `${what} · 감지 ${sec(l.beforeMs)}초 전`;
+      : l.type === 'STEERING_PEAK' ? `최대 조향각 ${degrees(l.value)}`
+      : '상향등 깜빡임';
+    return l.beforeMs == null ? `${what} · 기록 내내 그대로` : `${what} · 감지 ${sec(l.beforeMs)}초 전`;
   }
 
   /** Context rows as [label, text]; rows this car never reported are left out. Same rows and words as the car. */

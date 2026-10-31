@@ -169,7 +169,7 @@
    */
   function mount(el, { timeline, causeWall, beacons, Packet }) {
     el.innerHTML = `
-      <div class="sync-pick"><label class="button-like">블랙박스 영상 고르기<input type="file" accept="video/*" hidden></label>
+      <div class="sync-pick"><label class="button-like">블랙박스 영상 선택<input type="file" accept="video/*" hidden></label>
         <p class="msg">영상은 이 휴대폰 안에서만 열리고, 어디에도 올라가지 않습니다.</p></div>
       <div class="sync-stage" hidden>
         <video playsinline controls preload="metadata" style="width:100%;border-radius:8px;background:#000"></video>
@@ -212,13 +212,13 @@
       if (!file) return;
       stage.hidden = false;
       video.src = URL.createObjectURL(file);
-      status.textContent = '영상의 소리에서 동기화 신호를 찾는 중…';
+      status.textContent = '영상의 소리에서 동기화 신호음을 찾는 중…';
       const audio = await audioOf(file);
       const guess = videoStartGuess(file.name, audio && audio.bytes);
       const found = audio ? findAll(audio.samples, audio.rate) : [];
       const a = align(found, beacons, guess && guess.wall);
       startWall = a.startWall;
-      status.textContent = a.how === 'chirp' ? '동기화 신호로 정확히 맞췄습니다 (오차 약 1밀리초).'
+      status.textContent = a.how === 'chirp' ? '동기화 신호음으로 정확히 맞췄습니다 (오차 약 0.001초).'
         : a.how === 'clock' ? `${guess.source === 'name' ? '파일 이름' : '영상 정보'}의 시각으로 맞췄습니다 (오차 약 1초). 아래 버튼으로 다듬을 수 있습니다.`
         : '영상에서 시각을 찾지 못했습니다. 영상을 사고 순간에 멈추고 아래 버튼으로 맞춰 주세요.';
       stage.dataset.startWall = startWall ?? '';

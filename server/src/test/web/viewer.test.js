@@ -92,7 +92,7 @@ test('the evidence timeline is the car\'s, lane for lane', async () => {
   close(mine, V.capsule.timeline, 'timeline');
   assert.ok(t.lines.length >= 4);
   assert.match(Packet.svg(t), /^<svg/);
-  for (const l of t.lines) assert.match(Packet.lineText(l), /초 전|유지/);
+  for (const l of t.lines) assert.match(Packet.lineText(l), /초 전|그대로/);
 });
 
 test('a capsule checks: links, hashes, the car\'s seal and the server\'s anchor', async () => {

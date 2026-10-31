@@ -3,16 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>White Box · 내 차량</title>
+<title>White Box · 내 차</title>
 <link rel="stylesheet" href="/wb.css">
 </head>
 <body><main>
-<h1>내 차량</h1>
+<h1>내 차</h1>
 <div id="who" class="msg"></div>
 
 <div class="card" id="login" hidden>
   <h2>휴대폰 번호로 다시 들어오기</h2>
-  <p class="msg">차량에 연결한 번호로 인증하면 됩니다.</p>
+  <p class="msg">차에 연결한 번호로 인증하면 됩니다.</p>
   <label for="lphone">휴대폰 번호</label><input id="lphone" inputmode="tel" autocomplete="tel" placeholder="010-1234-5678">
   <button class="wide" id="lsend">인증번호 받기</button>
   <div id="lotp-step" hidden>
@@ -34,12 +34,12 @@
 
 <div class="card" id="contacts-card" hidden>
   <h2>비상 연락처</h2>
-  <p class="msg">큰 사고가 나면 이분들이 자기 휴대폰 번호로 인증해 <b>그 사고 기록만</b> 열어 볼 수 있습니다. 평소 주행과 위치는 회원님만 봅니다. 등록해도, 사고가 나도 문자는 가지 않습니다.</p>
+  <p class="msg">큰 사고가 나면 이분들이 본인 휴대폰 번호로 인증해 <b>그 사고 기록만</b> 볼 수 있습니다. 평소 주행과 위치는 회원님만 봅니다. 저장할 때도, 사고가 났을 때도 문자는 보내지 않습니다.</p>
   <div id="contacts"></div>
-  <details id="add"><summary>연락처 추가</summary>
+  <details id="add"><summary>연락처 저장</summary>
     <label for="cname">이름</label><input id="cname" maxlength="20" placeholder="예: 엄마">
     <label for="cphone">휴대폰 번호</label><input id="cphone" inputmode="tel" placeholder="010-1234-5678">
-    <button class="wide" id="addc">추가</button>
+    <button class="wide" id="addc">저장</button>
     <div id="add-msg" class="msg"></div>
   </details>
   <div id="opened"></div>
@@ -61,7 +61,7 @@ async function distanceKm(drive, ring) {
   return a && b && !a.locked && !b.locked ? Math.max(0, b.value - a.value) : null;
 }
 
-const ANSWER = { kept: '보관함', released: '보관 안 함', unanswered: '대답 없어 보관함' };
+const ANSWER = { kept: '보관하기로 함', released: '보관하지 않기로 함', unanswered: '대답이 없어 보관' };
 function capsuleRow(dev, stream, c) {
   const name = WBPacket.TRIGGER[c.trigger] || c.trigger;
   const tag = c.severe ? '<span class="badge bad">큰 사고</span>' : '<span class="badge warn">위험 순간</span>';
@@ -89,23 +89,23 @@ async function render(force = false) {
 
   const alerts = [];
   for (const t of me.transfersIn) {
-    alerts.push(`<div class="card alert"><h2>다른 휴대폰이 내 차를 연결하려 합니다</h2>
+    alerts.push(`<div class="card alert"><h2>다른 휴대폰이 내 차를 연결하려고 합니다</h2>
       <p>${esc(t.phone)} 휴대폰이 ${WB.when(t.createdMs)}에 차량 화면의 QR로 연결을 요청했습니다.</p>
-      <p>차를 판매·양도했다면 승인하세요. 모르는 요청이라면 거절하세요. <b>${WB.when(t.autoAtMs)}</b>까지 거절하지 않으면 자동으로 넘어갑니다.</p>
-      <p class="msg">넘어가도 요청 전까지의 기록은 계속 회원님만 볼 수 있고, 새 휴대폰은 요청한 때부터의 기록을 봅니다. 거절하면 그동안의 기록도 회원님이 봅니다.</p>
+      <p>차를 팔거나 넘기셨다면 승인하고, 모르는 요청이면 거절해 주세요. <b>${WB.when(t.autoAtMs)}</b>까지 거절하지 않으면 새 휴대폰으로 넘어갑니다.</p>
+      <p class="msg">넘어가도 요청 전까지의 기록은 계속 회원님만 볼 수 있고, 새 휴대폰은 요청한 뒤의 기록만 봅니다. 거절하면 그사이의 기록도 회원님이 봅니다.</p>
       <button data-transfer="${t.id}" data-approve="yes">승인 (차를 넘겼어요)</button>
       <button class="danger" data-transfer="${t.id}" data-approve="no">거절 (제 차입니다)</button></div>`);
   }
   for (const t of me.transfersOut) {
     alerts.push(t.state === 'pending'
-      ? `<div class="card alert"><h2>기존 소유자의 확인을 기다리는 중</h2><p>이 차는 다른 휴대폰에 연결되어 있어 그 소유자에게 확인을 요청했습니다. 거절하지 않으면 <b>${WB.when(t.autoAtMs)}</b>에 자동으로 연결되고, 요청한 때(${WB.when(t.createdMs)})부터의 기록을 볼 수 있습니다.</p></div>`
-      : `<div class="card alert"><h2 class="bad">기존 소유자가 연결을 거절했습니다</h2><p>본인 차량이 맞다면 판매자에게 연결 해제를 요청하세요.</p></div>`);
+      ? `<div class="card alert"><h2>지금 차주의 확인을 기다리는 중</h2><p>이 차는 다른 휴대폰에 연결되어 있어 그 차주에게 확인을 요청했습니다. 거절하지 않으면 <b>${WB.when(t.autoAtMs)}</b>에 자동으로 연결되고, 요청한 때(${WB.when(t.createdMs)})부터의 기록을 볼 수 있습니다.</p></div>`
+      : `<div class="card alert"><h2 class="bad">차주가 연결을 거절했습니다</h2><p>본인 차가 맞다면 이전 차주에게 연결을 넘겨 달라고 요청해 주세요.</p></div>`);
   }
-  for (const c of me.contactsLeft) alerts.push(`<div class="card"><p>${esc(c.name)} 님이 ${WB.day(c.atMs)}에 비상 연락처에서 스스로 빠졌습니다. 다른 분을 등록해 두시길 권합니다.</p></div>`);
+  for (const c of me.contactsLeft) alerts.push(`<div class="card"><p>${esc(c.name)} 님이 ${WB.day(c.atMs)}에 비상 연락처에서 빠졌습니다. 다른 분을 저장해 두시길 권합니다.</p></div>`);
   WB.$('alerts').innerHTML = alerts.join('');
   document.querySelectorAll('[data-transfer]').forEach((b) => b.onclick = async () => {
     const yes = b.dataset.approve === 'yes';
-    if (!confirm(yes ? '차량 연결을 넘길까요? 요청한 때부터의 기록은 새 휴대폰이 보게 됩니다.' : '이 요청을 거절할까요?')) return;
+    if (!confirm(yes ? '차 연결을 넘길까요? 요청한 뒤의 기록은 새 휴대폰이 보게 됩니다.' : '이 요청을 거절할까요?')) return;
     await WB.post('/v1/transfer/answer', { id: b.dataset.transfer, approve: yes ? 'yes' : 'no' }).catch((e) => alert(e.message));
     render(true);
   });
@@ -119,9 +119,9 @@ async function render(force = false) {
       : !live ? '아직 기록이 올라오지 않았습니다'
       : live.level === 'TRIGGERED' ? '<span class="bad">사고가 감지되었습니다</span>'
       : live.level === 'ALERT' ? '<span class="warn">위험 신호가 감지되었습니다</span>'
-      : live.silentForMs != null && live.silentForMs < 30000 ? '<span class="good">기록 중</span>' : '차량이 꺼져 있습니다';
+      : live.silentForMs != null && live.silentForMs < 30000 ? '<span class="good">기록 중</span>' : '차가 꺼져 있습니다';
     let body = '';
-    if (!dev.wraps.length) body = '<p class="msg">차량이 연결을 확인하는 중입니다. 차량이 켜져 있고 인터넷에 연결되어 있어야 합니다.</p>';
+    if (!dev.wraps.length) body = '<p class="msg">차에서 연결을 확인하는 중입니다. 차가 켜져 있고 인터넷에 연결되어 있어야 합니다.</p>';
     else if (live) {
       // Where the car is and how fast it last went: opened here, on this phone.
       if (mine) {
@@ -139,7 +139,7 @@ async function render(force = false) {
       // Risky moments: the owner sees every one; without a key on this phone, the severe ones still open.
       const caps = (await WB.get(`/v1/capsules?device=${dev.id}&stream=${live.stream}`)) || [];
       const shown = mine ? caps : caps.filter((c) => c.severe);
-      body += `<h3>위험 순간</h3>${shown.slice(0, 5).map((c) => capsuleRow(dev.id, live.stream, c)).join('') || '<p class="msg">아직 없습니다. 위험한 순간이 생기면 자동으로 봉인되어 여기에 나타납니다.</p>'}`;
+      body += `<h3>보관 기록</h3>${shown.slice(0, 5).map((c) => capsuleRow(dev.id, live.stream, c)).join('') || '<p class="msg">아직 없습니다. 위험한 순간이 생기면 자동으로 보관되어 여기에 나타납니다.</p>'}`;
       if (mine) {
         const drives = (await WB.get(`/v1/drives?device=${dev.id}&stream=${live.stream}`)) || [];
         const month = new Date(); month.setDate(1); month.setHours(0, 0, 0, 0);
@@ -160,14 +160,14 @@ async function render(force = false) {
     cars.push(`<div class="card"><h2>${dev.current ? '내 차' : '이전에 연결했던 차'}</h2><p class="big">${status}</p>${dev.current && live && live.silentForMs != null ? `<p class="msg" data-age="${live.silentForMs}" data-at="${Date.now()}">마지막 수신 ${WB.ago(live.silentForMs)}</p>` : ''}${body}</div>`);
     tech.push(`차량 기기 ID ${dev.id}`, `이 휴대폰이 가진 차량 열쇠: ${dev.wraps.map((w) => w.epoch).join(', ') || '없음'}번`, ...(dev.current ? dev.streams.map((s) => `${s.stream}: 기록 ${s.records}건, 단계 ${s.level || '-'}`) : []));
   }
-  WB.$('cars').innerHTML = cars.join('') || (me.transfersOut.length ? '' : '<div class="card"><p>연결된 차량이 없습니다. 차량 화면의 <b>휴대폰</b> 탭에서 QR을 찍으면 연결됩니다.</p></div>');
+  WB.$('cars').innerHTML = cars.join('') || (me.transfersOut.length ? '' : '<div class="card"><p>연결된 차가 없습니다. 차 화면의 <b>휴대폰</b> 탭에서 QR을 찍으면 연결됩니다.</p></div>');
 
   WB.$('contacts').innerHTML = me.contacts.map((c) => `<div class="row"><span>${esc(c.name)} <small>${esc(c.phone)}</small></span><button class="plain" data-remove="${c.id}" data-name="${esc(c.name)}">삭제</button></div>`).join('')
-    || '<p class="msg">아직 없습니다. 가족 한 분을 등록해 두시길 권합니다.</p>';
+    || '<p class="msg">아직 없습니다. 가족 한 분을 저장해 두시길 권합니다.</p>';
   WB.$('add').open = !me.contacts.length;
-  WB.$('opened').innerHTML = me.opened.length ? `<h3>누가 기록을 열어 봤나요</h3>${me.opened.slice(-5).reverse().map((o) => `<div class="row"><span>${o.shared ? '증거 요약 QR로 누군가 열어 봤습니다' : `${esc(o.name)} 님이 사고 기록을 열어 봤습니다`}</span><span class="sub">${WB.when(o.atMs)}</span></div>`).join('')}` : '';
+  WB.$('opened').innerHTML = me.opened.length ? `<h3>기록을 본 사람</h3>${me.opened.slice(-5).reverse().map((o) => `<div class="row"><span>${o.shared ? '증거 요약 QR로 누군가 열어 봤습니다' : `${esc(o.name)} 님이 사고 기록을 열어 봤습니다`}</span><span class="sub">${WB.when(o.atMs)}</span></div>`).join('')}` : '';
   document.querySelectorAll('[data-remove]').forEach((b) => b.onclick = async () => {
-    if (!confirm(`${b.dataset.name} 님을 비상 연락처에서 뺄까요? 이제 사고 기록을 열 수 없게 됩니다.`)) return;
+    if (!confirm(`${b.dataset.name} 님을 비상 연락처에서 삭제할까요? 이제 사고 기록을 볼 수 없게 됩니다.`)) return;
     await WB.post('/v1/contacts/remove', { contact: b.dataset.remove }).catch((e) => alert(e.message));
     render(true);
   });
@@ -177,7 +177,7 @@ async function render(force = false) {
 WB.$('addc').onclick = async () => {
   try {
     await WB.post('/v1/contacts/add', { name: WB.$('cname').value, phone: WB.$('cphone').value });
-    WB.say('add-msg', '추가했습니다. 상대에게는 아무것도 보내지 않았습니다.');
+    WB.say('add-msg', '저장했습니다. 상대에게 문자는 보내지 않았습니다.');
     WB.$('cname').value = ''; WB.$('cphone').value = '';
     render(true);
   } catch (e) { WB.say('add-msg', e.message, true); }

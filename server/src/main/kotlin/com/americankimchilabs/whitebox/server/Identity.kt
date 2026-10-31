@@ -163,12 +163,12 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
         val code = "%06d".format(random.nextInt(1_000_000))
         otps[phone] = Otp(code, now + 5 * 60_000)
         lastOtpMs[phone] = now
-        sms.send(phone, "[White Box] ${purposeText(purpose)} 인증번호 $code (5분 안에 입력)")
+        sms.send(phone, "[White Box] ${purposeText(purpose)} 인증번호 [$code] · 5분 안에 입력해 주세요.")
         return null
     }
 
     private fun purposeText(p: String) = when (p) {
-        "claim" -> "차량 연결"
+        "claim" -> "차 연결"
         else -> "본인 확인"
     }
 
@@ -238,7 +238,7 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
     /** The phone proved the number by its code; the car will check [mac] (made with the QR secret) before wrapping. */
     @Synchronized
     fun claim(code: String, phone: String, otp: String, ecdhKey: String, mac: String): ClaimResult {
-        val c = claimCodes[code]?.takeIf { it.expiresMs > clock() } ?: return ClaimResult.Refused("차량 화면의 코드가 만료되었습니다. 차량에서 다시 시작하세요.")
+        val c = claimCodes[code]?.takeIf { it.expiresMs > clock() } ?: return ClaimResult.Refused("차 화면의 QR이 만료되었습니다. 차에서 휴대폰 연결을 다시 눌러 주세요.")
         if (!checkOtp(phone, otp)) return ClaimResult.Refused("인증번호가 맞지 않습니다.")
         claimCodes.remove(code)
         val hash = phoneHash(phone)
@@ -257,7 +257,7 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
         // The car checks the MAC and starts recording under a key nobody holds until this is decided.
         record("PF", device, t, MirrorProtocol.encode(MirrorProtocol.Frame.ClaimPending(t, ecdhKey, mac, maskPhone(phone))))
         owners[current]?.let { o ->
-            sms.send(ownerPhone(o), "[White Box] 다른 휴대폰(${maskPhone(phone)})이 회원님 차량의 연결을 요청했습니다. 차를 판매·양도했다면 승인하고, 아니라면 거절해 주세요. 3일 안에 거절하지 않으면 자동으로 넘어갑니다: /me")
+            sms.send(ownerPhone(o), "[White Box] 다른 휴대폰(${maskPhone(phone)})에서 회원님 차를 연결하려고 합니다. 차를 팔거나 넘기셨다면 승인하고, 아니라면 거절해 주세요. 3일 안에 거절하지 않으면 새 휴대폰으로 넘어갑니다: /me")
         }
         return ClaimResult.Pending(id, transfers.getValue(t), newSession(OWNER, id))
     }
@@ -268,8 +268,8 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
         record("D", t.deviceId, t.toOwnerId)
         record("TS", t.id, how)
         transferFrames[t.deviceId]?.let { record("PFD", t.deviceId, it.first) } // the CLAIMED frame supersedes it
-        owners[t.fromOwnerId]?.let { sms.send(ownerPhone(it), "[White Box] 차량 연결이 ${t.masked} 휴대폰으로 넘어갔습니다. 지금까지의 기록은 계속 회원님만 볼 수 있습니다.") }
-        owners[t.toOwnerId]?.let { sms.send(ownerPhone(it), "[White Box] 차량이 연결되었습니다. 지금부터의 기록을 볼 수 있습니다: /me") }
+        owners[t.fromOwnerId]?.let { sms.send(ownerPhone(it), "[White Box] 차 연결이 ${t.masked} 휴대폰으로 넘어갔습니다. 요청 전까지의 기록은 계속 회원님만 볼 수 있습니다.") }
+        owners[t.toOwnerId]?.let { sms.send(ownerPhone(it), "[White Box] 차가 연결되었습니다. 요청하신 때부터의 기록을 볼 수 있습니다: /me") }
     }
 
     /** The current owner decided; returns the transfer if it now applies. */
@@ -282,7 +282,7 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
         }
         record("TS", t.id, DECLINED)
         record("PF", t.deviceId, t.id, MirrorProtocol.encode(MirrorProtocol.Frame.ClaimDeclined(t.id)))
-        owners[t.toOwnerId]?.let { sms.send(ownerPhone(it), "[White Box] 차량 소유자가 연결 요청을 거절했습니다.") }
+        owners[t.toOwnerId]?.let { sms.send(ownerPhone(it), "[White Box] 차주가 연결 요청을 거절했습니다.") }
         return null
     }
 

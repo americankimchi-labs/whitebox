@@ -60,9 +60,9 @@ class MirrorService(
     private fun levelSeen(stream: StreamId, level: EscalationLevel, atMs: Long) {
         if (lastLevel.put(stream, level) == level) return
         note(stream, atMs, when (level) {
-            EscalationLevel.NORMAL -> "정상 (경보 해제)"
-            EscalationLevel.ALERT -> "경보: 급제동 등 위험 신호 — 기록을 즉시 전송 중"
-            EscalationLevel.TRIGGERED -> "사고 감지: 충돌 수준 — 차량이 봉인 후 전송"
+            EscalationLevel.NORMAL -> "정상 (위험 신호 해제)"
+            EscalationLevel.ALERT -> "위험 신호: 급제동 등 — 기록을 바로바로 받는 중"
+            EscalationLevel.TRIGGERED -> "사고 감지: 충돌 수준 — 차가 기록을 봉인하고 보내는 중"
         })
     }
 
@@ -108,7 +108,7 @@ class MirrorService(
                 }
                 is Frame.ClaimRequest -> {
                     val code = identity?.claimCode(s) ?: return emptyList()
-                    note(s, now, "차량 화면에 휴대폰 연결 QR 표시")
+                    note(s, now, "차 화면에 휴대폰 연결 QR 표시")
                     listOf(MirrorProtocol.encode(Frame.ClaimCode(code)))
                 }
                 is Frame.TransferAck -> {
@@ -120,7 +120,7 @@ class MirrorService(
                     // The car wraps only to its current owner (it checked the claim's MAC); anything else is ignored.
                     if (id.ownerOf(s.deviceId)?.id != f.recipientId) return emptyList()
                     id.putWrap(s.deviceId, f.recipientId, f.epoch, f.sealed)
-                    note(s, now, "차량 키(${f.epoch}번)를 소유자 휴대폰만 열 수 있게 봉인해 보관")
+                    note(s, now, "차 열쇠 ${f.epoch}번 보관 (차주 휴대폰만 열 수 있게 봉인됨)")
                     emptyList()
                 }
                 is Frame.Escrow -> {
@@ -129,7 +129,7 @@ class MirrorService(
                     // One line per capsule and minute: a key resent before its acknowledgement arrived is not stored again.
                     val held = store.log(s, ESCROW).any { it.startsWith("${f.capsuleId}|${f.epoch}|${f.minute}|") }
                     if (!held && store.appendLog(s, ESCROW, "${f.capsuleId}|${f.epoch}|${f.minute}|${f.sealed}")) {
-                        note(s, now, "사고 구간 열쇠 보관 (${f.capsuleId}, ${f.minute}분): 비상 연락처에 저장된 분이 이 사고 기록만 열 수 있음")
+                        note(s, now, "사고 구간 열쇠 보관 (${f.capsuleId}, ${f.minute}분): 비상 연락처에 저장된 분이 이 사고 기록만 볼 수 있음")
                     }
                     minuteKey.fill(0)
                     listOf(MirrorProtocol.encode(Frame.EscrowAck(f.epoch, f.minute)))
@@ -138,7 +138,7 @@ class MirrorService(
                     if (!f.codeHash.matches(Regex("[0-9a-f]{64}"))) return emptyList()
                     if (store.log(s, SHARES).none { it.startsWith("${f.capsuleId}|${f.codeHash}|") }) {
                         store.appendLog(s, SHARES, "${f.capsuleId}|${f.codeHash}|${f.expiresMs}")
-                        note(s, now, "증거 요약 QR 공유 (${f.capsuleId}): QR을 가진 사람이 이 기록만 열 수 있음")
+                        note(s, now, "증거 요약 QR 공유 (${f.capsuleId}): QR을 가진 사람이 이 기록만 볼 수 있음")
                     }
                     listOf(MirrorProtocol.encode(Frame.ShareAck(f.capsuleId)))
                 }
@@ -151,17 +151,17 @@ class MirrorService(
                 }
                 is Frame.WindowDelete -> {
                     if (!store.deleteLabeled(f.pseudonym)) return emptyList()
-                    note(s, now, "운전자가 사고 데이터 제공을 그만둠: 보냈던 구간 신호 삭제")
+                    note(s, now, "운전자가 사고 데이터 제공을 그만둠: 받았던 구간 신호 삭제")
                     listOf(MirrorProtocol.encode(Frame.WindowDeleted(f.pseudonym)))
                 }
                 is Frame.Seal -> {
                     val seal = runCatching { SealStore.parse(f.sealLine) }.getOrNull() ?: return emptyList()
                     if (!seal.publicKey.contentEquals(publicKey) || !seal.signatureValid()) {
-                        note(s, now, "봉인 거부: 이 차량의 키로 서명되지 않음")
+                        note(s, now, "봉인 거부: 이 차의 키로 서명되지 않음")
                         return emptyList()
                     }
                     if (store.appendLog(s, "seals", f.sealLine, unique = true)) {
-                        note(s, now, "차량 봉인 수신: ${seal.capsule.id} ${seal.capsule.trigger} (#${seal.capsule.firstSeq}–#${seal.capsule.lastSeq}, ${if (seal.final) "최종" else "임시"})")
+                        note(s, now, "차 봉인 수신: ${seal.capsule.id} ${seal.capsule.trigger} (#${seal.capsule.firstSeq}–#${seal.capsule.lastSeq}, ${if (seal.final) "최종" else "임시"})")
                     }
                     if (seal.capsule.trigger.severe) deadMan.onFrame(s, EscalationLevel.TRIGGERED, true, now)
                     listOf(MirrorProtocol.encode(Frame.SealAck(MirrorProtocol.sealKey(seal))))
@@ -185,7 +185,7 @@ class MirrorService(
             val id = StreamId(MirrorProtocol.deviceId(f.publicKey), f.stream)
             stream = id
             publicKey = f.publicKey
-            note(id, clock(), "차량 연결 (기기 키 확인)")
+            note(id, clock(), "차 연결 (기기 키 확인)")
             synchronized(live) { live[id] = this }
             // Where the car should resume: authoritative, even if lower than what the car believes was acknowledged.
             return listOf(MirrorProtocol.encode(Frame.Ready(id.deviceId, key.publicKey)), MirrorProtocol.encode(Frame.Ack(store.contiguousHead(id)))) +
@@ -212,7 +212,7 @@ class MirrorService(
         identity?.setPendingClaim(deviceId, text)
         val sessions = synchronized(live) { live.filterKeys { it.deviceId == deviceId }.values.toList() }
         sessions.forEach { it.pushes.trySend(text) }
-        sessions.firstOrNull()?.stream?.let { note(it, clock(), "휴대폰 인증 완료 (${frame.maskedPhone}) — 차량의 확인을 기다리는 중") }
+        sessions.firstOrNull()?.stream?.let { note(it, clock(), "휴대폰 인증 완료 (${frame.maskedPhone}) — 차의 확인을 기다리는 중") }
     }
 
     /** A takeover went through: the car gives its new owner the key epoch it started at the request. */
@@ -238,13 +238,13 @@ class MirrorService(
             is DeadMan.Action.ConsiderNotice -> {
                 val severe = action.severeSeen || severeSignature(action.stream, action.episodeStartMs)
                 if (!severe) {
-                    note(action.stream, now, "${Tuning.DEADMAN_NOTIFY_SILENCE_S}초 무응답, 충돌 수준 증거 없음")
+                    note(action.stream, now, "${Tuning.DEADMAN_NOTIFY_SILENCE_S}초째 신호 없음, 충돌 수준 증거 없음")
                     continue
                 }
                 // Recorded, never texted: the family can open it on their page, but nobody is alarmed by a detector.
                 val attestation = store.log(action.stream, "attested").lastOrNull() ?: attest(action.stream, action.episodeStartMs, now)
                 store.appendLog(action.stream, SEVERE_SILENT, "$now|${attestation.substringBefore("|sig=")}")
-                note(action.stream, now, "충돌 수준 사고 뒤 ${Tuning.DEADMAN_NOTIFY_SILENCE_S}초 무응답 — 서버 봉인 기록을 가족이 열람할 수 있음 (문자는 보내지 않음)")
+                note(action.stream, now, "충돌 수준 사고 뒤 ${Tuning.DEADMAN_NOTIFY_SILENCE_S}초째 신호 없음 — 서버가 봉인한 기록을 비상 연락처에 저장된 분이 볼 수 있음 (문자는 보내지 않음)")
                 deadMan.notified(action.stream)
             }
         }
@@ -473,7 +473,7 @@ class MirrorService(
         val text = "ATTEST|$stream|$from|$to|${store.hashAt(stream, to)}|${store.contiguousHead(stream)}|${(to - from + 1) - held}|DEADMAN|$now"
         val line = "$text|sig=${key.sign(text)}"
         store.appendLog(stream, "attested", line)
-        note(stream, now, "서버 봉인: ${Tuning.DEADMAN_SEAL_SILENCE_S}초 무응답 — 받은 기록 #$from–#$to 에 서버가 서명")
+        note(stream, now, "서버 봉인: ${Tuning.DEADMAN_SEAL_SILENCE_S}초째 신호 없음 — 받은 기록 #$from–#${to}에 서버가 서명")
         return line
     }
 

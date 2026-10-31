@@ -1,6 +1,5 @@
 package com.americankimchilabs.whitebox.core
 
-import com.americankimchilabs.whitebox.domain.IncidentCapsule
 import com.americankimchilabs.whitebox.domain.LocationFix
 import com.americankimchilabs.whitebox.domain.MotionWindow
 import com.americankimchilabs.whitebox.domain.SignalKind
@@ -111,9 +110,4 @@ interface MirrorChannel {
 
     /** Queues one frame; false when not connected (the outbox keeps the data and sends it later). */
     fun send(frame: String): Boolean
-}
-
-/** Push a viewer link to registered emergency contacts. */
-interface EmergencyNotifier {
-    suspend fun notifyContacts(capsule: IncidentCapsule): Boolean
 }

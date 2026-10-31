@@ -3,18 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>White Box · 가족의 사고 기록</title>
+<title>White Box · 사고 기록 확인</title>
 <link rel="stylesheet" href="/wb.css">
 </head>
 <body><main>
-<h1>가족의 사고 기록</h1>
-<p class="msg">White Box를 쓰는 가족이 회원님을 비상 연락처로 등록해 두었다면, 그 가족의 차에 큰 사고가 났을 때 사고 기록을 여기서 볼 수 있습니다.</p>
+<h1>사고 기록 확인</h1>
+<p class="msg">White Box를 쓰는 분이 회원님을 비상 연락처로 저장해 두었다면, 그분의 차에 큰 사고가 났을 때 그 기록을 여기서 볼 수 있습니다.</p>
 
 <div class="card" id="login" hidden>
-  <h2>등록된 휴대폰 번호로 확인</h2>
+  <h2>저장된 휴대폰 번호로 확인</h2>
   <ul class="bullets">
     <li>볼 수 있는 것: <b>큰 사고(충돌 수준)의 기록</b> — 그때의 속도, 브레이크, 방향지시등, 조향, 위치</li>
-    <li>볼 수 없는 것: 평소 주행, 평소 위치, 아찔했던 순간들 — 차 주인만 봅니다</li>
+    <li>볼 수 없는 것: 평소 주행, 평소 위치, 아찔했던 순간 — 차주만 봅니다</li>
   </ul>
   <label for="phone">휴대폰 번호</label><input id="phone" inputmode="tel" autocomplete="tel" placeholder="010-1234-5678">
   <button class="wide" id="send">인증번호 받기</button>
@@ -28,7 +28,7 @@
 <div id="people"></div>
 
 <details class="card" id="about" hidden><summary>자세히</summary>
-  <p>사고 기록은 원래 차 주인의 휴대폰만 열 수 있게 암호화되어 있습니다. 큰 사고가 봉인될 때만 차량이 그 몇 분을 여는 열쇠를 서버에 따로 맡기고, 서버는 이 번호가 등록된 비상 연락처임을 확인한 뒤에만 그 열쇠를 건넵니다. 기록을 열면 차 주인의 화면에 열람 사실이 남습니다.</p>
+  <p>사고 기록은 원래 차주의 휴대폰만 열 수 있게 암호화되어 있습니다. 큰 사고가 보관될 때만 차가 그 구간을 여는 열쇠를 서버에 따로 맡기고, 서버는 이 번호가 비상 연락처로 저장된 번호인지 확인한 뒤에만 그 열쇠를 건넵니다. 기록을 보면 차주의 화면에 그 사실이 남습니다.</p>
 </details>
 </main>
 <script src="/codec.js"></script>
@@ -42,7 +42,7 @@ async function render() {
   if (!me) { WB.show('login'); WB.show('about', false); WB.$('people').innerHTML = ''; return; }
   WB.show('login', false);
   WB.show('about');
-  if (!me.people.length) { WB.$('people').innerHTML = '<div class="card"><p>이 번호를 비상 연락처로 등록한 분이 없습니다.</p></div>'; return; }
+  if (!me.people.length) { WB.$('people').innerHTML = '<div class="card"><p>이 번호를 비상 연락처로 저장한 분이 없습니다.</p></div>'; return; }
   const cards = [];
   for (const p of me.people) {
     const rows = [];
@@ -50,13 +50,13 @@ async function render() {
       const caps = (await WB.get(`/v1/capsules?device=${dev.id}&stream=${stream}`)) || [];
       for (const c of caps) rows.push(`<a class="row" href="/capsule#d=${dev.id}&s=${stream}&id=${encodeURIComponent(c.id)}"><span>${esc(WBPacket.TRIGGER[c.trigger] || c.trigger)}<br><span class="sub">${WB.when(c.sealedAtMs)}</span></span><span class="badge bad">큰 사고</span></a>`);
     }
-    cards.push(`<div class="card"><h2>${esc(p.owner)} 님의 차</h2><p class="msg">회원님은 '${esc(p.name)}'(으)로 등록되어 있습니다.</p>
+    cards.push(`<div class="card"><h2>${esc(p.owner)} 님의 차</h2><p class="msg">저장된 이름: ${esc(p.name)}</p>
       ${rows.join('') || '<p class="good">큰 사고 기록이 없습니다.</p>'}
       <button class="plain" data-leave="${p.contact}" data-owner="${esc(p.owner)}">비상 연락처에서 빠지기</button></div>`);
   }
   WB.$('people').innerHTML = cards.join('');
   document.querySelectorAll('[data-leave]').forEach((b) => b.onclick = async () => {
-    if (!confirm(`${b.dataset.owner} 님의 비상 연락처에서 빠질까요? 이제 그분의 사고 기록을 볼 수 없게 됩니다. 그분의 화면에 표시됩니다.`)) return;
+    if (!confirm(`${b.dataset.owner} 님의 비상 연락처에서 빠질까요? 이제 그분의 사고 기록을 볼 수 없고, 빠졌다는 사실이 그분의 화면에 표시됩니다.`)) return;
     await WB.post('/v1/contact/withdraw', { contact: b.dataset.leave }).catch((e) => alert(e.message));
     render();
   });
@@ -66,12 +66,12 @@ WB.$('send').onclick = async () => {
   try {
     await WB.post('/v1/otp', { phone: WB.$('phone').value, purpose: 'contact' });
     WB.show('otp-step');
-    WB.say('msg', '등록된 번호라면 인증번호가 문자로 갑니다.');
+    WB.say('msg', '저장된 번호라면 인증번호 문자가 갑니다.');
   } catch (e) { WB.say('msg', e.message, true); }
 };
 WB.$('go').onclick = async () => {
   try { await WB.post('/v1/login', { role: 'contact', phone: WB.$('phone').value, otp: WB.$('otp').value }); render(); }
-  catch (e) { WB.say('msg', '등록된 비상 연락처 번호가 아니거나 인증번호가 맞지 않습니다.', true); }
+  catch (e) { WB.say('msg', '비상 연락처로 저장된 번호가 아니거나 인증번호가 맞지 않습니다.', true); }
 };
 render();
 </script>

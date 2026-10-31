@@ -14,11 +14,11 @@ tr:first-child td{border-top:0}
 </head>
 <body><main>
 <p class="noprint"><a href="javascript:history.back()">← 돌아가기</a></p>
-<div id="loading" class="card"><p class="msg">기록을 여는 중… (이 휴대폰 안에서 풀고 확인합니다)</p></div>
+<div id="loading" class="card"><p class="msg">기록을 여는 중… (이 휴대폰 안에서 열고 확인합니다)</p></div>
 <div id="denied" class="card" hidden>
   <h2>이 기록을 열 수 없습니다</h2>
-  <p>차량 소유자이거나 등록된 비상 연락처라면 휴대폰 번호로 인증한 뒤 다시 열어 주세요.</p>
-  <a class="button-like" href="/me">소유자로 들어가기</a> <a class="button-like secondary" href="/contact">비상 연락처로 들어가기</a>
+  <p>차주이거나 비상 연락처에 저장된 분이라면, 휴대폰 번호로 인증한 뒤 다시 열어 주세요.</p>
+  <a class="button-like" href="/me">차주로 들어가기</a> <a class="button-like secondary" href="/contact">비상 연락처로 들어가기</a>
 </div>
 
 <div id="nokey" class="card" hidden>
@@ -42,7 +42,7 @@ tr:first-child td{border-top:0}
   <div class="card">
     <h2>감지 직전 운전자의 조작</h2>
     <ul class="bullets" id="lines"></ul>
-    <h3>감지 전후 10초 · 5초</h3>
+    <h3>감지 전 10초 ~ 후 5초</h3>
     <div id="graph"></div>
   </div>
   <div class="card" id="context-card" hidden>
@@ -55,7 +55,7 @@ tr:first-child td{border-top:0}
   </div>
   <div class="card noprint">
     <button class="wide secondary" onclick="print()">증거 요약 인쇄 · PDF로 저장</button>
-    <p class="msg">한 장짜리 요약으로 인쇄됩니다. 원본은 차량과 서버에 봉인된 그대로 남습니다.</p>
+    <p class="msg">한 장짜리 요약으로 인쇄됩니다. 원본은 차와 서버에 봉인된 그대로 남습니다.</p>
   </div>
   <details class="card"><summary>자세히 (검증 정보)</summary><div id="tech" class="tech"></div></details>
 </div>
@@ -155,15 +155,15 @@ function render(c, data, upToCause, events, t, v, trigger) {
     const dv = trigger && DELTA_KMH.includes(trigger.e.trigger) ? trigger.e.measured : null;
     facts.push(['속도', dv != null ? `${(after - dv).toFixed(0)} → ${after.toFixed(0)} km/h <small>(속도 변화 ${dv > 0 ? '+' : ''}${dv.toFixed(1)} km/h)</small>` : `${after.toFixed(0)} km/h`]);
   }
-  if (c.answer) facts.push(['운전자 답', ANSWER[c.answer]]);
+  if (c.answer) facts.push(['운전자의 대답', ANSWER[c.answer]]);
   WB.$('facts').innerHTML = facts.map(([k, val]) => `<tr><td>${k}</td><td>${val}</td></tr>`).join('');
 
   WB.$('mark').textContent = v.ok ? '✓' : '✗';
   WB.$('mark').className = 'mark ' + (v.ok ? 'good' : 'bad');
-  WB.$('verdict').textContent = v.ok ? '원본 그대로입니다 · 변조 없음' : '검증되지 않았습니다';
+  WB.$('verdict').textContent = v.ok ? '원본 그대로입니다 · 변조 없음' : '원본과 다릅니다';
   WB.$('verdict-sub').textContent = v.ok
-    ? `기록 ${v.chain.checked}건이 차량의 해시 체인과 서명에 맞는지 이 휴대폰에서 직접 확인했습니다.`
-    : `확인 결과: ${v.chain.reason || v.seals.find((x) => !x.ok)?.reason || '서버 서명이 맞지 않음'}. 원본은 차량에 그대로 있습니다.`;
+    ? `기록 ${v.chain.checked}건이 차의 해시 체인, 서명과 맞는지 이 휴대폰에서 직접 확인했습니다.`
+    : `확인 결과: ${v.chain.reason || v.seals.find((x) => !x.ok)?.reason || '서버 서명이 맞지 않음'}. 원본은 차에 그대로 있습니다.`;
 
   WB.$('lines').innerHTML = t.lines.map((l) => `<li>${esc(WBPacket.lineText(l))}</li>`).join('') || '<li>감지 직전 바뀐 조작이 없습니다.</li>';
   WB.$('graph').innerHTML = WBPacket.svg(t);
@@ -183,10 +183,10 @@ function render(c, data, upToCause, events, t, v, trigger) {
   const tech = [
     `캡슐 ${c.id} · 기록 #${c.firstSeq}–#${c.lastSeq} (${events.length}건 열람)`,
     `체인: ${v.chain.ok ? `해시·연결 ${v.chain.checked}건 확인` : `#${v.chain.brokenAt} ${v.chain.reason}`}`,
-    ...v.seals.map((x) => x.seal ? `차량 봉인 ${x.seal.final ? '최종' : '임시'} · ${WB.when(x.seal.at)} · ${x.ok ? '서명 유효' : x.reason} · 머리 해시 ${x.seal.head.slice(0, 16)}…` : `봉인: ${x.reason}`),
-    ...v.anchors.map((a) => `서버 앵커 #${a.head} · ${WB.when(a.at)} · ${a.signed ? '서버 서명 유효' : '서명 오류'}${a.agrees === false ? ' · 해시 불일치' : ''}`),
-    ...(v.attestation ? [`서버 봉인 (차량 무응답) · ${v.attestation.signed ? '서버 서명 유효' : '서명 오류'}`] : []),
-    data.keys.length ? `이 사고 기록에 맡겨진 열쇠 ${data.keys.length}분 분량으로 열었습니다 (평소 주행은 열리지 않음)` : '소유자 휴대폰의 열쇠로 열었습니다',
+    ...v.seals.map((x) => x.seal ? `차량 봉인 ${x.seal.final ? '최종' : '임시'} · ${WB.when(x.seal.at)} · ${x.ok ? '서명 유효' : x.reason} · 마지막 해시 ${x.seal.head.slice(0, 16)}…` : `봉인: ${x.reason}`),
+    ...v.anchors.map((a) => `서버 서명 기록 #${a.head} · ${WB.when(a.at)} · ${a.signed ? '서버 서명 유효' : '서명 오류'}${a.agrees === false ? ' · 해시 불일치' : ''}`),
+    ...(v.attestation ? [`서버 봉인 (차 신호 끊김) · ${v.attestation.signed ? '서버 서명 유효' : '서명 오류'}`] : []),
+    data.keys.length ? `서버에 맡겨 둔 이 사고 구간의 열쇠(${data.keys.length}분 분량)로 열었습니다 (평소 주행은 열리지 않음)` : '차주 휴대폰의 열쇠로 열었습니다',
     `감지 기준 기록 #${t.causeSeq ?? ''}`,
   ];
   WB.$('tech').innerHTML = tech.map(esc).join('<br>');

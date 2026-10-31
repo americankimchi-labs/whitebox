@@ -237,7 +237,7 @@ fun Route.phoneRoutes(service: MirrorService, identity: Identity) {
         val p = call.receiveParameters()
         val phone = normalizePhone(p["phone"].orEmpty()) ?: return@post call.fail("휴대폰 번호를 확인해 주세요.")
         val name = p["name"].orEmpty().trim().take(20).ifEmpty { return@post call.fail("이름을 입력해 주세요.") }
-        if (phone == identity.ownerPhone(owner)) return@post call.fail("본인 번호는 비상 연락처가 될 수 없습니다.")
+        if (phone == identity.ownerPhone(owner)) return@post call.fail("본인 번호는 비상 연락처로 저장할 수 없습니다.")
         identity.addContact(owner.id, name, phone)
         call.ok()
     }
