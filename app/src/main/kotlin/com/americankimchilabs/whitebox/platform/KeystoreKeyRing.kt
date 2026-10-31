@@ -17,7 +17,7 @@ private const val ALIAS = "whitebox-root-wrap"
 /**
  * The car's root keys, one per epoch: 256 random bits each, made on the car and stored only wrapped by a key inside
  * the Android Keystore (which never leaves it), so the chain on disk is unreadable without this device. The owner's
- * phone and the emergency contacts receive them wrapped to their own keys. Epoch 0 is the key made at installation.
+ * phone receives them wrapped to its own key. Epoch 0 is the key made at installation.
  */
 class KeystoreKeyRing(context: Context) : KeyRing {
     private val dir = File(context.filesDir, "keys").apply { mkdirs() }

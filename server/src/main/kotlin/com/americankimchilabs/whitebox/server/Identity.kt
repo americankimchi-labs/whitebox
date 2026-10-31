@@ -48,10 +48,11 @@ fun maskPhone(phone: String): String =
  *   the current owner, who can decline; without an answer the car moves after [TRANSFER_WAIT_MS] (a sold car whose
  *   seller ignores texts). From the request on, the car records under a new key epoch that nobody holds yet: it
  *   goes to the new owner if the car moves, back to the owner if they decline, so the wait loses nothing.
- * - Emergency contacts: invited by the owner, consent with their own number, approved after comparing check codes.
- *   Either side can end it; the car then starts a new key epoch so the former contact cannot read what follows.
- *   One person can be the contact of several owners.
- * - Recovery: a new phone of the owner gets the keys re-wrapped by any one active contact.
+ * - Emergency contacts: a name and number the owner enters, like the contact line of a hospital form. Nobody texts
+ *   them, not when added and not after a crash. They can come anytime, prove the number with a code, and open the
+ *   owner's severe crash capsules (whose minute keys the car hands the server); never everyday driving or location,
+ *   which stay readable by the owner's phone alone. One person can be the contact of several owners.
+ * - A new phone of the owner: the same number scans the car's QR again, and the car wraps every key for it.
  *
  * Kept on the local disk as small line records (phone numbers encrypted at rest and looked up by a keyed hash;
  * sessions only as hashes of their tokens, so a restart or a deployment signs nobody out); one-time codes and claim
@@ -66,11 +67,11 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
         val nameEnc: String,
         val phoneHash: String,
         val phoneEnc: String,
-        var ecdhKey: String? = null,
-        var state: String = INVITED,
-        val inviteToken: String,
+        val addedMs: Long,
+        /** Set when removed: by the owner, or by the contact leaving ([leftByContact]). */
+        var removedMs: Long? = null,
+        var leftByContact: Boolean = false,
     )
-    data class Recovery(val id: String, val ownerId: String, val ecdhKey: String, var done: Boolean = false)
     data class Transfer(
         val id: String,
         val deviceId: String,
@@ -94,12 +95,10 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
     private val owners = HashMap<String, Owner>()
     private val deviceOwner = HashMap<String, String>()
     private val wraps = HashMap<Pair<String, String>, MutableMap<Int, String>>() // (device, recipient) → epoch → sealed key
-    private val contacts = HashMap<String, Contact>()
-    private val recoveries = HashMap<String, Recovery>()
+    private val contacts = LinkedHashMap<String, Contact>()
     private val transfers = LinkedHashMap<String, Transfer>()
     private val pendingClaims = HashMap<String, String>() // device → CLAIMED frame not yet answered by the car
     private val transferFrames = HashMap<String, Pair<String, String>>() // device → (transfer, CLAIMPENDING/CLAIMDECLINED) until the car acks
-    private val pendingRotations = HashMap<String, Int>() // device → newest epoch when the rotation was asked
     private val sessions = HashMap<String, Session>()
     private val otps = HashMap<String, Otp>()
     private val claimCodes = HashMap<String, ClaimCode>()
@@ -119,11 +118,8 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
             "K" -> owners[f[1]]?.ecdhKey = f[2]
             "D" -> deviceOwner[f[1]] = f[2]
             "W" -> wraps.getOrPut(f[1] to f[2]) { sortedMapOf() }[f[3].toInt()] = f[4]
-            "WX" -> wraps.keys.filter { it.second == f[1] }.forEach { wraps.remove(it) }
-            "C" -> contacts[f[1]] = Contact(f[1], f[2], f[3], f[4], f[5], inviteToken = f[6])
-            "CK" -> contacts[f[1]]?.let { it.ecdhKey = f[2].ifEmpty { null }; it.state = f[3] }
-            "R" -> recoveries[f[1]] = Recovery(f[1], f[2], f[3])
-            "RD" -> recoveries[f[1]]?.done = true
+            "CN" -> contacts[f[1]] = Contact(f[1], f[2], f[3], f[4], f[5], f[6].toLong())
+            "CX" -> contacts[f[1]]?.let { it.removedMs = f[2].toLong(); it.leftByContact = f[3] == "1" }
             "P" -> pendingClaims[f[1]] = line.substringAfter("P|${f[1]}|")
             "PD" -> pendingClaims.remove(f[1])
             "PF" -> transferFrames[f[1]] = f[2] to line.substringAfter("PF|${f[1]}|${f[2]}|")
@@ -131,8 +127,6 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
             "T" -> transfers[f[1]] = Transfer(f[1], f[2], f[3], f[4], f[5], f[6], f[7], f[8].toLong())
             "TS" -> transfers[f[1]]?.state = f[2]
             "S" -> sessions[f[1]] = Session(f[2], f[3], f[4].toLong())
-            "Q" -> pendingRotations[f[1]] = f[2].toInt()
-            "QD" -> pendingRotations.remove(f[1])
         }
     }
 
@@ -175,8 +169,6 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
 
     private fun purposeText(p: String) = when (p) {
         "claim" -> "차량 연결"
-        "contact" -> "비상 연락처 등록"
-        "recover" -> "기록 복구"
         else -> "본인 확인"
     }
 
@@ -216,7 +208,7 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
         val hash = phoneHash(phone)
         val known = when (role) {
             OWNER -> owners.values.firstOrNull { it.phoneHash == hash }?.id
-            CONTACT -> hash.takeIf { contacts.values.any { it.phoneHash == hash && it.state in setOf(ACCEPTED, ACTIVE) } }
+            CONTACT -> hash.takeIf { contactsByPhoneHash(hash).isNotEmpty() }
             else -> null
         } ?: return null
         if (!checkOtp(phone, otp)) return null
@@ -340,10 +332,7 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
     fun putWrap(deviceId: String, recipientId: String, epoch: Int, sealed: String) {
         if (wraps[deviceId to recipientId]?.get(epoch) == sealed) return
         record("W", deviceId, recipientId, epoch.toString(), sealed)
-        if (deviceOwner[deviceId] == recipientId) {
-            pendingClaims[deviceId]?.let { record("PD", deviceId) }
-            pendingRotations[deviceId]?.let { asked -> if (epoch > asked) record("QD", deviceId) }
-        }
+        if (deviceOwner[deviceId] == recipientId) pendingClaims[deviceId]?.let { record("PD", deviceId) }
     }
 
     @Synchronized
@@ -355,115 +344,47 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
 
     // ---- emergency contacts ----
 
-    /** The owner invites a contact by name and number; the contact gets a link with a one-time token. */
+    /** The owner adds a contact by name and number. Nobody is asked or texted: the number is all it takes. */
     @Synchronized
-    fun invite(ownerId: String, name: String, phone: String, linkBase: String): Contact {
+    fun addContact(ownerId: String, name: String, phone: String): Contact {
+        val hash = phoneHash(phone)
+        contactsOf(ownerId).firstOrNull { it.phoneHash == hash }?.let { return it } // added twice: one entry
         val id = token(12)
-        val inviteToken = token()
-        record("C", id, ownerId, key.encryptAtRest(name, "name|$id"), phoneHash(phone), key.encryptAtRest(phone, "phone|$id"), inviteToken)
-        val ownerPhone = owners[ownerId]?.let(::ownerPhone)?.let(::maskPhone) ?: ""
-        sms.send(phone, "[White Box] $ownerPhone 님이 회원님을 비상 연락처로 등록하려 합니다. 동의하시면 열어 주세요: $linkBase/contact#$inviteToken")
+        record("CN", id, ownerId, key.encryptAtRest(name, "name|$id"), hash, key.encryptAtRest(phone, "phone|$id"), clock().toString())
         return contacts.getValue(id)
     }
-
-    @Synchronized
-    fun contactByInvite(token: String): Contact? = contacts.values.firstOrNull { it.inviteToken == token && it.state == INVITED }
 
     fun contactName(c: Contact) = key.decryptAtRest(c.nameEnc, "name|${c.id}")
     fun contactPhone(c: Contact) = key.decryptAtRest(c.phoneEnc, "phone|${c.id}")
 
-    /** The invited person consented and proved the invited number; returns the session id (their number's hash). */
-    @Synchronized
-    fun accept(token: String, phone: String, otp: String, ecdhKey: String): String? {
-        val c = contactByInvite(token) ?: return null
-        if (c.phoneHash != phoneHash(phone) || !checkOtp(phone, otp)) return null
-        record("CK", c.id, ecdhKey, ACCEPTED)
-        return c.phoneHash
-    }
-
-    /** The owner's phone wrapped the keys for the contact: the contact is active. */
-    @Synchronized
-    fun activate(ownerId: String, contactId: String): Boolean {
-        val c = contacts[contactId]?.takeIf { it.ownerId == ownerId && it.ecdhKey != null && it.state in setOf(ACCEPTED, ACTIVE) } ?: return false
-        if (c.state != ACTIVE) record("CK", c.id, c.ecdhKey!!, ACTIVE)
-        return true
-    }
-
-    /**
-     * Ends a contact (the owner removed them, or they withdrew): their wraps are deleted and each of the owner's cars
-     * is asked to start a new key epoch, so nothing recorded afterwards is readable to them.
-     */
+    /** Ends a contact: the owner removed them, or they took themselves off ([byContact]); they can no longer open anything. */
     @Synchronized
     fun removeContact(contactId: String, byContact: Boolean): Boolean {
-        val c = contacts[contactId]?.takeIf { it.state != REMOVED } ?: return false
-        val wasHolding = c.state == ACTIVE
-        record("CK", c.id, c.ecdhKey.orEmpty(), REMOVED)
-        record("WX", c.id)
-        if (wasHolding) for (d in devicesOf(c.ownerId)) record("Q", d, (wraps[d to c.ownerId]?.keys?.maxOrNull() ?: 0).toString())
-        if (byContact) owners[c.ownerId]?.let { sms.send(ownerPhone(it), "[White Box] ${contactName(c)} 님이 비상 연락처 등록을 해제했습니다. 다른 분을 등록해 두시길 권합니다: /me") }
+        val c = contacts[contactId]?.takeIf { it.removedMs == null } ?: return false
+        record("CX", c.id, clock().toString(), if (byContact) "1" else "0")
         return true
     }
 
     @Synchronized
-    fun pendingRotation(deviceId: String): Boolean = pendingRotations.containsKey(deviceId)
+    fun contactsOf(ownerId: String): List<Contact> = contacts.values.filter { it.ownerId == ownerId && it.removedMs == null }
 
+    /** Contacts who took themselves off this owner's list (shown once on the owner's page). */
     @Synchronized
-    fun contactsOf(ownerId: String): List<Contact> = contacts.values.filter { it.ownerId == ownerId && it.state != REMOVED }.sortedBy { it.id }
+    fun contactsWhoLeft(ownerId: String): List<Contact> = contacts.values.filter { it.ownerId == ownerId && it.leftByContact }
 
     /** Every person this number is an emergency contact for (one entry per owner). */
     @Synchronized
-    fun contactsByPhoneHash(hash: String): List<Contact> = contacts.values.filter { it.phoneHash == hash && it.state in setOf(ACCEPTED, ACTIVE) }
+    fun contactsByPhoneHash(hash: String): List<Contact> = contacts.values.filter { it.phoneHash == hash && it.removedMs == null }
+
+    @Synchronized
+    fun isContactNumber(phone: String): Boolean = contactsByPhoneHash(phoneHash(phone)).isNotEmpty()
 
     @Synchronized
     fun contact(id: String): Contact? = contacts[id]
 
-    // ---- recovery: a new phone gets access through any one contact ----
-
-    @Synchronized
-    fun startRecovery(phone: String, otp: String, ecdhKey: String, linkBase: String): Pair<Recovery, String>? {
-        val owner = owners.values.firstOrNull { it.phoneHash == phoneHash(phone) } ?: return null
-        if (!checkOtp(phone, otp)) return null
-        // The same phone asking again (it lost its session) resumes its request: no duplicate, no second text.
-        recoveries.values.firstOrNull { it.ownerId == owner.id && it.ecdhKey == ecdhKey && !it.done }?.let { return it to newSession(RECOVERING, it.id) }
-        val id = token(12)
-        record("R", id, owner.id, ecdhKey)
-        for (c in contactsOf(owner.id).filter { it.state == ACTIVE }) {
-            sms.send(contactPhone(c), "[White Box] ${maskPhone(phone)} 님이 새 휴대폰으로 기록 복구를 요청했습니다. 본인과 통화해 확인 코드를 맞춰 본 뒤 승인해 주세요: $linkBase/contact")
-        }
-        return recoveries.getValue(id) to newSession(RECOVERING, id)
-    }
-
-    @Synchronized
-    fun recovery(id: String): Recovery? = recoveries[id]
-
-    @Synchronized
-    fun pendingRecoveries(ownerId: String): List<Recovery> = recoveries.values.filter { it.ownerId == ownerId && !it.done }
-
-    /**
-     * An active contact re-wrapped every key it holds for the recovering phone: that phone's key becomes the owner's.
-     * [sealed] maps (device, epoch) to the wrap and must cover every key the contact holds for this owner.
-     */
-    @Synchronized
-    fun completeRecovery(recoveryId: String, contactId: String, sealed: Map<Pair<String, Int>, String>): Boolean {
-        val r = recoveries[recoveryId]?.takeIf { !it.done } ?: return false
-        val c = contacts[contactId]?.takeIf { it.ownerId == r.ownerId && it.state == ACTIVE } ?: return false
-        // Every key the contact holds, including a car the owner has since sold (its records stay the owner's).
-        val held = devicesHeldBy(c.id).flatMap { d -> wraps(d, c.id).map { d to it.epoch } }.toSet()
-        if (held.isEmpty() || sealed.keys != held) return false
-        sealed.forEach { (de, s) -> record("W", de.first, r.ownerId, de.second.toString(), s) }
-        record("K", r.ownerId, r.ecdhKey)
-        record("RD", r.id)
-        return true
-    }
-
     companion object {
         const val OWNER = "owner"
         const val CONTACT = "contact"
-        const val RECOVERING = "recovering"
-        const val INVITED = "invited"
-        const val ACCEPTED = "accepted"
-        const val ACTIVE = "active"
-        const val REMOVED = "removed"
         const val PENDING = "pending"
         const val APPROVED = "approved"
         const val AUTO_APPROVED = "auto"

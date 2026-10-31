@@ -3,7 +3,9 @@ package com.americankimchilabs.whitebox.server
 import com.americankimchilabs.whitebox.core.Clock
 import com.americankimchilabs.whitebox.core.MirrorChannel
 import com.americankimchilabs.whitebox.data.EpochRecordCipher
+import com.americankimchilabs.whitebox.data.RecordCipher
 import com.americankimchilabs.whitebox.data.MemoryKeyRing
+import com.americankimchilabs.whitebox.data.CapsuleShares
 import com.americankimchilabs.whitebox.data.ClaimClient
 import com.americankimchilabs.whitebox.data.FileEventStore
 import com.americankimchilabs.whitebox.data.MirrorProtocol
@@ -12,7 +14,9 @@ import com.americankimchilabs.whitebox.data.Outbox
 import com.americankimchilabs.whitebox.data.Recorder
 import com.americankimchilabs.whitebox.data.SealStore
 import com.americankimchilabs.whitebox.data.Signer
+import com.americankimchilabs.whitebox.domain.AudioEvent
 import com.americankimchilabs.whitebox.domain.ChainEntry
+import com.americankimchilabs.whitebox.domain.Chirp
 import com.americankimchilabs.whitebox.domain.EscalationLevel
 import com.americankimchilabs.whitebox.domain.RecorderEvent
 import com.americankimchilabs.whitebox.domain.SignalSample
@@ -46,7 +50,10 @@ import kotlin.system.exitProcess
  * A simulated car for the mirror, so the dashboard can be explored without the Pleos emulator: the scripted demo
  * drive (lane changes, hard brake, crash) runs in real time through the car's own recorder and outbox code and is
  * mirrored over the same protocol. By default the car "loses power" right after the crash, so the server's
- * dead-man switch seals and notifies; with `--drive-on` the drive ends normally (stillness, all-clear).
+ * dead-man switch seals what it received; with `--drive-on` the drive ends normally (stillness, all-clear). Like the
+ * car, it plays the dashcam sync chirp every few seconds while driving and records each playback; at the end it
+ * writes what a dashcam in the cabin would have heard (a WAV named by a dashcam clock running 2.7 s fast), to try
+ * the dashcam sync on the capsule page.
  *
  *     ./gradlew :server:run                          # terminal 1, then open http://localhost:8080
  *     ./gradlew :server:demoCar                      # terminal 2
@@ -70,9 +77,13 @@ fun main(args: Array<String>): Unit = runBlocking {
     val store = FileEventStore(dir, cipher = EpochRecordCipher(ring))
     val seals = SealStore(dir)
     // A test car takes part in improving detection (a real driver is asked once, and it is off unless they agree).
-    val outbox = Outbox(store, seals, channel, dir) { true }
+    val outbox = Outbox(store, seals, channel, dir, consent = { true }, minuteKey = { e, m -> ring.key(e)?.let { RecordCipher.minuteKey(it, m) } })
     val recorder = Recorder(store, seals, signer, clock, outbox::onSeal)
     val work = launch(Dispatchers.Default) { outbox.start(this, recorder) }
+    val web = url.replaceFirst("ws", "http").substringBefore("/v1/")
+    // The evidence packet's QR, as the car shows it on its packet screen.
+    val shares = CapsuleShares(store, channel, dir, MirrorProtocol.deviceId(signer.publicKey), MirrorProtocol.STREAM_REPLAY, { e, m -> ring.key(e)?.let { RecordCipher.minuteKey(it, m) } })
+    val sharing = launch(Dispatchers.Default) { shares.start(this) }
 
     say("connecting to $url")
     if (withTimeoutOrNull(10_000) { channel.connected.first { it } } == null) {
@@ -92,7 +103,6 @@ fun main(args: Array<String>): Unit = runBlocking {
             say("the mirror gave no claim code")
             exitProcess(1)
         }
-        val web = url.replaceFirst("ws", "http").substringBefore("/v1/")
         say("connect a phone: open this in a browser (the QR on a real car holds the same address)")
         println()
         println("    $web/claim#${waiting.code}.${waiting.secret}")
@@ -109,6 +119,17 @@ fun main(args: Array<String>): Unit = runBlocking {
     val powerLossAtMs = DemoDrive.IMPACT_AT_MS + POWER_LOSS_AFTER_IMPACT_MS
     say(if (driveOn) "driving the demo drive (≈ 70 s), ending normally" else "driving the demo drive; crash at ${DemoDrive.IMPACT_AT_MS / 1000.0} s, then power loss")
     val fixes = launch { ScriptedLocationSource(DemoDrive.locations(), clock).fixes().collect { recorder.record(ChainEntry.Location(it)) } }
+    val driveStartWall = System.currentTimeMillis()
+    val played = mutableListOf<Long>()
+    val chirps = launch {
+        var id = 0
+        while (true) {
+            val at = clock.now()
+            recorder.record(ChainEntry.Audio(AudioEvent.Beacon(id++, at), clock.now()))
+            synchronized(played) { played += at.wallMillis }
+            delay(Tuning.CHIRP_PERIOD_S * 1_000L)
+        }
+    }
     var level = EscalationLevel.NORMAL
     var scriptMs = 0L
     for (step in DemoDrive.signals()) {
@@ -122,6 +143,9 @@ fun main(args: Array<String>): Unit = runBlocking {
         }
     }
     fixes.cancel()
+    chirps.cancel()
+    val wav = writeDashcamStandIn(dir, driveStartWall, System.currentTimeMillis(), synchronized(played) { played.toList() })
+    val qrLink = recorder.capsules.value.lastOrNull { it.capsule.trigger.severe }?.capsule?.let { shares.link(it, web) }
 
     if (driveOn) {
         delay(Tuning.NORMAL_BATCH_INTERVAL_S * 1_000L + 1_000) // the last batch
@@ -129,13 +153,46 @@ fun main(args: Array<String>): Unit = runBlocking {
     } else {
         delay(500) // frames already handed to the socket finish leaving, as they would from a real car
         say("POWER LOSS: the car stops sending (records up to here are on the server)")
-        say("the server seals what it received after ${Tuning.DEADMAN_SEAL_SILENCE_S} s of silence and, because the crash was severe, issues the emergency notice after ${Tuning.DEADMAN_NOTIFY_SILENCE_S} s")
+        say("the server seals what it received after ${Tuning.DEADMAN_SEAL_SILENCE_S} s of silence (nobody is texted; the emergency contacts can open the crash on their page)")
     }
     channel.close()
     work.cancel()
     say("local chain of this run: ${dir.absolutePath}")
+    say("dashcam stand-in (pick it under 블랙박스 영상과 맞춰 보기 on the capsule page): ${wav.absolutePath}")
+    qrLink?.let { say("the crash's evidence-packet QR (what an insurer or the police would scan; opens without signing in):\n\n    $it\n") }
+    sharing.cancel()
     exitProcess(0)
 }
+
+/**
+ * What a dashcam in the cabin would have recorded of the drive: road noise and engine hum, with each chirp at the
+ * instant the car played it, a little quieter than played. Its file name carries the dashcam's own clock, which runs
+ * [DASHCAM_CLOCK_ERROR_MS] fast and started recording a second before the drive: the sync must find the true offset.
+ */
+private fun writeDashcamStandIn(dir: java.io.File, startWall: Long, endWall: Long, played: List<Long>): java.io.File {
+    val rate = 48_000
+    val recStart = startWall - 1_000
+    val n = ((endWall - recStart + 2_000) * rate / 1_000).toInt()
+    val pcm = FloatArray(n)
+    val random = java.util.Random(7)
+    for (i in 0 until n) pcm[i] = (0.04 * random.nextGaussian() + 0.08 * Math.sin(2 * Math.PI * 95.0 * i / rate)).toFloat()
+    val chirp = Chirp.samples(rate)
+    for (p in played) {
+        val at = ((p - recStart) * rate / 1_000).toInt()
+        for (i in chirp.indices) if (at + i in 0 until n) pcm[at + i] += chirp[i] * 0.5f
+    }
+    val name = java.text.SimpleDateFormat("yyyyMMdd_HHmmss").format(java.util.Date(recStart + DASHCAM_CLOCK_ERROR_MS))
+    val out = dir.resolve("$name.wav")
+    val data = java.nio.ByteBuffer.allocate(44 + n * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+    data.put("RIFF".toByteArray()).putInt(36 + n * 2).put("WAVE".toByteArray()).put("fmt ".toByteArray())
+        .putInt(16).putShort(1).putShort(1).putInt(rate).putInt(rate * 2).putShort(2).putShort(16)
+        .put("data".toByteArray()).putInt(n * 2)
+    for (v in pcm) data.putShort((v.coerceIn(-1f, 1f) * 32_767).toInt().toShort())
+    out.writeBytes(data.array())
+    return out
+}
+
+private const val DASHCAM_CLOCK_ERROR_MS = 2_700L
 
 /** The demo car "loses power" this long after the impact: the crash records go out first. */
 private const val POWER_LOSS_AFTER_IMPACT_MS = 300L

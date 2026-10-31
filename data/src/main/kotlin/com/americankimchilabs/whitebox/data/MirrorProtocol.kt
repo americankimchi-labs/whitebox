@@ -25,6 +25,11 @@ import java.util.Base64
  *   checking the claim's MAC); every epoch that belongs to that owner is sent.
  * - `WINDOWDEL|pseudonym` — the driver withdrew consent: delete a capsule window sent earlier.
  * - `TRANSFERACK|transferId` — the car handled a pending or declined takeover.
+ * - `ESCROW|capsuleId|epoch|minute|sealed` — after each seal of a severe capsule, the key of each minute it covers,
+ *   sealed to the server's key: the owner or a registered emergency contact can open that crash (and only that)
+ *   without the car or the owner's phone.
+ * - `SHARE|capsuleId|codeHash|expiresMs` — the driver showed a capsule's QR: the link's code (its hash here) lets
+ *   anyone holding the link fetch that capsule's encrypted records; the keys travel only in the link.
  * - `WINDOW|pseudonym|sealed` — a closed capsule's signal window (core signals, triggers, the driver's answer),
  *   sealed to the server's key under a random pseudonym, with no device id: the labeled data the terms allow.
  *
@@ -40,8 +45,7 @@ import java.util.Base64
  *   by the car as for a claim); the current owner is asked. The car starts a new key epoch at once that belongs to
  *   nobody yet: whoever ends up owning the car gets it, so nothing recorded during the wait goes to the wrong person.
  * - `CLAIMDECLINED|transferId` — the owner declined: the pending epoch is the owner's.
- * - `ROTATE` — start a new key epoch (an emergency contact was removed); the owner's phone re-shares it with the
- *   remaining contacts.
+ * - `ESCROWACK|epoch|minute`, `SHAREACK|capsuleId`
  * - `WINDOWDELACK|pseudonym`
  */
 object MirrorProtocol {
@@ -82,7 +86,6 @@ object MirrorProtocol {
         data class ClaimCode(val code: String) : Frame
         data class Claimed(val ownerId: String, val phoneKey: String, val mac: String, val maskedPhone: String) : Frame
         data class Wrap(val recipientId: String, val epoch: Int, val sealed: String) : Frame
-        data object Rotate : Frame
         data class ClaimPending(val transferId: String, val phoneKey: String, val mac: String, val maskedPhone: String) : Frame
         data class ClaimDeclined(val transferId: String) : Frame
         data class TransferAck(val transferId: String) : Frame
@@ -91,6 +94,17 @@ object MirrorProtocol {
         data class WindowAck(val pseudonym: String) : Frame
         data class Ack(val seq: Long) : Frame
         data class SealAck(val sealKey: String) : Frame
+
+        /**
+         * The key of one minute of a severe capsule, sealed to the server's key, so the owner or a registered
+         * emergency contact can open that crash without the car or the owner's phone. Everyday minutes never leave.
+         */
+        data class Escrow(val capsuleId: String, val epoch: Int, val minute: Long, val sealed: String) : Frame
+        data class EscrowAck(val epoch: Int, val minute: Long) : Frame
+
+        /** The driver showed a capsule's QR: whoever presents the code whose hash this is may fetch that capsule. */
+        data class Share(val capsuleId: String, val codeHash: String, val expiresMs: Long) : Frame
+        data class ShareAck(val capsuleId: String) : Frame
     }
 
     private val b64e = Base64.getEncoder()
@@ -110,7 +124,6 @@ object MirrorProtocol {
         is Frame.ClaimCode -> "CLAIMCODE|${f.code}"
         is Frame.Claimed -> "CLAIMED|${f.ownerId}|${f.phoneKey}|${f.mac}|${f.maskedPhone}"
         is Frame.Wrap -> "WRAP|${f.recipientId}|${f.epoch}|${f.sealed}"
-        Frame.Rotate -> "ROTATE"
         is Frame.ClaimPending -> "CLAIMPENDING|${f.transferId}|${f.phoneKey}|${f.mac}|${f.maskedPhone}"
         is Frame.ClaimDeclined -> "CLAIMDECLINED|${f.transferId}"
         is Frame.TransferAck -> "TRANSFERACK|${f.transferId}"
@@ -118,6 +131,10 @@ object MirrorProtocol {
         is Frame.WindowDeleted -> "WINDOWDELACK|${f.pseudonym}"
         is Frame.Ack -> "ACK|${f.seq}"
         is Frame.SealAck -> "SEALACK|${f.sealKey}"
+        is Frame.Escrow -> "ESCROW|${f.capsuleId}|${f.epoch}|${f.minute}|${f.sealed}"
+        is Frame.EscrowAck -> "ESCROWACK|${f.epoch}|${f.minute}"
+        is Frame.Share -> "SHARE|${f.capsuleId}|${f.codeHash}|${f.expiresMs}"
+        is Frame.ShareAck -> "SHAREACK|${f.capsuleId}"
     }
 
     /** Null for anything malformed: a bad frame is dropped, never allowed to break the channel. */
@@ -144,7 +161,6 @@ object MirrorProtocol {
             "CLAIMCODE" -> Frame.ClaimCode(rest)
             "CLAIMED" -> rest.split("|").let { Frame.Claimed(it[0], it[1], it[2], it[3]) }
             "WRAP" -> rest.split("|", limit = 3).let { Frame.Wrap(it[0], it[1].toInt(), it[2]) }
-            "ROTATE" -> Frame.Rotate
             "CLAIMPENDING" -> rest.split("|").let { Frame.ClaimPending(it[0], it[1], it[2], it[3]) }
             "CLAIMDECLINED" -> Frame.ClaimDeclined(rest)
             "TRANSFERACK" -> Frame.TransferAck(rest)
@@ -152,6 +168,10 @@ object MirrorProtocol {
             "WINDOWDELACK" -> Frame.WindowDeleted(rest)
             "ACK" -> Frame.Ack(rest.toLong())
             "SEALACK" -> Frame.SealAck(rest)
+            "ESCROW" -> rest.split("|", limit = 4).let { Frame.Escrow(it[0], it[1].toInt(), it[2].toLong(), it[3]) }
+            "ESCROWACK" -> rest.split("|").let { Frame.EscrowAck(it[0].toInt(), it[1].toLong()) }
+            "SHARE" -> rest.split("|").let { Frame.Share(it[0], it[1], it[2].toLong()) }
+            "SHAREACK" -> Frame.ShareAck(rest)
             else -> null
         }
     }.getOrNull()

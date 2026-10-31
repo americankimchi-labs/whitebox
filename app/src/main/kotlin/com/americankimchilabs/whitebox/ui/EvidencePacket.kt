@@ -104,7 +104,11 @@ private fun buildPacket(seal: CapsuleSeal, session: ActiveSession): Packet {
 @Composable
 fun EvidencePacket(labels: Labels, seal: CapsuleSeal, session: ActiveSession, onBack: () -> Unit) {
     var packet by remember(seal) { mutableStateOf<Packet?>(null) }
-    LaunchedEffect(seal) { packet = withContext(Dispatchers.IO) { buildPacket(seal, session) } }
+    var shareLink by remember(seal) { mutableStateOf<String?>(null) }
+    LaunchedEffect(seal) {
+        packet = withContext(Dispatchers.IO) { buildPacket(seal, session) }
+        shareLink = withContext(Dispatchers.IO) { session.webBase?.let { base -> session.shares?.link(seal.capsule, base) } }
+    }
 
     Column(Modifier.fillMaxSize()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -128,8 +132,18 @@ fun EvidencePacket(labels: Labels, seal: CapsuleSeal, session: ActiveSession, on
                     if (context.isEmpty()) Line(stringResource(R.string.packet_no_data))
                     context.forEach { (k, v) -> Field(k, v, labelWidth = 150.dp, top = 6.dp) }
                 }
-                Box(Modifier.padding(top = 8.dp).size(220.dp).border(2.dp, Color.Gray), contentAlignment = Alignment.Center) {
-                    Text(stringResource(R.string.packet_qr), color = Color.Gray, textAlign = TextAlign.Center, style = MaterialTheme.typography.titleMedium)
+                // Shown to an insurer or the police: their phone opens this capsule alone and checks it itself.
+                Column(Modifier.padding(top = 8.dp).width(220.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    val link = shareLink
+                    if (link != null) {
+                        val image = remember(link) { qr(link, 440) }
+                        androidx.compose.foundation.Image(image, contentDescription = stringResource(R.string.packet_qr_hint), modifier = Modifier.size(220.dp))
+                        Text(stringResource(R.string.packet_qr_hint), textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium)
+                    } else {
+                        Box(Modifier.size(220.dp).border(2.dp, Color.Gray), contentAlignment = Alignment.Center) {
+                            Text(stringResource(R.string.packet_qr_none), color = Color.Gray, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
+                        }
+                    }
                 }
             }
             Column(Modifier.fillMaxWidth().padding(top = 8.dp).ccpRow().padding(8.dp)) {

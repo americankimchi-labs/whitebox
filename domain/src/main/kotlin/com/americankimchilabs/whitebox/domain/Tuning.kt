@@ -55,6 +55,9 @@ object Tuning {
 
     // Capsules
     const val CAPSULE_PRE_WINDOW_S = 120
+
+    /** Records this far apart (by the car's clock) belong to different drives in the owner's drive list. */
+    const val DRIVE_GAP_MS = 5 * 60_000L
     const val CAPSULE_STILLNESS_CLOSE_S = 10
 
     /** A capsule that never reaches stillness is closed after this long. */

@@ -72,7 +72,6 @@ class ClaimClient(private val channel: MirrorChannel, private val ring: KeyRing,
                 is Frame.Claimed -> onClaimed(f)
                 is Frame.ClaimPending -> onClaimPending(f)
                 is Frame.ClaimDeclined -> onDeclined(f.transferId)
-                Frame.Rotate -> onRotate()
                 else -> Unit
             }
         }
@@ -139,16 +138,6 @@ class ClaimClient(private val channel: MirrorChannel, private val ring: KeyRing,
         wrapAll(f.ownerId, f.phoneKey)
         // The owner re-connecting their own phone does not end a takeover request that is still open.
         _state.value = transfer()?.let { State.TransferPending(it.masked) } ?: State.Claimed(f.maskedPhone)
-    }
-
-    /** An emergency contact was removed: a new epoch for the same owner, from now on. */
-    @Synchronized
-    private fun onRotate() {
-        val o = owner() ?: return
-        // During a takeover the car already records under a key nobody holds; whoever gets it, a removed contact won't.
-        if (transfer() != null) return
-        ring.rotate(o.id)
-        wrapAll(o.id, o.phoneKey)
     }
 
     private fun wrapAll(ownerId: String, phoneKey: String) {

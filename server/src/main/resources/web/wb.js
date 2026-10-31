@@ -1,5 +1,6 @@
-// White Box phone pages: keys and decryption happen here, in the phone's browser. The server only ever sees public
-// keys, wrapped keys and encrypted records. Constructions match the car's (P-256 ECDH + HKDF-SHA256 + AES-256-GCM).
+// White Box phone pages: keys and decryption happen here, in the phone's browser. The server sees public keys,
+// wrapped keys and encrypted records (and, for a severe crash only, the minute keys the car handed it for the
+// family). Constructions match the car's (P-256 ECDH + HKDF-SHA256 + AES-256-GCM).
 const WB = (() => {
   const enc = new TextEncoder();
   const dec = new TextDecoder();
@@ -7,7 +8,6 @@ const WB = (() => {
 
   const b64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)));
   const unb64 = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
-  const concat = (a, b) => { const out = new Uint8Array(a.length + b.length); out.set(a); out.set(b, a.length); return out; };
 
   // ---- this phone's key, kept in the browser (the private half cannot be exported) ----
   function db() {
@@ -36,9 +36,7 @@ const WB = (() => {
     });
   }
 
-  // One key per role (owner / contact / recovering phone): on a real phone only one is used; on one test computer
-  // all three can live side by side in the same browser.
-  /** Makes a new key pair for this phone in [role] and keeps it; returns the public key (SPKI, base64). */
+  /** Makes a new key pair for this phone as the car's owner and keeps it; returns the public key (SPKI, base64). */
   async function newPhoneKey(role) {
     const pair = await subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
     const pub = b64(await subtle.exportKey('spki', pair.publicKey));
@@ -46,7 +44,6 @@ const WB = (() => {
     return pub;
   }
   async function phoneKey(role) { return stored('ecdh-' + role); }
-  async function moveKey(from, to) { const k = await stored('ecdh-' + from); if (k) await store('ecdh-' + to, k); }
 
   async function aesFrom(own, otherSpki, info) {
     const other = await subtle.importKey('spki', otherSpki, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
@@ -67,20 +64,6 @@ const WB = (() => {
     return new Uint8Array(await subtle.decrypt({ name: 'AES-GCM', iv: bytes.slice(0, 12) }, key, bytes.slice(12)));
   }
 
-  /** Seals [bytes] for another phone's public key (wrapping the root key for a contact or a recovered phone). */
-  async function seal(recipientSpkiB64, bytes) {
-    const eph = await subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
-    const key = await aesFrom(eph.privateKey, unb64(recipientSpkiB64), 'whitebox-wrap-v1');
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ct = new Uint8Array(await subtle.encrypt({ name: 'AES-GCM', iv }, key, bytes));
-    return 'e1.' + b64(await subtle.exportKey('spki', eph.publicKey)) + '.' + b64(concat(iv, ct));
-  }
-
-  const isSealed = (s) => s.startsWith('v1.') || s.startsWith('v2.');
-  // `v2.<epoch>.<body>` names the car key it was made with; `v1.<body>` is epoch 0.
-  const epochOf = (s) => s.startsWith('v2.') ? Number(s.split('.')[1]) : 0;
-  const bodyOf = (s) => s.startsWith('v2.') ? s.split('.').slice(2).join('.') : s.slice(3);
-
   /** Opens every car key in [wraps] ({epoch, sealed}) with this phone's [role] key: epoch → key bytes. */
   async function unwrapAll(wraps, role) {
     const roots = {};
@@ -88,20 +71,14 @@ const WB = (() => {
     return roots;
   }
 
-  /** Decrypts one chain record with the car key of its epoch; null if this phone holds no such key. */
-  async function openRecord(roots, entry) {
-    const f = entry.split('|');
-    let sealed, aad;
-    if (f[0] === 'S' && isSealed(f[2])) { sealed = f[2]; aad = `S|${f[1]}|${f[3]}`; }
-    else if (f[0] === 'L' && isSealed(f[1])) { sealed = f[1]; aad = `L|${f[2]}`; }
-    else return null;
-    const root = roots[epochOf(sealed)];
-    if (!root) return null;
-    const key = await subtle.importKey('raw', root, 'AES-GCM', false, ['decrypt']);
-    const bytes = unb64(bodyOf(sealed));
-    const plain = dec.decode(await subtle.decrypt({ name: 'AES-GCM', iv: bytes.slice(0, 12), additionalData: enc.encode(aad) }, key, bytes.slice(12)));
-    const time = Number((f[0] === 'S' ? f[3] : f[2]).split(';')[1]);
-    return { type: f[0], kind: f[0] === 'S' ? f[1] : 'LOCATION', value: plain, time };
+  /**
+   * The keys this phone holds for [device] (its owner's wraps, opened with this phone's key) as a WBCodec keyring;
+   * empty if this phone has none (a new phone, or the family's).
+   */
+  async function ownerKeys(me, device) {
+    const key = me && await phoneKey('owner');
+    const dev = me && key && key.publicKey === me.key ? me.devices.find((d) => d.id === device) : null;
+    return WBCodec.keyring({ roots: dev ? await unwrapAll(dev.wraps, 'owner') : {} });
   }
 
   /** Proof for the car that this phone saw its screen: HMAC-SHA256 with the QR secret. */
@@ -110,7 +87,7 @@ const WB = (() => {
     return b64(await subtle.sign('HMAC', k, enc.encode(`claim|${code}|${keyB64}`)));
   }
 
-  /** A short code two people read to each other to be sure a key is really the other phone's (not swapped). */
+  /** A short fingerprint of a key, for the "자세히" view. */
   async function checkCode(keyB64) {
     const h = new Uint8Array(await subtle.digest('SHA-256', unb64(keyB64)));
     const n = ((h[0] << 24) | (h[1] << 16) | (h[2] << 8) | h[3]) >>> 0;
@@ -129,21 +106,19 @@ const WB = (() => {
     if (r.status === 401) return null;
     return r.json();
   }
-  async function postPairs(path, pairs) {
-    const body = new URLSearchParams();
-    for (const [k, v] of pairs) body.append(k, v);
-    const r = await fetch(path, { method: 'POST', body, credentials: 'same-origin' });
-    const j = await r.json();
-    if (!r.ok || j.ok === false) throw new Error(j.error || '실패했습니다.');
-    return j;
-  }
-
   const $ = (id) => document.getElementById(id);
   const show = (id, on = true) => { $(id).hidden = !on; };
   const say = (id, text, bad = false) => { const e = $(id); e.textContent = text; e.className = bad ? 'msg bad' : 'msg'; };
   const ago = (ms) => ms == null ? '' : ms < 60000 ? `${Math.round(ms / 1000)}초 전` : `${Math.round(ms / 60000)}분 전`;
   const when = (ms) => new Date(ms).toLocaleString('ko-KR');
+  const day = (ms) => new Date(ms).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
+  const clock = (ms) => new Date(ms).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' });
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  /** `#d=…&s=…&id=…` → {d, s, id}: page parameters travel in the fragment, which never reaches a server log. */
+  const params = () => Object.fromEntries(new URLSearchParams(location.hash.slice(1)));
+  /** Opens the place in Kakao Map, only when the person taps it (until then the position stays on this phone). */
+  const mapLink = (lat, lon) => `https://map.kakao.com/link/map/${encodeURIComponent('기록 위치')},${lat.toFixed(6)},${lon.toFixed(6)}`;
   const secure = () => window.isSecureContext && !!crypto.subtle;
 
-  return { newPhoneKey, phoneKey, moveKey, unwrap, unwrapAll, seal, openRecord, claimMac, checkCode, post, get, postPairs, $, show, say, ago, when, secure, b64, unb64 };
+  return { newPhoneKey, phoneKey, unwrap, unwrapAll, ownerKeys, claimMac, checkCode, post, get, $, show, say, ago, when, day, clock, esc, params, mapLink, secure, b64, unb64 };
 })();

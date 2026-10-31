@@ -47,6 +47,9 @@ class ServerKey(dir: File) {
     /** Opens something a car sealed to this server. */
     fun open(sealed: String): ByteArray = SealedBox.open(private, sealed, SealedBox.INFO_SERVER)
 
+    /** Opens a minute key of a severe capsule the car handed over (released only to the owner or a contact). */
+    fun openEscrow(sealed: String): ByteArray = SealedBox.open(private, sealed, SealedBox.INFO_ESCROW)
+
     /** Encrypts [plain] for storage under the server's data key ([purpose] binds it to its use). */
     fun encryptAtRest(plain: String, purpose: String): String = atRest.seal(plain, purpose)
 

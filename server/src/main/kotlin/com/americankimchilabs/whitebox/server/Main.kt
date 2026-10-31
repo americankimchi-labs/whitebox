@@ -32,7 +32,7 @@ fun main() {
     val key = ServerKey(dir)
     val sms = DemoSmsSender()
     val identity = Identity(dir, key, sms)
-    val service = MirrorService(FileStreamStore(dir), key, ContactsNotifier(identity, sms, LoggingNotifier(dir)), identity)
+    val service = MirrorService(FileStreamStore(dir), key, identity)
     println("White Box mirror on :$port, data in ${dir.absolutePath}")
     embeddedServer(Netty, port = port, host = "0.0.0.0") { whiteBox(service, sms) }.start(wait = true)
 }
@@ -63,6 +63,7 @@ fun Application.whiteBox(service: MirrorService, sms: DemoSmsSender? = null, tic
             }
         }
         get("/") { call.respondText(dashboard(service, sms), ContentType.Text.Html) }
+        get("/dashboard/cards") { call.respondText(dashboardCards(service, sms), ContentType.Text.Html) }
         service.identity?.let { phoneRoutes(service, it) }
         get("/health") { call.respondText("ok") }
         get("/v1/server-key") { call.respondBytes(service.serverPublicKey(), ContentType.Application.OctetStream) }

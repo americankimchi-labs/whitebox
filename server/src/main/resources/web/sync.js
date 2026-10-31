@@ -1,0 +1,233 @@
+// Dashcam sync on the phone: the driver picks their dashcam's video; it never leaves the phone. The car plays a short
+// inaudible sweep (20–22 kHz) every few seconds and records the instant it played; finding that sweep in the video's
+// sound pins the video to the record within a millisecond. Without it (a dashcam whose microphone or file cannot
+// carry that band), the file's own clock or name places it to about a second, and the driver can nudge it by eye.
+// The view stacks like a video editor: the video on top, the signal lanes below on one playhead.
+(function (root) {
+  const LOW_HZ = 20000, HIGH_HZ = 22000, CHIRP_MS = 100, FADE_MS = 15, AMPLITUDE = 0.3;
+  const RATE = 48000;
+
+  /** The sweep, generated exactly as the car generates it. */
+  function chirp(sampleRate) {
+    const n = Math.floor(sampleRate * CHIRP_MS / 1000);
+    const fade = Math.floor(sampleRate * FADE_MS / 1000);
+    const k = (HIGH_HZ - LOW_HZ) / (CHIRP_MS / 1000);
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const t = i / sampleRate;
+      const env = i < fade ? 0.5 * (1 - Math.cos(Math.PI * i / fade)) : i >= n - fade ? 0.5 * (1 - Math.cos(Math.PI * (n - 1 - i) / fade)) : 1;
+      out[i] = AMPLITUDE * env * Math.sin(2 * Math.PI * (LOW_HZ * t + k * t * t / 2));
+    }
+    return out;
+  }
+
+  // In-place radix-2 FFT over separate real and imaginary arrays (length a power of two).
+  function fft(re, im, inverse) {
+    const n = re.length;
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+    }
+    for (let len = 2; len <= n; len <<= 1) {
+      const ang = (inverse ? 2 : -2) * Math.PI / len;
+      const wr = Math.cos(ang), wi = Math.sin(ang);
+      for (let i = 0; i < n; i += len) {
+        let cr = 1, ci = 0;
+        for (let j = 0; j < len / 2; j++) {
+          const a = i + j, b = a + len / 2;
+          const tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+          re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+          const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+        }
+      }
+    }
+    if (inverse) for (let i = 0; i < n; i++) { re[i] /= n; im[i] /= n; }
+  }
+
+  /**
+   * Every sweep in [audio] (mono, [sampleRate]) as {atSeconds, strength}: matched filter by FFT in blocks (a phone can
+   * hold a minute of audio this way), normalised by the local energy so loud cabin noise does not pass for a sweep.
+   * Sweeps closer than a second count once. [minStrength] is the normalised correlation needed (0–1).
+   */
+  function findAll(audio, sampleRate, { minStrength = 0.35 } = {}) {
+    if (sampleRate < 2 * HIGH_HZ) return []; // the file cannot carry the band
+    const tpl = chirp(sampleRate);
+    const m = tpl.length;
+    const block = 1 << 16;
+    const step = block - m;
+    const tRe = new Float64Array(block), tIm = new Float64Array(block);
+    tpl.forEach((v, i) => { tRe[i] = v; });
+    fft(tRe, tIm, false);
+    let tplEnergy = 0;
+    for (const v of tpl) tplEnergy += v * v;
+    const tplNorm = Math.sqrt(tplEnergy);
+    // Running energy of the audio over a template-long window, for normalisation.
+    const prefix = new Float64Array(audio.length + 1);
+    for (let i = 0; i < audio.length; i++) prefix[i + 1] = prefix[i] + audio[i] * audio[i];
+    const hits = [];
+    for (let start = 0; start + m <= audio.length; start += step) {
+      const re = new Float64Array(block), im = new Float64Array(block);
+      for (let i = 0; i < block && start + i < audio.length; i++) re[i] = audio[start + i];
+      fft(re, im, false);
+      for (let i = 0; i < block; i++) { // multiply by the template's conjugate spectrum: correlation
+        const r = re[i] * tRe[i] + im[i] * tIm[i];
+        const q = im[i] * tRe[i] - re[i] * tIm[i];
+        re[i] = r; im[i] = q;
+      }
+      fft(re, im, true);
+      for (let lag = 0; lag < step && start + lag + m <= audio.length; lag++) {
+        const energy = prefix[start + lag + m] - prefix[start + lag];
+        if (energy <= 0) continue;
+        const s = re[lag] / (tplNorm * Math.sqrt(energy));
+        if (s >= minStrength) hits.push({ at: start + lag, strength: s });
+      }
+    }
+    const out = [];
+    for (const h of hits.sort((a, b) => b.strength - a.strength)) {
+      if (out.every((o) => Math.abs(o.at - h.at) > sampleRate)) out.push(h);
+    }
+    return out.sort((a, b) => a.at - b.at).map((h) => ({ atSeconds: h.at / sampleRate, strength: h.strength }));
+  }
+
+  /** The strongest sweep, or null. */
+  function find(audio, sampleRate, opts) {
+    const all = findAll(audio, sampleRate, opts);
+    return all.length ? all.reduce((a, b) => (b.strength > a.strength ? b : a)) : null;
+  }
+
+  /**
+   * When the video starts, as the dashcam knows it (to about a second): the MP4 header's creation time, or a time in
+   * the file name (20261031_153012, 2026-10-31-15h30m12s …, Korean dashcams' local time). Null if neither.
+   */
+  function videoStartGuess(name, bytes) {
+    const m = /(20\d\d)[-_.]?(\d\d)[-_.]?(\d\d)[-_.T ]?(\d\d)[-_.:h]?(\d\d)[-_.:m]?(\d\d)/.exec(name || '');
+    if (m) {
+      const [, y, mo, d, h, mi, s] = m.map(Number);
+      const local = new Date(y, mo - 1, d, h, mi, s).getTime();
+      if (!Number.isNaN(local)) return { wall: local, source: 'name' };
+    }
+    if (bytes) {
+      // The mvhd box: version, flags, then creation time in seconds since 1904-01-01 UTC.
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      for (let i = 4; i + 16 < bytes.length; i++) {
+        if (bytes[i] === 0x6d && bytes[i + 1] === 0x76 && bytes[i + 2] === 0x68 && bytes[i + 3] === 0x64) {
+          const version = bytes[i + 4];
+          const secs = version === 1 ? Number(view.getBigUint64(i + 8)) : view.getUint32(i + 8);
+          const wall = (secs - 2082844800) * 1000;
+          if (secs > 0 && wall > Date.UTC(2015, 0, 1)) return { wall, source: 'header' };
+          break;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The video's offset from the record: [found] sweeps in the video (seconds from its start), [beacons] the car's
+   * recorded playback instants (wall ms), [guessWall] the file's own start time (or null). With a sweep, the beacon
+   * nearest to where the guess puts it wins (sweeps repeat, so the guess picks which one); returns
+   * {startWall, how: 'chirp'|'clock'|'none', error}.
+   */
+  function align(found, beacons, guessWall) {
+    // A sweep this far from where the file's own clock puts it belongs to another drive (or the file is not this one).
+    const PLAUSIBLE_MS = 5 * 60 * 1000;
+    if (found.length && beacons.length) {
+      let best = null;
+      for (const f of found) {
+        for (const b of beacons) {
+          const startWall = b - f.atSeconds * 1000;
+          const miss = guessWall == null ? 0 : Math.abs(startWall - guessWall);
+          if (!best || miss < best.miss || (miss === best.miss && f.strength > best.strength)) best = { startWall, miss, strength: f.strength };
+        }
+      }
+      // Without the file's clock, one sweep alone could be any of them: only certain if just one was played.
+      if ((guessWall != null && best.miss <= PLAUSIBLE_MS) || (guessWall == null && beacons.length === 1)) return { startWall: best.startWall, how: 'chirp', error: 1 };
+    }
+    if (guessWall != null) return { startWall: guessWall, how: 'clock', error: 1000 };
+    return { startWall: null, how: 'none', error: null };
+  }
+
+  /** The video's sound as mono samples at 48 kHz (decoding resamples), or null if the browser cannot read it. */
+  async function audioOf(file) {
+    const Ctx = root.OfflineAudioContext || root.webkitOfflineAudioContext;
+    if (!Ctx) return null;
+    try {
+      const buf = await file.arrayBuffer();
+      // Decoding takes the buffer over (detaches it): keep the header (for the MP4 clock) first.
+      const bytes = new Uint8Array(buf.slice(0, Math.min(buf.byteLength, 4 << 20)));
+      const ctx = new Ctx(1, RATE, RATE);
+      const decoded = await ctx.decodeAudioData(buf);
+      return { samples: decoded.getChannelData(0), rate: decoded.sampleRate, bytes };
+    } catch (e) { return null; }
+  }
+
+  /**
+   * The editor-style view in [el]: video on top, lanes below. [timeline] is WBPacket.build over the whole capsule;
+   * [causeWall] its detection instant (wall ms); [beacons] the car's sweep times (wall ms).
+   */
+  function mount(el, { timeline, causeWall, beacons, Packet }) {
+    el.innerHTML = `
+      <div class="sync-pick"><label class="button-like">블랙박스 영상 고르기<input type="file" accept="video/*" hidden></label>
+        <p class="msg">영상은 이 휴대폰 안에서만 열리고, 어디에도 올라가지 않습니다.</p></div>
+      <div class="sync-stage" hidden>
+        <video playsinline controls preload="metadata" style="width:100%;border-radius:8px;background:#000"></video>
+        <div class="sync-lanes" style="position:relative;touch-action:none"><div class="sync-svg"></div>
+          <div class="sync-head" style="position:absolute;top:0;bottom:0;width:2px;background:var(--fg,#111);pointer-events:none"></div></div>
+        <p class="sync-status msg"></p>
+        <div class="sync-nudge"><span class="msg">영상과 그래프가 어긋나 보이면:</span>
+          <button class="plain" data-nudge="-1000">−1초</button><button class="plain" data-nudge="-100">−0.1초</button>
+          <button class="plain" data-nudge="100">+0.1초</button><button class="plain" data-nudge="1000">+1초</button></div>
+      </div>`;
+    const input = el.querySelector('input'), stage = el.querySelector('.sync-stage'), video = el.querySelector('video');
+    const lanes = el.querySelector('.sync-lanes'), head = el.querySelector('.sync-head'), status = el.querySelector('.sync-status');
+    el.querySelector('.sync-svg').innerHTML = Packet.svg(timeline);
+    let startWall = null; // the video's first frame on the car's clock
+    const msAt = () => (startWall == null ? null : startWall + video.currentTime * 1000 - causeWall);
+    const place = () => {
+      const ms = msAt();
+      head.hidden = ms == null || ms < -timeline.pre || ms > timeline.post;
+      if (!head.hidden) head.style.left = `${(Packet.xFraction(timeline, ms) * 100).toFixed(2)}%`;
+    };
+    video.addEventListener('timeupdate', place);
+    video.addEventListener('seeked', place);
+    const seekTo = (clientX) => {
+      if (startWall == null) return;
+      const r = lanes.getBoundingClientRect();
+      const ms = Packet.msAtFraction(timeline, (clientX - r.left) / r.width);
+      const t = (causeWall + ms - startWall) / 1000;
+      if (t >= 0 && (!video.duration || t <= video.duration)) video.currentTime = t;
+    };
+    lanes.addEventListener('pointerdown', (e) => { seekTo(e.clientX); lanes.setPointerCapture(e.pointerId); });
+    lanes.addEventListener('pointermove', (e) => { if (e.buttons) seekTo(e.clientX); });
+    el.querySelectorAll('[data-nudge]').forEach((b) => b.onclick = () => {
+      if (startWall == null) startWall = causeWall - video.currentTime * 1000;
+      startWall -= Number(b.dataset.nudge);
+      status.textContent = '직접 맞춘 위치입니다. 저장되지 않으며, 증거 기록은 바뀌지 않습니다.';
+      place();
+    });
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) return;
+      stage.hidden = false;
+      video.src = URL.createObjectURL(file);
+      status.textContent = '영상의 소리에서 동기화 신호를 찾는 중…';
+      const audio = await audioOf(file);
+      const guess = videoStartGuess(file.name, audio && audio.bytes);
+      const found = audio ? findAll(audio.samples, audio.rate) : [];
+      const a = align(found, beacons, guess && guess.wall);
+      startWall = a.startWall;
+      status.textContent = a.how === 'chirp' ? '동기화 신호로 정확히 맞췄습니다 (오차 약 1밀리초).'
+        : a.how === 'clock' ? `${guess.source === 'name' ? '파일 이름' : '영상 정보'}의 시각으로 맞췄습니다 (오차 약 1초). 아래 버튼으로 다듬을 수 있습니다.`
+        : '영상에서 시각을 찾지 못했습니다. 영상을 사고 순간에 멈추고 아래 버튼으로 맞춰 주세요.';
+      stage.dataset.startWall = startWall ?? '';
+      // Open at the moment of detection (the metadata may have loaded while the sound was being searched).
+      const toCause = () => { const t = (causeWall - startWall) / 1000; if (t > 0 && t < video.duration) video.currentTime = t; place(); };
+      if (startWall != null) { if (video.readyState >= 1) toCause(); else video.addEventListener('loadedmetadata', toCause, { once: true }); }
+    };
+  }
+
+  const WBSync = { chirp, findAll, find, videoStartGuess, align, audioOf, mount, fft };
+  if (typeof module === 'object' && module.exports) module.exports = WBSync; else root.WBSync = WBSync;
+})(typeof self !== 'undefined' ? self : globalThis);

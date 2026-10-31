@@ -4,20 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>White Box · 휴대폰 연결</title>
-<style>
-:root{--fg:#111;--muted:#666;--bg:#fafafa;--card:#fff;--line:#e0e0e0;--accent:#1565c0;--bad:#c62828;--good:#2e7d32}
-body{font:16px/1.55 system-ui,-apple-system,"Apple SD Gothic Neo",sans-serif;margin:0;background:var(--bg);color:var(--fg)}
-main{max-width:480px;margin:0 auto;padding:20px 16px}
-h1{font-size:22px;margin:4px 0 12px}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:12px 0}
-label{display:block;font-size:14px;color:var(--muted);margin:10px 0 4px}input{width:100%;box-sizing:border-box;font:inherit;padding:12px;border:1px solid var(--line);border-radius:8px}
-button{width:100%;font:inherit;font-weight:600;padding:13px;margin-top:12px;border:0;border-radius:8px;background:var(--accent);color:#fff}
-button:disabled{opacity:.5}.msg{font-size:14px;margin-top:8px;color:var(--muted)}.bad{color:var(--bad)}.ok{color:var(--good);font-weight:600}
-details{font-size:14px;color:var(--muted)}summary{cursor:pointer}
-</style>
+<link rel="stylesheet" href="/wb.css">
+<style>button{width:100%}</style>
 </head>
 <body><main>
 <h1>휴대폰을 차량과 연결합니다</h1>
-<p>연결하면 이 휴대폰에서 내 차의 주행 기록을 볼 수 있습니다. 기록은 이 휴대폰과, 나중에 등록할 비상 연락처만 열 수 있습니다.</p>
+<div class="card">
+  <p><b>연결하면 차 밖에서도 내 기록을 볼 수 있습니다.</b> 위험했던 순간, 주행 기록, 사고 때의 증거 요약까지 이 휴대폰에서 열립니다.</p>
+  <ul class="bullets">
+    <li>평소 주행과 위치는 <b>이 휴대폰만</b> 열 수 있습니다. 가족도, 저희도 볼 수 없습니다.</li>
+    <li>나중에 등록하는 비상 연락처(가족)는 <b>큰 사고 기록만</b> 열 수 있습니다.</li>
+    <li>휴대폰을 바꾸면 같은 번호로 차량 QR을 다시 찍기만 하면 됩니다.</li>
+  </ul>
+</div>
 
 <div class="card" id="step-phone">
   <label for="phone">휴대폰 번호</label>
@@ -48,7 +47,7 @@ details{font-size:14px;color:var(--muted)}summary{cursor:pointer}
 <div class="card" id="bad-link" hidden><p class="bad">차량 화면의 QR 코드로 다시 열어 주세요.</p></div>
 
 <details class="card"><summary>자세히</summary>
-<p>이 휴대폰 브라우저 안에서 새 키를 만들고, 그 공개 키만 서버로 보냅니다. 차량은 QR 코드에 담긴 비밀값으로 이 휴대폰이 화면을 실제로 본 것인지 확인한 다음, 기록을 여는 키를 이 휴대폰 키로만 열리게 봉인해 보냅니다. 서버는 QR의 비밀값도, 봉인된 키의 내용도 알 수 없습니다.</p>
+<p>이 휴대폰 브라우저 안에서 새 키를 만들고, 그 공개 키만 서버로 보냅니다. 차량은 QR 코드에 담긴 비밀값으로 이 휴대폰이 화면을 실제로 본 것인지 확인한 다음, 기록을 여는 키를 이 휴대폰 키로만 열리게 봉인해 보냅니다. 서버는 QR의 비밀값도, 봉인된 키의 내용도 알 수 없습니다. 큰 사고가 봉인되면 차량은 그 구간의 열쇠만 서버에 따로 맡겨, 비상 연락처에 저장된 분이 열어 볼 수 있게 합니다.</p>
 <p id="tech" style="word-break:break-all"></p>
 </details>
 </main>
@@ -71,7 +70,9 @@ WB.$('claim').onclick = async () => {
   const button = WB.$('claim');
   button.disabled = true;
   try {
-    const key = await WB.newPhoneKey('owner');
+    // This phone keeps one key: scanning again (or another car) must not lock it out of what it could already open.
+    const existing = await WB.phoneKey('owner');
+    const key = existing ? existing.publicKey : await WB.newPhoneKey('owner');
     const mac = await WB.claimMac(secret, code, key);
     const r = await WB.post('/v1/claim', { code, phone, otp: WB.$('otp').value, key, mac });
     WB.show('step-phone', false); WB.show('step-otp', false);

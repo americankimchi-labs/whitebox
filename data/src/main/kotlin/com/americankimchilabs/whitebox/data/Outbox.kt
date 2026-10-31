@@ -2,6 +2,7 @@ package com.americankimchilabs.whitebox.data
 
 import com.americankimchilabs.whitebox.core.MirrorChannel
 import com.americankimchilabs.whitebox.data.MirrorProtocol.Frame
+import com.americankimchilabs.whitebox.data.MirrorProtocol.Record
 import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.EscalationEvent
 import com.americankimchilabs.whitebox.domain.EscalationLevel
@@ -31,6 +32,9 @@ import java.util.UUID
  *   record carries a copy sealed to the server's key, and each closed capsule's signal window (core signals,
  *   triggers, the driver's answer) is sent once, sealed to the server's key, under a random pseudonym — only with the
  *   driver's consent ([consent]); withdrawing it ([withdrawConsent]) deletes every window sent before.
+ * - A severe capsule's seal is followed at once by the keys of the minutes it covers, sealed to the server's key
+ *   ([minuteKey]): the owner or a registered emergency contact can then open that crash even if the car and the
+ *   owner's phone are gone. Only severe capsules; every other minute stays readable by the owner alone.
  *
  * The acknowledged seq and the acknowledged seals are persisted, so nothing is lost across restarts and nothing is
  * resent forever; the server is idempotent by seq, so resending after a reconnect is always safe.
@@ -42,6 +46,8 @@ class Outbox(
     dir: File,
     /** The driver agreed to share pseudonymous capsule windows for improving detection. */
     private val consent: () -> Boolean = { false },
+    /** The key of one minute of the car's records ((epoch, minute) → key), for severe-capsule escrow; null: none. */
+    private val minuteKey: ((Int, Long) -> ByteArray?)? = null,
 ) {
     private val ackFile = File(dir, "mirror-acked")
     private val sealAckFile = File(dir, "mirror-seals")
@@ -50,6 +56,10 @@ class Outbox(
     /** Pseudonyms the server holds (deleted if consent is withdrawn), and deletions not yet confirmed. */
     private val sentWindowsFile = File(dir, "mirror-windows-sent")
     private val deleteFile = File(dir, "mirror-windows-delete")
+    /** Severe capsules whose minute keys are not all acknowledged: `capsuleId|firstSeq|lastSeq` per line. */
+    private val escrowFile = File(dir, "mirror-escrow")
+    /** Minute keys the server acknowledged: `epoch:minute` per line. */
+    private val escrowAckFile = File(dir, "mirror-escrow-acked")
 
     @Volatile var acked: Long = ackFile.takeIf { it.exists() }?.readText()?.trim()?.toLongOrNull() ?: -1L
         private set
@@ -64,6 +74,11 @@ class Outbox(
     /** Called by the recorder after a seal is durable locally: it goes out first. */
     fun onSeal(seal: CapsuleSeal) {
         send(Frame.Seal(SealStore.line(seal)))
+        if (seal.capsule.trigger.severe && minuteKey != null) {
+            // Every seal of a severe capsule, not just the final one: the head unit may not live to the final seal.
+            synchronized(escrowFile) { escrowFile.appendText("${seal.capsule.id}|${seal.capsule.firstSeq}|${seal.capsule.lastSeq}\n") }
+            sendEscrow()
+        }
         if (seal.final && consent()) {
             synchronized(windowFile) { windowFile.appendText("${UUID.randomUUID()}|${seal.capsule.firstSeq}|${seal.capsule.lastSeq}\n") }
             sendWindows()
@@ -104,6 +119,41 @@ class Outbox(
         }
     }
 
+    /** Sends each not yet acknowledged minute key of the pending severe capsules, sealed to the server. */
+    private fun sendEscrow() {
+        val derive = minuteKey ?: return
+        val key = channel.serverKey ?: return
+        if (!channel.connected.value) return
+        for ((capsule, open) in openEscrow()) {
+            for ((epoch, minute) in open) {
+                val k = derive(epoch, minute) ?: continue
+                runCatching { SealedBox.seal(key, k, SealedBox.INFO_ESCROW) }.getOrNull()?.let { send(Frame.Escrow(capsule, epoch, minute, it)) }
+            }
+        }
+    }
+
+    /**
+     * The pending severe capsules with the minute keys the server has not acknowledged yet; capsules whose keys it
+     * holds in full leave the pending file here.
+     */
+    private fun openEscrow(): List<Pair<String, List<Pair<Int, Long>>>> {
+        val (pending, acked) = synchronized(escrowFile) { lines(escrowFile) to lines(escrowAckFile).toSet() }
+        val result = pending.map { line ->
+            val (capsule, from, to) = line.split("|")
+            line to (capsule to minutesOf(from.toLong(), to.toLong()).filter { (e, m) -> "$e:$m" !in acked })
+        }
+        val done = result.filter { it.second.second.isEmpty() }.map { it.first }.toSet()
+        if (done.isNotEmpty()) synchronized(escrowFile) { escrowFile.writeText(lines(escrowFile).filterNot { it in done }.joinToString("") { it + "\n" }) }
+        return result.map { it.second }.filter { it.second.isNotEmpty() }
+    }
+
+    /** The (epoch, minute) keys the encrypted records in [from]..[to] were written with. */
+    private fun minutesOf(from: Long, to: Long): Set<Pair<Int, Long>> = store.records(from, to)
+        .mapNotNull { Record.parse(it)?.entry }
+        .flatMap { it.split("|") }
+        .filter { it.startsWith(RecordCipher.PREFIX_V3) }
+        .mapTo(sortedSetOf(compareBy({ it.first }, { it.second }))) { RecordCipher.epochOf(it) to RecordCipher.minuteOf(it)!! }
+
     private fun serverCopy(e: ChainEntry): String? {
         if (e !is ChainEntry.Signal) return null // markers are plain already
         val key = channel.serverKey ?: return null
@@ -119,6 +169,7 @@ class Outbox(
                 sentUpTo = acked
                 resync = true
                 seals.all().filter { MirrorProtocol.sealKey(it) !in sealsAcked }.forEach { send(Frame.Seal(SealStore.line(it))) }
+                sendEscrow()
                 sendWindows()
                 kick.trySend(Unit)
             }
@@ -179,6 +230,10 @@ class Outbox(
                     windowFile.writeText(pending.filterNot { it.startsWith(f.pseudonym + "|") }.joinToString("") { it + "\n" })
                     sentWindowsFile.appendText(f.pseudonym + "\n")
                 }
+            }
+            is Frame.EscrowAck -> {
+                synchronized(escrowFile) { escrowAckFile.appendText("${f.epoch}:${f.minute}\n") }
+                openEscrow() // a capsule whose keys the server now holds in full leaves the pending list
             }
             is Frame.WindowDeleted -> synchronized(windowFile) {
                 deleteFile.writeText(lines(deleteFile).filter { it != f.pseudonym }.joinToString("") { it + "\n" })

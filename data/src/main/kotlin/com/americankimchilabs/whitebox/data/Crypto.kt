@@ -15,8 +15,9 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * Encrypts the values of chain records. Only the car (holding the root key) and the people it is wrapped for — the
- * owner's phone and the emergency contacts — can read them; the server stores and checks the records without.
+ * Encrypts the values of chain records. Only the car (holding the root key) and the owner's phone it is wrapped for
+ * can read them; the server stores and checks the records without. Each minute has its own key derived from the
+ * root key, so the keys of a few minutes (a severe crash, for the family) can be handed out without the rest.
  */
 interface RecordCipher {
     /** [aad] binds the ciphertext to its record (type and time), so a value cannot be moved to another record. */
@@ -32,18 +33,33 @@ interface RecordCipher {
         /** Version 2 adds the key epoch: `v2.<epoch>.<nonce‖ciphertext‖tag>`; `v1.` fields are epoch 0. */
         const val PREFIX_V2 = "v2."
 
-        fun isSealed(field: String) = field.startsWith(PREFIX) || field.startsWith(PREFIX_V2)
+        /**
+         * Version 3 encrypts with the key of one minute: `v3.<epoch>.<minute>.<nonce‖ciphertext‖tag>`, the key being
+         * [minuteKey] of the epoch's root key; `minute` is the car's wall-clock minute when it was written.
+         */
+        const val PREFIX_V3 = "v3."
+
+        fun isSealed(field: String) = field.startsWith(PREFIX) || field.startsWith(PREFIX_V2) || field.startsWith(PREFIX_V3)
 
         /** The key epoch of an encrypted field. */
-        fun epochOf(field: String): Int = if (field.startsWith(PREFIX_V2)) field.removePrefix(PREFIX_V2).substringBefore('.').toInt() else 0
+        fun epochOf(field: String): Int = when {
+            field.startsWith(PREFIX_V2) -> field.removePrefix(PREFIX_V2).substringBefore('.').toInt()
+            field.startsWith(PREFIX_V3) -> field.removePrefix(PREFIX_V3).substringBefore('.').toInt()
+            else -> 0
+        }
+
+        /** The key minute of a `v3.` field; null for older fields, which use the epoch's root key itself. */
+        fun minuteOf(field: String): Long? = if (field.startsWith(PREFIX_V3)) field.removePrefix(PREFIX_V3).split('.')[1].toLong() else null
+
+        /** The key of one minute: HKDF-SHA256 of the root key (empty salt, info `whitebox-minute-v1|<minute>`). */
+        fun minuteKey(root: ByteArray, minute: Long): ByteArray = SealedBox.hkdf(root, "whitebox-minute-v1|$minute".toByteArray(), 32)
     }
 }
 
 /**
  * The car's root keys, one per epoch, and whose each epoch is (the owner it was made for, empty before the first
  * claim). The newest epoch encrypts; older ones stay to read older records. A new epoch starts when the car changes
- * owner (the new owner must not read the previous owner's records) or when an emergency contact is removed (they
- * must not read what comes after).
+ * owner: the new owner must not read the previous owner's records.
  */
 interface KeyRing {
     val current: Int
@@ -80,19 +96,48 @@ class MemoryKeyRing(first: ByteArray = ByteArray(32).also(SecureRandom()::nextBy
     @Synchronized override fun reassign(from: String, to: String) = owner.replaceAll { _, o -> if (o == from) to else o }
 }
 
-/** Record encryption with the newest epoch of a [KeyRing]; reads any epoch the ring holds. */
-class EpochRecordCipher(private val ring: KeyRing) : RecordCipher {
-    override fun seal(plain: String, aad: String): String {
-        val epoch = ring.current
-        val sealed = AesGcmRecordCipher(ring.key(epoch)!!).seal(plain, aad)
-        return RecordCipher.PREFIX_V2 + epoch + "." + sealed.removePrefix(RecordCipher.PREFIX)
+/**
+ * Record encryption with the newest epoch of a [KeyRing], one key per minute of [wallMillis]; reads any epoch the ring
+ * holds (and the older single-key formats).
+ */
+class EpochRecordCipher(private val ring: KeyRing, private val wallMillis: () -> Long = System::currentTimeMillis) : RecordCipher {
+    private var cached: Triple<Int, Long, AesGcmRecordCipher>? = null
+
+    @Synchronized
+    private fun minuteCipher(epoch: Int, minute: Long): AesGcmRecordCipher {
+        cached?.let { (e, m, c) -> if (e == epoch && m == minute) return c }
+        val root = ring.key(epoch) ?: throw LockedRecordException()
+        return AesGcmRecordCipher(RecordCipher.minuteKey(root, minute)).also { cached = Triple(epoch, minute, it) }
     }
 
+    override fun seal(plain: String, aad: String): String {
+        val epoch = ring.current
+        val minute = Math.floorDiv(wallMillis(), 60_000L)
+        val sealed = minuteCipher(epoch, minute).seal(plain, aad)
+        return RecordCipher.PREFIX_V3 + epoch + "." + minute + "." + sealed.removePrefix(RecordCipher.PREFIX)
+    }
+
+    override fun open(sealed: String, aad: String): String = when {
+        sealed.startsWith(RecordCipher.PREFIX_V3) -> {
+            val (epoch, minute, body) = sealed.removePrefix(RecordCipher.PREFIX_V3).split('.', limit = 3)
+            minuteCipher(epoch.toInt(), minute.toLong()).open(RecordCipher.PREFIX + body, aad)
+        }
+        else -> {
+            val key = ring.key(RecordCipher.epochOf(sealed)) ?: throw LockedRecordException()
+            val body = if (sealed.startsWith(RecordCipher.PREFIX_V2)) sealed.removePrefix(RecordCipher.PREFIX_V2).substringAfter('.') else sealed.removePrefix(RecordCipher.PREFIX)
+            AesGcmRecordCipher(key).open(RecordCipher.PREFIX + body, aad)
+        }
+    }
+}
+
+/** Reads `v3.` records with only the minute keys handed out for them ((epoch, minute) → key): a crash's minutes. */
+class MinuteKeysCipher(private val keys: Map<Pair<Int, Long>, ByteArray>) : RecordCipher {
+    override fun seal(plain: String, aad: String): String = throw UnsupportedOperationException("read-only")
+
     override fun open(sealed: String, aad: String): String {
-        val epoch = RecordCipher.epochOf(sealed)
-        val key = ring.key(epoch) ?: throw LockedRecordException()
-        val body = if (sealed.startsWith(RecordCipher.PREFIX_V2)) sealed.removePrefix(RecordCipher.PREFIX_V2).substringAfter('.') else sealed.removePrefix(RecordCipher.PREFIX)
-        return AesGcmRecordCipher(key).open(RecordCipher.PREFIX + body, aad)
+        val minute = RecordCipher.minuteOf(sealed) ?: throw LockedRecordException()
+        val key = keys[RecordCipher.epochOf(sealed) to minute] ?: throw LockedRecordException()
+        return AesGcmRecordCipher(key).open(RecordCipher.PREFIX + sealed.removePrefix(RecordCipher.PREFIX_V3).split('.', limit = 3)[2], aad)
     }
 }
 
@@ -129,12 +174,13 @@ class AesGcmRecordCipher(key: ByteArray) : RecordCipher {
  * an ephemeral key pair, ECDH with the recipient's public key, HKDF-SHA256 (empty salt, [info]) to a 256-bit
  * AES-GCM key, a random 96-bit nonce. Format: `e1.<ephemeral public key, X.509>.<nonce‖ciphertext‖tag>`, base64.
  *
- * Used to wrap the car's root key for the owner's phone and each emergency contact, and to send the server the
- * crash signal copies it is allowed to read.
+ * Used to wrap the car's root keys for the owner's phone, to send the server the crash signal copies it is allowed
+ * to read, and to hand it a severe crash's minute keys for the family.
  */
 object SealedBox {
     const val INFO_WRAP = "whitebox-wrap-v1"
     const val INFO_SERVER = "whitebox-server-v1"
+    const val INFO_ESCROW = "whitebox-escrow-v1"
     private val random = SecureRandom()
 
     fun seal(recipient: ByteArray, plain: ByteArray, info: String): String {

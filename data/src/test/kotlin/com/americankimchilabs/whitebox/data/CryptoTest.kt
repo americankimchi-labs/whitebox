@@ -83,10 +83,10 @@ class CryptoTest {
         val ring = MemoryKeyRing()
         val cipher = EpochRecordCipher(ring)
         val old = EntryCodec.encode(ChainEntry.Signal(SignalSample(VehicleSignal.BrakePedal(true), ts(1))), cipher)
-        assertTrue(old.split("|")[2].startsWith("v2.0."))
+        assertTrue(old.split("|")[2].startsWith("v3.0.")) // epoch 0, then the minute
         ring.rotate("o2")
         val new = EntryCodec.encode(ChainEntry.Signal(SignalSample(VehicleSignal.BrakePedal(false), ts(2))), cipher)
-        assertTrue(new.split("|")[2].startsWith("v2.1."))
+        assertTrue(new.split("|")[2].startsWith("v3.1."))
         assertEquals(VehicleSignal.BrakePedal(true), (EntryCodec.decode(old, cipher) as ChainEntry.Signal).sample.signal)
         assertEquals(VehicleSignal.BrakePedal(false), (EntryCodec.decode(new, cipher) as ChainEntry.Signal).sample.signal)
         // Someone holding only the new epoch (a new owner) cannot read the old record.
@@ -94,9 +94,28 @@ class CryptoTest {
             override fun key(epoch: Int) = if (epoch == 1) ring.key(1) else null
         }
         assertTrue(runCatching { EntryCodec.decode(old, EpochRecordCipher(onlyNew)) }.exceptionOrNull() is LockedRecordException)
-        // Records written by the single-key cipher of earlier versions are epoch 0.
+        // Records written by the single-key cipher of earlier versions are epoch 0; version 2 named the epoch only.
         val legacy = EntryCodec.encode(ChainEntry.Signal(SignalSample(VehicleSignal.BrakePedal(true), ts(3))), AesGcmRecordCipher(ring.key(0)!!))
         assertEquals(VehicleSignal.BrakePedal(true), (EntryCodec.decode(legacy, cipher) as ChainEntry.Signal).sample.signal)
+        val v2 = legacy.split("|").toMutableList().also { it[2] = "v2.1." + AesGcmRecordCipher(ring.key(1)!!).seal("true", "S|BRAKE_PEDAL|${it[3]}").removePrefix("v1.") }.joinToString("|")
+        assertEquals(VehicleSignal.BrakePedal(true), (EntryCodec.decode(v2, cipher) as ChainEntry.Signal).sample.signal)
+    }
+
+    @Test
+    fun eachMinuteHasItsOwnKeySoAFewMinutesCanBeHandedOutAlone() {
+        val ring = MemoryKeyRing()
+        var wall = 1_700_000_000_000L
+        val cipher = EpochRecordCipher(ring) { wall }
+        val a = EntryCodec.encode(ChainEntry.Signal(SignalSample(VehicleSignal.BrakePedal(true), ts(1))), cipher)
+        wall += 60_000
+        val b = EntryCodec.encode(ChainEntry.Signal(SignalSample(VehicleSignal.BrakePedal(false), ts(2))), cipher)
+        val minuteA = RecordCipher.minuteOf(a.split("|")[2])!!
+        assertEquals(1_700_000_000_000L / 60_000, minuteA)
+        val onlyA = MinuteKeysCipher(mapOf((0 to minuteA) to RecordCipher.minuteKey(ring.key(0)!!, minuteA)))
+        assertEquals(VehicleSignal.BrakePedal(true), (EntryCodec.decode(a, onlyA) as ChainEntry.Signal).sample.signal)
+        assertTrue(runCatching { EntryCodec.decode(b, onlyA) }.exceptionOrNull() is LockedRecordException)
+        // The derivation the browser repeats with WebCrypto: HKDF-SHA256, empty salt, info "whitebox-minute-v1|<minute>".
+        assertEquals("6f2960f4ddf5c171", RecordCipher.minuteKey(ByteArray(32) { it.toByte() }, 28_333_333).toHex().take(16))
     }
 }
 

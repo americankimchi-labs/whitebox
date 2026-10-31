@@ -14,6 +14,8 @@ import androidx.lifecycle.lifecycleScope
 import com.americankimchilabs.whitebox.BuildConfig
 import com.americankimchilabs.whitebox.R
 import com.americankimchilabs.whitebox.data.EpochRecordCipher
+import com.americankimchilabs.whitebox.data.RecordCipher
+import com.americankimchilabs.whitebox.data.CapsuleShares
 import com.americankimchilabs.whitebox.data.ClaimClient
 import com.americankimchilabs.whitebox.data.FileEventStore
 import com.americankimchilabs.whitebox.data.MirrorProtocol
@@ -106,6 +108,8 @@ class RecorderService : LifecycleService() {
     private val keyRing by lazy { KeystoreKeyRing(this) }
     private val recordCipher by lazy { EpochRecordCipher(keyRing) }
 
+    private fun minuteKey(epoch: Int, minute: Long): ByteArray? = keyRing.key(epoch)?.let { RecordCipher.minuteKey(it, minute) }
+
     /**
      * Where the phone pages live: the mirror's own address over http(s). The emulator reaches its host computer as
      * 10.0.2.2, but a browser on that computer knows it as localhost.
@@ -181,15 +185,16 @@ class RecorderService : LifecycleService() {
         val url = if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_MIRROR, MIRROR_DEFAULT) == MIRROR_LOCAL) LOCAL_MIRROR_URL else BuildConfig.MIRROR_URL
         val channel = url.takeIf { it.isNotEmpty() }?.let { WebSocketMirrorChannel(it, stream, AppGraph.signer) }
         if (channel == null) Log.i(TAG, "no mirror configured; recording locally only") else Log.i(TAG, "mirror: $url")
-        val outbox = channel?.let { Outbox(store, seals, it, dir) { DataConsent.agreed(this) } }
+        val outbox = channel?.let { Outbox(store, seals, it, dir, consent = { DataConsent.agreed(this) }, minuteKey = ::minuteKey) }
         val recorder = Recorder(store, seals, AppGraph.signer, AndroidClock) { outbox?.onSeal(it) }
         mirrorChannel = channel
         // The phone connection belongs to the car, not to one chain: one state for both sources.
         val claim = channel?.let { ClaimClient(it, keyRing, java.io.File(filesDir, "identity").apply { mkdirs() }) }
+        val shares = channel?.let { CapsuleShares(store, it, dir, MirrorProtocol.deviceId(AppGraph.signer.publicKey), stream, ::minuteKey) }
         mode = next
         inbox = Channel(Channel.UNLIMITED)
         sessionFile = SessionFile(java.io.File(dir, "session"))
-        AppGraph.publish(ActiveSession(next, recorder, store, claim, webBase(url), outbox))
+        AppGraph.publish(ActiveSession(next, recorder, store, claim, webBase(url), outbox, shares))
 
         val boot = bootCount()
         val started = classifyStart(sessionFile!!.read(), if (next == SourceMode.REPLAY) StartReason.APP_OPENED else reason, boot, AndroidClock.now())
@@ -201,6 +206,7 @@ class RecorderService : LifecycleService() {
         jobs += lifecycleScope.launch(Dispatchers.IO) { consume(recorder) }
         channel?.start(lifecycleScope + Dispatchers.IO)
         claim?.let { jobs += it.start(lifecycleScope + Dispatchers.IO) }
+        shares?.let { jobs += it.start(lifecycleScope + Dispatchers.IO) }
         outbox?.let { jobs += it.start(lifecycleScope + Dispatchers.IO, recorder) }
         // Consent withdrawn while this chain was not active: its earlier windows are deleted too.
         if (DataConsent.state(this).value == false) outbox?.withdrawConsent()

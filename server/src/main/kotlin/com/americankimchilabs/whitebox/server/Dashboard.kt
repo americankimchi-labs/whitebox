@@ -10,80 +10,103 @@ private val clock = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.syst
 
 private fun time(ms: Long) = clock.format(Instant.ofEpochMilli(ms))
 
+private val TRIGGER = mapOf(
+    "AIRBAG" to "에어백 전개", "DELTA_V" to "급격한 속도 변화", "SHORT_DELTA_V" to "급격한 속도 변화", "BRAKED_SPIKE" to "제동 중 충격",
+    "REAR_SHOVE" to "후방 충격", "MANUAL" to "음성으로 보관", "HARD_BRAKE" to "급제동", "EVASIVE_STEER" to "급조향 (회피)",
+    "BRAKE_SWERVE" to "급제동 + 급조향", "SHIFT_TO_NEUTRAL" to "주행 중 N단 변속", "BRAKE_SPEED_RISE" to "제동 중 속도 상승",
+    "BRAKE_NO_DECEL" to "제동 중 감속 없음", "BRAKE_PUMPING" to "반복 제동", "PARKING_BRAKE_MOVING" to "주행 중 주차 브레이크",
+    "LURCH" to "정지 상태에서 급출발", "POST_EVENT_EXIT" to "위험 상황 직후 하차", "ALERT_RESOLVED" to "급제동 후 정차",
+)
+
 /**
- * The mirror's live view (refreshes every second): one card per mirrored car with its state, what the server holds,
- * the seals, and a readable history of what happened.
+ * The mirror's page for whoever runs or evaluates it: one card per mirrored car that says in plain words what is
+ * happening and what the server holds, with the technical detail (ids, sequence numbers, seal lines, the event log)
+ * behind "자세히". The cards refresh every second without reloading the page, so an opened "자세히" stays open.
  */
-fun dashboard(service: MirrorService, sms: DemoSmsSender? = null): String {
+fun dashboard(service: MirrorService, sms: DemoSmsSender? = null): String = """<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>White Box 서버</title>
+<link rel="stylesheet" href="/wb.css">
+<style>
+main{max-width:1100px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+.cars .card h2{display:flex;gap:8px;align-items:center}.history{max-height:220px;overflow:auto;padding-left:18px}.t{color:var(--muted);font-variant-numeric:tabular-nums}
+</style></head>
+<body><main>
+<h1>White Box 서버</h1>
+<div class="card">
+  <p><b>차 안의 기록이 원본이고, 이 서버는 그 사본을 안전하게 받아 둡니다.</b> 차가 부서지거나 전원이 끊겨도 받은 데까지는 남습니다.</p>
+  <ul class="bullets">
+    <li>평소에는 10초마다 묶어서, 위험한 순간에는 브레이크·속도·조향·기어를 생기는 즉시 받습니다.</li>
+    <li>주행 기록과 위치는 차에서 암호화되어 오기 때문에 서버도 읽을 수 없습니다. 큰 사고가 봉인되면 그 구간의 열쇠만 서버에 따로 보관해, 비상 연락처에 저장된 분이 열어 볼 수 있게 합니다.</li>
+    <li>위험 신호 뒤 차에서 ${Tuning.DEADMAN_SEAL_SILENCE_S}초간 신호가 없으면, 서버가 받은 기록에 직접 서명해 봉인합니다. 문자는 보내지 않습니다.</li>
+  </ul>
+  <p class="msg">휴대폰 화면: <a href="/me">차량 소유자</a> · <a href="/contact">가족(비상 연락처)</a></p>
+</div>
+<div id="live">${dashboardCards(service, sms)}</div>
+</main>
+<script>
+// Refresh the cards in place; any "자세히" the reader opened stays open.
+setInterval(async () => {
+  try {
+    const html = await (await fetch('/dashboard/cards')).text();
+    const open = [...document.querySelectorAll('details[open][data-key]')].map((d) => d.dataset.key);
+    const live = document.getElementById('live');
+    live.innerHTML = html;
+    open.forEach((k) => { const d = live.querySelector('details[data-key="' + k + '"]'); if (d) d.open = true; });
+  } catch (e) { /* the server is restarting */ }
+}, 1000);
+</script>
+</body></html>"""
+
+/** The refreshing part of the page: the demo text messages and one card per car. */
+fun dashboardCards(service: MirrorService, sms: DemoSmsSender? = null): String {
     val texts = sms?.recent()?.asReversed()?.joinToString("") { m ->
         "<li><span class='t'>${time(m.atMs)}</span> <b>${esc(m.to)}</b> ${esc(m.text)}</li>"
-    }?.ifEmpty { "<li class='none'>아직 없음</li>" }
+    }?.ifEmpty { "<li class='msg'>아직 없음</li>" }
     val smsPanel = texts?.let {
-        """<section class="card"><header><b>문자 (시연용)</b> <span class="muted">실제로 보내지 않고 여기에 표시합니다: 인증번호, 비상 연락처 초대, 비상 알림</span></header><ul class="history">$it</ul></section>"""
+        """<details class="card" data-key="sms" ${if (sms.recent().isNotEmpty()) "open" else ""}><summary><b>문자 (시연용)</b> — 실제로 보내지 않고 여기에 보여 줍니다: 인증번호, 차량 소유 변경 확인</summary><ul class="history">$it</ul></details>"""
     } ?: ""
     val cards = service.statuses().sortedByDescending { it.events.lastOrNull()?.first ?: 0 }.joinToString("") { s ->
-        val (label, color) = when (s.level) {
-            EscalationLevel.TRIGGERED -> "사고 감지" to "#c62828"
-            EscalationLevel.ALERT -> "경보" to "#ef6c00"
-            EscalationLevel.NORMAL -> "정상" to "#2e7d32"
-            null -> "기록 없음" to "#757575"
+        val capsules = service.capsules(s.stream)
+        val silentS = s.silentForMs?.div(1000)
+        val (badge, cls, sentence) = when {
+            s.severeSilent.isNotEmpty() && s.level != EscalationLevel.NORMAL ->
+                Triple("사고 뒤 연락 끊김", "bad", "충돌 수준의 사고 뒤 차가 응답하지 않습니다. 서버가 받은 기록을 봉인해 두었습니다.")
+            s.level == EscalationLevel.TRIGGERED -> Triple("사고 감지", "bad", "사고가 감지되어 차가 기록을 봉인하고 즉시 보내는 중입니다.")
+            s.level == EscalationLevel.ALERT -> Triple("위험 신호", "warn", "급제동 같은 위험 신호가 있어 기록을 생기는 즉시 받고 있습니다.")
+            silentS != null && silentS < 30 -> Triple("주행 중", "good", "정상적으로 기록을 받고 있습니다.")
+            s.records > 0 -> Triple("꺼짐", "", "차가 꺼져 있습니다. 받은 기록은 안전하게 보관 중입니다.")
+            else -> Triple("기록 없음", "", "아직 받은 기록이 없습니다.")
         }
-        val silent = s.silentForMs?.let { ms ->
-            val sec = ms / 1000.0
-            if (s.level != EscalationLevel.NORMAL && sec >= 2) "<span class='warn'>%.0f초째 무응답</span>".format(sec) else "마지막 수신 %.0f초 전".format(sec)
-        } ?: ""
-        val kind = if (s.stream.stream == "replay") "데모 주행" else "실시간 차량"
+        val kind = if (s.stream.stream == "replay") "데모 차량" else "실제 차량"
+        val moments = capsules.take(5).joinToString("") { c ->
+            val name = if (c.trigger == "SERVER_SEAL") "사고 뒤 연락 끊김 (서버 봉인)" else TRIGGER[c.trigger] ?: c.trigger
+            val tag = if (c.severe) "<span class='badge bad'>큰 사고</span>" else "<span class='badge warn'>위험 순간</span>"
+            "<div class='row'><span>${esc(name)}<br><span class='sub'>${time(c.sealedAtMs)}${if (c.escrowed) " · 비상 연락처 열람 가능" else ""}</span></span>$tag</div>"
+        }.ifEmpty { "<p class='msg'>봉인된 순간이 없습니다.</p>" }
         val history = s.events.asReversed().joinToString("") { (at, text) -> "<li><span class='t'>${time(at)}</span> ${esc(text)}</li>" }
-        val seals = s.seals.takeLast(4).joinToString("") { l ->
-            val f = l.split("|")
-            "<li>${esc(f[0])} · ${esc(f[1])} · #${f[2]}–#${f[3]} · ${if (f[5] == "true") "최종" else "임시"}</li>"
-        }.ifEmpty { "<li class='none'>없음</li>" }
-        val attested = s.attested.takeLast(3).joinToString("") { l ->
-            val f = l.substringBefore("|sig=").split("|")
-            "<li>${time(f.last().toLong())} · #${f[2]}–#${f[3]} · 빠진 기록 ${f[6]}건</li>"
-        }.ifEmpty { "<li class='none'>없음</li>" }
-        val notices = s.notices.takeLast(3).joinToString("") { l -> "<li>${time(l.substringBefore('|').toLong())} · 비상 연락처 알림</li>" }
-            .ifEmpty { "<li class='none'>없음</li>" }
+        val seals = s.seals.takeLast(4).joinToString("<br>") { l -> l.split("|").let { f -> esc("${f[0]} ${f[1]} #${f[2]}–#${f[3]} ${if (f[5] == "true") "최종" else "임시"}") } }
+        val attested = s.attested.takeLast(3).joinToString("<br>") { l -> l.substringBefore("|sig=").split("|").let { f -> esc("${time(f.last().toLong())} #${f[2]}–#${f[3]} 빠진 기록 ${f[6]}건") } }
+        val key = esc("${s.stream.deviceId}-${s.stream.stream}")
         """
 <section class="card">
-  <header><span class="badge" style="background:$color">$label</span>
-    <b>$kind</b> <code>${esc(s.stream.deviceId.take(12))}…</code> <span class="muted">$silent</span></header>
-  <div class="grid">
-    <div><h3>서버가 받은 기록</h3><p class="big">${s.records}건</p>
-      <p class="muted">#0부터 빠짐없이 #${s.contiguousHead}까지 · 변조 의심 거부 ${s.conflicts}건</p></div>
-    <div><h3>차량 봉인 <small>(차량 키 서명 확인됨)</small></h3><ul>$seals</ul></div>
-    <div><h3>서버 봉인 <small>(데드맨 스위치)</small></h3><ul>$attested</ul></div>
-    <div><h3>비상 알림</h3><ul>$notices</ul></div>
+  <h2><span class="badge $cls">$badge</span> $kind</h2>
+  <p>$sentence ${silentS?.let { "<span class='msg'>마지막 수신 ${it}초 전</span>" } ?: ""}</p>
+  <div class="stats">
+    <div class="stat"><b>${s.records}건</b><span>받아 둔 기록</span></div>
+    <div class="stat"><b>${capsules.size}건</b><span>봉인된 순간</span></div>
   </div>
-  <h3>경과</h3><ul class="history">$history</ul>
+  <h3>봉인된 순간</h3>$moments
+  <details data-key="$key"><summary>자세히</summary><div class="tech">
+    기기 ${esc(s.stream.deviceId)} · 스트림 ${esc(s.stream.stream)} · 단계 ${s.level ?: "-"}<br>
+    #0부터 빠짐없이 #${s.contiguousHead}까지 · 최고 #${s.highestSeq} · 변조 의심으로 거부 ${s.conflicts}건<br>
+    차량 봉인 (차량 키 서명 확인됨):<br>${seals.ifEmpty { "없음" }}<br>
+    서버 봉인 (데드맨 스위치):<br>${attested.ifEmpty { "없음" }}<br>
+    마지막 서버 앵커: ${esc(s.lastAnchor?.substringBefore("|sig=") ?: "없음")}
+    <h3>경과</h3><ul class="history">$history</ul>
+  </div></details>
 </section>"""
-    }.ifEmpty { "<p class='muted'>아직 연결된 차량이 없습니다. 다른 터미널에서 <code>./gradlew :server:demoCar</code>를 실행하거나 에뮬레이터 앱을 이 서버로 연결하세요.</p>" }
-
-    return """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta http-equiv="refresh" content="1">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>White Box 클라우드 미러</title>
-<style>
-body{font:15px/1.5 system-ui,-apple-system,"Apple SD Gothic Neo",sans-serif;margin:0 auto;max-width:1100px;padding:16px;background:#fafafa;color:#111}
-h1{font-size:22px;margin:0 0 4px} h3{font-size:13px;margin:12px 0 4px;color:#555} small{font-weight:normal;color:#888}
-.intro{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:12px 16px;margin:12px 0}
-.intro li{margin:2px 0}
-.card{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:12px 16px;margin:12px 0}
-.badge{color:#fff;border-radius:4px;padding:2px 8px;margin-right:8px;font-weight:600}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
-.big{font-size:22px;font-weight:600;margin:0} .muted{color:#757575} .warn{color:#c62828;font-weight:600}
-ul{margin:0;padding-left:18px} .none{color:#9e9e9e;list-style:none;margin-left:-18px}
-.history{max-height:220px;overflow:auto} .t{color:#757575;font-variant-numeric:tabular-nums}
-code{font-size:13px}
-</style></head>
-<body><h1>White Box 클라우드 미러</h1>
-<div class="intro"><ul>
-<li>차량의 <b>로컬 체인이 원본</b>이고 이 서버는 사본을 받습니다. 기록마다 해시와 앞뒤 연결을 확인한 뒤 저장합니다.</li>
-<li><b>정상</b>: 10초마다 묶어서 받습니다. <b>경보·사고 감지</b>: 브레이크·속도·조향·기어 기록이 생기는 즉시 도착하고, 차량 봉인이 가장 먼저 옵니다.</li>
-<li><b>데드맨 스위치</b>: 경보 뒤 해제 없이 ${Tuning.DEADMAN_SEAL_SILENCE_S}초 무응답이면 서버가 받은 기록에 직접 서명해 봉인하고,
-${Tuning.DEADMAN_NOTIFY_SILENCE_S}초가 지나고 충돌 수준 증거가 있을 때만 비상 연락처에 알립니다(지금은 알림 대신 기록).</li>
-</ul></div>
-$smsPanel
-$cards
-</body></html>"""
+    }.ifEmpty { "<div class='card'><p class='msg'>아직 연결된 차량이 없습니다. 다른 터미널에서 <code>./gradlew :server:demoCar</code>를 실행하거나 에뮬레이터 앱을 이 서버로 연결하세요.</p></div>" }
+    return "$smsPanel<div class='grid cars'>$cards</div>"
 }
 
 private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

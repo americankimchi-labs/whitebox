@@ -82,15 +82,10 @@ class ClaimClientTest {
     fun aNewOwnerGetsOnlyANewKeyWhileTheSameOwnerOnANewPhoneGetsAllOfTheirs() = runTest {
         val car = car()
         deliver(car, scan(car, "o1", phone()))
+        car.ring.rotate("o1") // an earlier owner change back, say: two epochs of theirs
         car.ch.sent.clear()
 
-        // A contact was removed: a new epoch for the same owner.
-        deliver(car, Frame.Rotate)
-        assertEquals(1, car.ring.current)
-        assertEquals(listOf(0, 1), car.ch.wraps.map { it.epoch })
-        car.ch.sent.clear()
-
-        // The same owner with a new phone: both epochs, to the new phone.
+        // The same owner with a new phone (the old one lost): every epoch of theirs, to the new phone.
         val newPhone = phone()
         deliver(car, scan(car, "o1", newPhone, "SAME2345"))
         assertEquals(1, car.ring.current) // no new epoch
@@ -128,8 +123,6 @@ class ClaimClientTest {
         assertTrue(car.ch.wraps.isEmpty()) // nobody can open it yet
         assertEquals(listOf(Frame.TransferAck("t1")), car.ch.sent)
         assertEquals(ClaimClient.State.TransferPending("010-****-9999"), car.claim.state.value)
-        deliver(car, Frame.Rotate) // a contact removed meanwhile: they never held this key anyway
-        assertEquals(1, car.ring.current)
         car.ch.sent.clear()
 
         deliver(car, buyerClaim) // approved, or three days without an answer

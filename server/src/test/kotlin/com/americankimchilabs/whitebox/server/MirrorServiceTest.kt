@@ -3,6 +3,8 @@ package com.americankimchilabs.whitebox.server
 import com.americankimchilabs.whitebox.data.AesGcmRecordCipher
 import com.americankimchilabs.whitebox.data.CapsuleSeal
 import com.americankimchilabs.whitebox.data.EntryCodec
+import com.americankimchilabs.whitebox.data.EpochRecordCipher
+import com.americankimchilabs.whitebox.data.MemoryKeyRing
 import com.americankimchilabs.whitebox.data.SealedBox
 import com.americankimchilabs.whitebox.data.FileEventStore
 import com.americankimchilabs.whitebox.data.MirrorProtocol
@@ -51,12 +53,11 @@ class MirrorServiceTest {
 
     private inner class Rig {
         var now = 1_000_000L
-        val notices = mutableListOf<EmergencyNotice>()
         val dir = tmp.newFolder()
         val store = FileStreamStore(dir)
-        val service = MirrorService(store, ServerKey(dir), object : ContactNotifier {
-            override fun notify(notice: EmergencyNotice) { notices += notice }
-        }, clock = { now })
+        val key = ServerKey(dir)
+        val service = MirrorService(store, key, clock = { now })
+        fun severeSilent(s: MirrorService.Session) = store.log(s.stream!!, SEVERE_SILENT)
         val car = Car()
         val chain = FileEventStore(tmp.newFolder())
         var t = 0L
@@ -137,7 +138,7 @@ class MirrorServiceTest {
         assertTrue(attested.startsWith("ATTEST|${s.stream}|0|5|${r.store.hashAt(s.stream!!, 5)}|5|0|DEADMAN|"))
         r.now += Tuning.DEADMAN_NOTIFY_SILENCE_S * 1_000L
         r.service.tick()
-        assertTrue(r.notices.isEmpty()) // no severe evidence: the family is not alarmed
+        assertTrue(r.severeSilent(s).isEmpty()) // no severe evidence: nothing for the family's page
         assertEquals(1, r.store.log(s.stream!!, "attested").size) // one seal per silence
     }
 
@@ -158,7 +159,7 @@ class MirrorServiceTest {
     }
 
     @Test
-    fun aCrashSignatureFollowedBySilenceNotifiesOnceEvenWithoutTheCarsOwnTrigger() {
+    fun aCrashSignatureFollowedBySilenceIsRecordedOnceEvenWithoutTheCarsOwnTrigger() {
         val r = Rig()
         val s = r.connect()
         repeat(20) { r.t += 100; r.speed(60f) }
@@ -169,16 +170,17 @@ class MirrorServiceTest {
         r.now += Tuning.DEADMAN_NOTIFY_SILENCE_S * 1_000L
         r.service.tick()
         r.service.tick()
-        assertEquals(1, r.notices.size)
-        assertEquals(s.stream, r.notices.single().stream)
-        assertTrue(r.notices.single().attestation.startsWith("ATTEST|"))
+        // Recorded for the family's page (nobody is texted), with the server's seal over what arrived.
+        assertEquals(1, r.severeSilent(s).size)
+        assertTrue(r.severeSilent(s).single().substringAfter('|').startsWith("ATTEST|"))
+        assertEquals("SERVER_SEAL", r.service.capsules(s.stream!!).single().trigger)
 
         // The all-clear ends the episode: later silence in NORMAL does nothing.
         r.level(EscalationLevel.NORMAL)
         s.send(Frame.Event(EscalationLevel.NORMAL, r.records(22, 22).single()))
         r.now += Tuning.DEADMAN_NOTIFY_SILENCE_S * 2_000L
         r.service.tick()
-        assertEquals(1, r.notices.size)
+        assertEquals(1, r.severeSilent(s).size)
     }
 
     @Test
@@ -239,7 +241,10 @@ class MirrorServiceTest {
         r.now += Tuning.DEADMAN_NOTIFY_SILENCE_S * 1_000L
         r.service.tick()
         r.service.tick()
-        assertEquals(1, r.notices.size)
+        assertEquals(1, r.severeSilent(s).size)
+        // The family's page shows what the server could read of it: the crash-signal copies, not the locked records.
+        val c = r.service.capsules(s.stream!!).single()
+        assertTrue(r.service.signalCopies(s.stream!!, c.firstSeq, c.lastSeq).any { it.second.startsWith("S|SPEED|") })
     }
 
     @Test
@@ -268,34 +273,37 @@ class MirrorServiceTest {
     }
 
     @Test
-    fun aCarThatWasOfflineGetsItsRotationWhenItReconnects() {
-        val dir = tmp.newFolder()
-        val key = ServerKey(dir)
-        val texts = mutableListOf<String>()
-        val identity = Identity(dir, key, object : SmsSender { override fun send(phone: String, text: String) { texts += text } })
-        val service = MirrorService(FileStreamStore(dir), key, object : ContactNotifier { override fun notify(notice: EmergencyNotice) = Unit }, identity)
-        fun code() = Regex("인증번호 (\\d{6})").find(texts.last())!!.groupValues[1]
-        val car = Car()
-        val deviceId = MirrorProtocol.deviceId(car.publicKey)
+    fun aSevereCapsulesMinuteKeysAreKeptOnlyIfTheyOpenAndAreReleasedForThatCapsule() {
+        val r = Rig()
+        val s = r.connect()
+        val minuteKey = ByteArray(32) { 7 }
+        val sealed = SealedBox.seal(r.service.serverPublicKey(), minuteKey, SealedBox.INFO_ESCROW)
+        assertEquals(listOf(Frame.EscrowAck(0, 28_333_333)), s.send(Frame.Escrow("C1", 0, 28_333_333, sealed)))
+        assertEquals(listOf(Frame.EscrowAck(0, 28_333_333)), s.send(Frame.Escrow("C1", 0, 28_333_333, sealed))) // resent: stored once
+        assertEquals(1, r.store.log(s.stream!!, ESCROW).size)
+        // Sealed for another purpose (a crash-signal copy), or garbage: not kept, not acknowledged.
+        assertTrue(s.send(Frame.Escrow("C1", 0, 28_333_334, SealedBox.seal(r.service.serverPublicKey(), minuteKey, SealedBox.INFO_SERVER))).isEmpty())
+        assertTrue(s.send(Frame.Escrow("C1", 0, 28_333_335, "e1.x.y")).isEmpty())
+        val keys = r.service.minuteKeys(s.stream!!, "C1")
+        assertEquals(listOf(Triple(0, 28_333_333L, java.util.Base64.getEncoder().encodeToString(minuteKey))), keys)
+        assertTrue(r.service.minuteKeys(s.stream!!, "C2").isEmpty())
+    }
 
-        // A claimed car whose owner removed a contact while the car was off.
-        val claimCode = identity.claimCode(StreamId(deviceId, "live"))
-        identity.sendOtp("01012345678", "claim", "owner")
-        val owner = (identity.claim(claimCode, "01012345678", code(), "PHONEKEY", "MAC") as Identity.ClaimResult.Claimed).ownerId
-        identity.putWrap(deviceId, owner, 0, "W0")
-        val mom = identity.invite(owner, "엄마", "01022223333", "http://x")
-        identity.sendOtp("01022223333", "contact", "mom")
-        identity.accept(mom.inviteToken, "01022223333", code(), "MOMKEY")
-        identity.activate(owner, mom.id)
-        identity.removeContact(mom.id, byContact = false)
-
-        val session = service.session()
-        val replies = session.onText(car.auth(session.greeting()))!!.map { MirrorProtocol.decode(it) }
-        assertTrue(replies.contains(Frame.Rotate))
-        session.onText(MirrorProtocol.encode(Frame.Wrap(owner, 1, "W1"))) // the car's new epoch
-        assertFalse(identity.pendingRotation(deviceId))
-        val again = service.session()
-        assertFalse(again.onText(car.auth(again.greeting()))!!.map { MirrorProtocol.decode(it) }.contains(Frame.Rotate)) // once
+    @Test
+    fun drivesAreCutAtGapsByTheCarsOwnClockAndListedOnlyForTheirOwner() {
+        val r = Rig()
+        val s = r.connect()
+        val ring = MemoryKeyRing()
+        val chain = FileEventStore(tmp.newFolder(), cipher = EpochRecordCipher(ring) { 1_700_000_000_000 + r.t })
+        fun speed(kmh: Float) = chain.append(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(kmh / 3.6f), r.ts())))
+        repeat(10) { r.t += 1_000; speed(50f) }
+        r.t += Tuning.DRIVE_GAP_MS // parked a while
+        ring.rotate("buyer") // and sold
+        repeat(5) { r.t += 1_000; speed(30f) }
+        s.send(Frame.Batch(EscalationLevel.NORMAL, chain.records(0, 14)))
+        val all = r.service.drives(s.stream!!) { true }
+        assertEquals(listOf(10L..14L, 0L..9L), all.map { it.firstSeq..it.lastSeq }) // newest first
+        assertEquals(1_700_000_001_000L, all.last().startMs)
+        assertEquals(listOf(0L..9L), r.service.drives(s.stream!!) { it == 0 }.map { it.firstSeq..it.lastSeq }) // the seller's own
     }
 }
-

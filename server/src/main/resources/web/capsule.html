@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>White Box · 증거 요약</title>
+<link rel="stylesheet" href="/wb.css">
+<style>
+.verdict{display:flex;gap:10px;align-items:center;font-weight:600}
+.verdict .mark{font-size:22px}
+table{width:100%;border-collapse:collapse;font-size:15px}td{padding:6px 0;border-top:1px solid var(--line);vertical-align:top}td:first-child{color:var(--muted);width:7.5em}
+tr:first-child td{border-top:0}
+</style>
+</head>
+<body><main>
+<p class="noprint"><a href="javascript:history.back()">← 돌아가기</a></p>
+<div id="loading" class="card"><p class="msg">기록을 여는 중… (이 휴대폰 안에서 풀고 확인합니다)</p></div>
+<div id="denied" class="card" hidden>
+  <h2>이 기록을 열 수 없습니다</h2>
+  <p>차량 소유자이거나 등록된 비상 연락처라면 휴대폰 번호로 인증한 뒤 다시 열어 주세요.</p>
+  <a class="button-like" href="/me">소유자로 들어가기</a> <a class="button-like secondary" href="/contact">비상 연락처로 들어가기</a>
+</div>
+
+<div id="nokey" class="card" hidden>
+  <h2>이 휴대폰에서는 아직 이 기록이 열리지 않습니다</h2>
+  <p>휴대폰을 바꿨거나 브라우저 데이터를 지운 경우입니다. 차에 타서 화면의 <b>휴대폰</b> 탭 → <b>다른 휴대폰 연결</b>을 누르고 QR을 찍으면, 지금까지의 기록이 이 휴대폰에서 다시 열립니다.</p>
+</div>
+
+<div id="packet" hidden>
+  <div class="card" id="shared-note" hidden>
+    <p><b>운전자가 QR로 공유한 증거 요약입니다.</b> 이 기록 하나만 열리며, 원본과 같은지 이 휴대폰에서 직접 확인했습니다.</p>
+  </div>
+  <div class="card">
+    <h1 id="title"></h1>
+    <p id="kind" class="msg"></p>
+    <table id="facts"></table>
+  </div>
+  <div class="card" id="verdict-card">
+    <div class="verdict"><span class="mark" id="mark"></span><span id="verdict"></span></div>
+    <p class="msg" id="verdict-sub"></p>
+  </div>
+  <div class="card">
+    <h2>감지 직전 운전자의 조작</h2>
+    <ul class="bullets" id="lines"></ul>
+    <h3>감지 전후 10초 · 5초</h3>
+    <div id="graph"></div>
+  </div>
+  <div class="card" id="context-card" hidden>
+    <h2>그때의 차량 상태</h2>
+    <table id="context"></table>
+  </div>
+  <div class="card noprint" id="sync-card">
+    <h2>블랙박스 영상과 맞춰 보기</h2>
+    <div id="sync"></div>
+  </div>
+  <div class="card noprint">
+    <button class="wide secondary" onclick="print()">증거 요약 인쇄 · PDF로 저장</button>
+    <p class="msg">한 장짜리 요약으로 인쇄됩니다. 원본은 차량과 서버에 봉인된 그대로 남습니다.</p>
+  </div>
+  <details class="card"><summary>자세히 (검증 정보)</summary><div id="tech" class="tech"></div></details>
+</div>
+</main>
+<script src="/codec.js"></script>
+<script src="/packet.js"></script>
+<script src="/verify.js"></script>
+<script src="/sync.js"></script>
+<script src="/wb.js"></script>
+<script>
+const esc = WB.esc;
+const { d, s = 'live', id, t: shareCode, k: shareKeys } = WB.params();
+const KIND = (c) => c.trigger === 'MANUAL' ? '운전자가 음성으로 보관한 순간' : c.severe ? '큰 사고 (충돌 수준)' : '위험 순간 (아찔했던 상황)';
+const ANSWER = { kept: '운전자가 "보관"이라고 답했습니다.', released: '운전자가 보관하지 않겠다고 답했습니다. 기록 자체는 봉인된 채 남아 있습니다.', unanswered: '운전자가 대답하지 않아 보관되었습니다.' };
+
+async function load() {
+  if (!d || !id) return deny();
+  if (shareCode) return loadShared();
+  const me = await WB.get('/v1/me');
+  let ring = await WB.ownerKeys(me, d);
+  const q = `/v1/capsule?device=${encodeURIComponent(d)}&stream=${encodeURIComponent(s)}&id=${encodeURIComponent(id)}`;
+  let data = await WB.get(q);
+  if (!data || data.ok === false) return deny();
+  // No key on this phone (a new phone, or the family): a severe capsule opens with the minutes the car handed over.
+  if (ring.isEmpty() && data.capsule.severe && !data.keys.length) data = (await WB.get(q + '&keys=1')) || data;
+  if (data.keys.length) {
+    const minutes = Object.fromEntries(data.keys.map((k) => [`${k.epoch}:${k.minute}`, WB.unb64(k.key)]));
+    ring = WBCodec.keyring({ minutes });
+  }
+  await show(data, ring);
+}
+
+async function show(data, ring) {
+  const c = data.capsule;
+  const copies = new Map((data.copies || []).map((x) => [x.seq, x.entry]));
+  const events = [];
+  for (const line of data.records) {
+    const r = WBCodec.parseLine(line);
+    if (!r || r.seq < c.firstSeq) continue;
+    let e = await WBCodec.decode(r.entry, ring).catch(() => null);
+    // A server seal (the car went silent): its readable crash-signal copies stand in for the locked records.
+    if ((!e || e.locked) && copies.has(r.seq)) e = await WBCodec.decode(copies.get(r.seq)).catch(() => e);
+    if (e) events.push({ seq: r.seq, e });
+  }
+  if (!events.length) return deny();
+  // An owner's phone without the car's key, on a moment that is not a big crash: nothing here can be opened.
+  if (!events.some((x) => (x.e.type === 'S' || x.e.type === 'L') && !x.e.locked)) return noKey();
+  // As on the car: the detection that names the capsule (a crash escalates a near-miss capsule), else the first;
+  // without one (a server seal), the first alert.
+  const triggers = events.filter((x) => x.e.type === 'E' && x.e.event === 'TRIGGER');
+  const trigger = [...triggers].reverse().find((x) => x.e.trigger === c.trigger) || triggers[0];
+  const alert = events.find((x) => x.e.type === 'E' && x.e.event === 'LEVEL' && x.e.level === 'ALERT');
+  const causeSeq = trigger ? trigger.e.causeSeq : alert ? alert.e.causeSeq : c.lastSeq;
+  const t = WBPacket.build(events, causeSeq);
+  const verdict = await WBVerify.capsule(data);
+  render(c, data, events.filter((x) => x.seq <= causeSeq), events, t, verdict, trigger);
+}
+
+/**
+ * Opened from the packet's QR: the share code goes to the server in the request body, and the minute keys after
+ * `#` stay on this phone. The records open here and are checked here.
+ */
+async function loadShared() {
+  let data;
+  try { data = await WB.post('/v1/shared', { device: d, stream: s, id, t: shareCode }); }
+  catch (e) { WB.show('loading', false); WB.show('denied'); WB.$('denied').innerHTML = `<h2>열 수 없는 QR입니다</h2><p>${esc(e.message)}</p>`; return; }
+  const minutes = {};
+  for (const k of (shareKeys || '').split(',').filter(Boolean)) {
+    const [e, m, key] = k.split('.');
+    minutes[`${e}:${m}`] = WB.unb64(key);
+  }
+  WB.show('shared-note');
+  await show(data, WBCodec.keyring({ minutes }));
+}
+
+function deny() { WB.show('loading', false); WB.show('denied'); }
+function noKey() { WB.show('loading', false); WB.show('nokey'); }
+
+/** Detections whose measured value is a speed change (the car shows "before → after" for these). */
+const DELTA_KMH = ['DELTA_V', 'SHORT_DELTA_V', 'BRAKED_SPIKE', 'REAR_SHOVE', 'HARD_BRAKE', 'BRAKE_SPEED_RISE', 'BRAKE_NO_DECEL', 'ALERT_RESOLVED', 'LURCH'];
+
+function render(c, data, upToCause, events, t, v, trigger) {
+  WB.show('loading', false);
+  WB.show('packet');
+  WB.$('title').textContent = WBPacket.TRIGGER[c.trigger] || c.trigger;
+  WB.$('kind').textContent = KIND(c);
+  const causeWall = t.causeWall;
+  const facts = [['시각', WB.when(causeWall)]];
+  // The same figures as the car's packet: the last position and speed recorded up to the detection; the speed
+  // before it is the speed then minus the measured change.
+  const places = upToCause.filter((x) => x.e.type === 'L' && !x.e.locked);
+  const place = places[places.length - 1];
+  facts.push(['위치', place ? `<a href="${WB.mapLink(place.e.lat, place.e.lon)}" target="_blank" rel="noopener">지도에서 보기</a> <small>(±${Math.round(place.e.acc || 0)} m)</small>` : '기록 없음']);
+  const speeds = upToCause.filter((x) => x.e.type === 'S' && x.e.kind === 'SPEED' && !x.e.locked);
+  const after = speeds.length ? speeds[speeds.length - 1].e.value * 3.6 : null;
+  if (after != null) {
+    const dv = trigger && DELTA_KMH.includes(trigger.e.trigger) ? trigger.e.measured : null;
+    facts.push(['속도', dv != null ? `${(after - dv).toFixed(0)} → ${after.toFixed(0)} km/h <small>(속도 변화 ${dv > 0 ? '+' : ''}${dv.toFixed(1)} km/h)</small>` : `${after.toFixed(0)} km/h`]);
+  }
+  if (c.answer) facts.push(['운전자 답', ANSWER[c.answer]]);
+  WB.$('facts').innerHTML = facts.map(([k, val]) => `<tr><td>${k}</td><td>${val}</td></tr>`).join('');
+
+  WB.$('mark').textContent = v.ok ? '✓' : '✗';
+  WB.$('mark').className = 'mark ' + (v.ok ? 'good' : 'bad');
+  WB.$('verdict').textContent = v.ok ? '원본 그대로입니다 · 변조 없음' : '검증되지 않았습니다';
+  WB.$('verdict-sub').textContent = v.ok
+    ? `기록 ${v.chain.checked}건이 차량의 해시 체인과 서명에 맞는지 이 휴대폰에서 직접 확인했습니다.`
+    : `확인 결과: ${v.chain.reason || v.seals.find((x) => !x.ok)?.reason || '서버 서명이 맞지 않음'}. 원본은 차량에 그대로 있습니다.`;
+
+  WB.$('lines').innerHTML = t.lines.map((l) => `<li>${esc(WBPacket.lineText(l))}</li>`).join('') || '<li>감지 직전 바뀐 조작이 없습니다.</li>';
+  WB.$('graph').innerHTML = WBPacket.svg(t);
+  const ctx = WBPacket.contextRows(t.context);
+  WB.show('context-card', ctx.length > 0);
+  WB.$('context').innerHTML = ctx.map(([k, val]) => `<tr><td>${esc(k)}</td><td>${esc(val)}</td></tr>`).join('');
+
+  // The dashcam view spans the whole capsule, not just the packet's −10 s … +5 s.
+  const first = events[0].e.at, last = events[events.length - 1].e.at;
+  const causeEv = events.find((x) => x.seq === t.causeSeq);
+  const pre = Math.max(1000, Math.trunc((causeEv.e.at.ns - first.ns) / 1e6));
+  const post = Math.max(1000, Math.trunc((last.ns - causeEv.e.at.ns) / 1e6));
+  const whole = WBPacket.build(events, t.causeSeq, { pre, post });
+  const beacons = events.filter((x) => x.e.type === 'A' && x.e.event === 'BEACON').map((x) => x.e.playedAt.wall);
+  WBSync.mount(WB.$('sync'), { timeline: whole, causeWall, beacons, Packet: WBPacket });
+
+  const tech = [
+    `캡슐 ${c.id} · 기록 #${c.firstSeq}–#${c.lastSeq} (${events.length}건 열람)`,
+    `체인: ${v.chain.ok ? `해시·연결 ${v.chain.checked}건 확인` : `#${v.chain.brokenAt} ${v.chain.reason}`}`,
+    ...v.seals.map((x) => x.seal ? `차량 봉인 ${x.seal.final ? '최종' : '임시'} · ${WB.when(x.seal.at)} · ${x.ok ? '서명 유효' : x.reason} · 머리 해시 ${x.seal.head.slice(0, 16)}…` : `봉인: ${x.reason}`),
+    ...v.anchors.map((a) => `서버 앵커 #${a.head} · ${WB.when(a.at)} · ${a.signed ? '서버 서명 유효' : '서명 오류'}${a.agrees === false ? ' · 해시 불일치' : ''}`),
+    ...(v.attestation ? [`서버 봉인 (차량 무응답) · ${v.attestation.signed ? '서버 서명 유효' : '서명 오류'}`] : []),
+    data.keys.length ? `이 사고 기록에 맡겨진 열쇠 ${data.keys.length}분 분량으로 열었습니다 (평소 주행은 열리지 않음)` : '소유자 휴대폰의 열쇠로 열었습니다',
+    `감지 기준 기록 #${t.causeSeq ?? ''}`,
+  ];
+  WB.$('tech').innerHTML = tech.map(esc).join('<br>');
+}
+load();
+</script>
+</body>
+</html>

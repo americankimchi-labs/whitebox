@@ -36,3 +36,19 @@ tasks.register<JavaExec>("demoCar") {
     mainClass.set("com.americankimchilabs.whitebox.server.DemoCarKt")
     workingDir = rootProject.projectDir
 }
+
+// The phone pages' JavaScript, tested against vectors the Kotlin tests write from the car's own code (Node 18+,
+// no packages). Runs after `test`; skipped with a notice where Node is not installed.
+val webTest by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Runs the viewer's JavaScript tests (src/test/web) against build/web-vectors."
+    dependsOn(tasks.named("test"))
+    workingDir = projectDir
+    commandLine("node", "--test", "src/test/web/*.test.js")
+    onlyIf {
+        val node = runCatching { ProcessBuilder("node", "--version").start().waitFor() == 0 }.getOrDefault(false)
+        if (!node) logger.warn("webTest skipped: Node.js is not installed (the viewer's JavaScript tests need it).")
+        node
+    }
+}
+tasks.named("test") { finalizedBy(webTest) }

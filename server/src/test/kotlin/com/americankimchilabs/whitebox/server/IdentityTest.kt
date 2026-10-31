@@ -44,15 +44,7 @@ class IdentityTest {
 
         fun ownerId() = (claim() as Identity.ClaimResult.Claimed).ownerId
 
-        fun activeMom(ownerId: String): Identity.Contact {
-            val c = id.invite(ownerId, "엄마", mom, "http://x")
-            now += 31_000
-            id.sendOtp(mom, "contact", "c-mom")
-            assertNotNull(id.accept(c.inviteToken, mom, texts.code(mom), "MOMKEY"))
-            id.putWrap("car1", c.id, 0, "W0-mom")
-            assertTrue(id.activate(ownerId, c.id))
-            return id.contact(c.id)!!
-        }
+        fun mom(ownerId: String): Identity.Contact = id.addContact(ownerId, "엄마", mom)
     }
 
     @Test
@@ -166,56 +158,46 @@ class IdentityTest {
     }
 
     @Test
-    fun aContactMustAcceptWithTheInvitedNumberAndBecomesActiveOnlyWithTheOwnersWrap() {
+    fun anOwnerAddsAContactByNameAndNumberAndNobodyIsTexted() {
         val r = Rig()
         val owner = r.ownerId()
-        val c = r.id.invite(owner, "엄마", r.mom, "http://localhost:8080")
-        val token = Regex("contact#(\\S+)").find(r.texts.last(r.mom))!!.groupValues[1]
-        assertEquals(c.id, r.id.contactByInvite(token)!!.id)
-
-        val stranger = "01099998888"
-        r.id.sendOtp(stranger, "contact", "x")
-        assertNull(r.id.accept(token, stranger, r.texts.code(stranger), "STRANGERKEY")) // not the invited number
-        assertFalse(r.id.activate(owner, c.id)) // nothing accepted yet
-
-        r.now += 31_000
-        r.id.sendOtp(r.mom, "contact", "m")
-        val session = r.id.accept(token, r.mom, r.texts.code(r.mom), "MOMKEY")!!
-        assertEquals(listOf(c.id), r.id.contactsByPhoneHash(session).map { it.id })
-        assertNull(r.id.contactByInvite(token)) // used
-        assertTrue(r.id.activate(owner, c.id))
-        assertFalse(r.id.activate("someone-else", c.id))
+        r.texts.sent.clear()
+        val mom = r.mom(owner)
+        assertTrue(r.texts.sent.isEmpty()) // like a hospital form: not asked, not told
+        assertEquals("엄마", r.id.contactName(mom))
+        assertEquals(mom.id, r.mom(owner).id) // the same number twice is one entry
+        assertTrue(r.id.isContactNumber(r.mom))
+        assertFalse(r.id.isContactNumber(r.buyer))
+        assertFalse(r.dir.resolve("identity.log").readText().contains(r.mom)) // encrypted at rest
+        assertEquals("엄마", r.identity().contactName(r.identity().contact(mom.id)!!)) // survives a restart
     }
 
     @Test
-    fun removingAContactDeletesTheirKeysAndAsksTheCarForANewOne() {
+    fun aRemovedContactOrOneWhoLeftCanNoLongerSignIn() {
         val r = Rig()
         val owner = r.ownerId()
-        r.id.putWrap("car1", owner, 0, "W0-owner")
-        val mom = r.activeMom(owner)
+        val mom = r.mom(owner)
+        r.texts.sent.clear()
         assertTrue(r.id.removeContact(mom.id, byContact = true))
-        assertTrue(r.id.wraps("car1", mom.id).isEmpty())
+        assertTrue(r.texts.sent.isEmpty()) // shown on the owner's page, never texted
+        assertEquals(listOf(mom.id), r.id.contactsWhoLeft(owner).map { it.id })
         assertTrue(r.id.contactsOf(owner).isEmpty())
-        assertTrue("해제" in r.texts.last(r.owner)) // the owner is told when the contact withdraws
-        assertTrue(r.id.pendingRotation("car1"))
-        r.id.putWrap("car1", owner, 0, "W0-again") // not newer: still pending
-        assertTrue(r.id.pendingRotation("car1"))
-        r.id.putWrap("car1", owner, 1, "W1-owner") // the car's new epoch arrived
-        assertFalse(r.id.pendingRotation("car1"))
         assertFalse(r.id.removeContact(mom.id, byContact = false)) // once
-        assertNull(r.id.login(Identity.CONTACT, r.mom, "000000")) // a former contact cannot sign in
+        r.now += 31_000
+        r.id.sendOtp(r.mom, "contact", "m")
+        assertNull(r.id.login(Identity.CONTACT, r.mom, r.texts.code(r.mom)))
     }
 
     @Test
     fun ownersAndContactsSignInAgainWithTheirNumber() {
         val r = Rig()
         val owner = r.ownerId()
-        r.activeMom(owner)
+        r.mom(owner)
         r.now += 31_000
         r.id.sendOtp(r.owner, "login", "o")
         assertNotNull(r.id.session(r.id.login(Identity.OWNER, r.owner, r.texts.code(r.owner))))
         r.now += 31_000
-        r.id.sendOtp(r.mom, "login", "m")
+        r.id.sendOtp(r.mom, "contact", "m")
         assertNotNull(r.id.login(Identity.CONTACT, r.mom, r.texts.code(r.mom)))
         r.now += 31_000
         r.id.sendOtp(r.buyer, "login", "b")
@@ -223,64 +205,17 @@ class IdentityTest {
     }
 
     @Test
-    fun recoveryNeedsTheOwnersNumberAndEveryKeyTheContactHolds() {
+    fun aNewPhoneOfTheOwnerReconnectsByScanningTheCarAgain() {
         val r = Rig()
         val owner = r.ownerId()
-        r.id.putWrap("car1", owner, 0, "OLD0")
-        val mom = r.activeMom(owner)
-        r.id.putWrap("car1", mom.id, 1, "W1-mom")
-
-        r.now += 31_000
-        r.id.sendOtp(r.owner, "recover", "o")
-        val (rec, _) = r.id.startRecovery(r.owner, r.texts.code(r.owner), "PHONE2", "http://x")!!
-        assertTrue("복구" in r.texts.last(r.mom)) // the contact is asked
-        assertFalse(r.id.completeRecovery(rec.id, mom.id, mapOf(("car1" to 0) to "NEW0"))) // epoch 1 missing
-        assertTrue(r.id.completeRecovery(rec.id, mom.id, mapOf(("car1" to 0) to "NEW0", ("car1" to 1) to "NEW1")))
-        assertEquals(listOf(0 to "NEW0", 1 to "NEW1"), r.id.wraps("car1", owner).map { it.epoch to it.sealed })
-        assertEquals("PHONE2", r.id.owner(owner)!!.ecdhKey)
-        assertFalse(r.id.completeRecovery(rec.id, mom.id, mapOf(("car1" to 0) to "AGAIN", ("car1" to 1) to "AGAIN"))) // once
-
-        // Everything survives a restart (sessions and codes do not: the phone just verifies again).
-        val reloaded = r.identity()
-        assertEquals("NEW1", reloaded.wraps("car1", owner).last().sealed)
-        assertEquals(Identity.ACTIVE, reloaded.contact(mom.id)!!.state)
-        assertEquals("PHONE2", reloaded.owner(owner)!!.ecdhKey)
+        val again = r.claim(phoneKey = "PHONE2") as Identity.ClaimResult.Claimed
+        assertEquals(owner, again.ownerId)
+        assertEquals("PHONE2", r.id.owner(owner)!!.ecdhKey) // the car wraps every key of theirs to it
+        assertTrue(r.id.transfersFrom(owner).isEmpty()) // their own number: no takeover
     }
 
     @Test
-    fun emergencyNoticesGoOnlyToActiveContacts() {
-        val r = Rig()
-        val owner = r.ownerId()
-        r.activeMom(owner)
-        r.id.invite(owner, "아빠", "01044445555", "http://x") // invited, never accepted
-        r.texts.sent.clear()
-        val logged = mutableListOf<EmergencyNotice>()
-        ContactsNotifier(r.id, r.texts, object : ContactNotifier { override fun notify(notice: EmergencyNotice) { logged += notice } })
-            .notify(EmergencyNotice(r.car, "ATTEST|…", "silent after a severe event", r.now))
-        assertEquals(1, logged.size)
-        assertEquals(listOf(r.mom), r.texts.sent.map { it.first })
-    }
-
-    @Test
-    fun anOwnerWhoSoldTheCarCanStillRecoverThatHistoryThroughAContact() {
-        val r = Rig()
-        val owner = r.ownerId()
-        r.id.putWrap("car1", owner, 0, "OLD0")
-        val mom = r.activeMom(owner)
-        val t = (r.claim(r.buyer) as Identity.ClaimResult.Pending).transfer
-        r.id.answerTransfer(owner, t.id, approve = true)
-        assertTrue(r.id.devicesOf(owner).isEmpty())
-
-        r.now += 31_000
-        r.id.sendOtp(r.owner, "recover", "o")
-        val (rec, _) = r.id.startRecovery(r.owner, r.texts.code(r.owner), "PHONE2", "http://x")!!
-        assertTrue(r.id.completeRecovery(rec.id, mom.id, mapOf(("car1" to 0) to "NEW0")))
-        assertEquals(listOf("car1"), r.id.devicesHeldBy(owner))
-        assertEquals("NEW0", r.id.wraps("car1", owner).single().sealed)
-    }
-
-    @Test
-    fun aRestartSignsNobodyOutAndARepeatedRecoveryResumes() {
+    fun aRestartSignsNobodyOut() {
         val r = Rig()
         val owner = r.ownerId()
         r.now += 31_000
@@ -288,18 +223,5 @@ class IdentityTest {
         val token = r.id.login(Identity.OWNER, r.owner, r.texts.code(r.owner))!!
         assertEquals(owner, r.identity().session(token)!!.id) // after a restart
         assertFalse(r.dir.resolve("identity.log").readText().contains(token)) // only a hash is stored
-
-        r.activeMom(owner)
-        r.now += 31_000
-        r.id.sendOtp(r.owner, "recover", "o")
-        val (first, _) = r.id.startRecovery(r.owner, r.texts.code(r.owner), "PHONE2", "http://x")!!
-        val textsToMom = r.texts.sent.count { it.first == r.mom }
-        r.now += 31_000
-        r.id.sendOtp(r.owner, "recover", "o")
-        val (again, _) = r.id.startRecovery(r.owner, r.texts.code(r.owner), "PHONE2", "http://x")!!
-        assertEquals(first.id, again.id)
-        assertEquals(textsToMom, r.texts.sent.count { it.first == r.mom })
-        assertEquals(1, r.id.pendingRecoveries(owner).size)
     }
 }
-

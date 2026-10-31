@@ -167,7 +167,7 @@ class OutboxTest {
         val seals = SealStore(dir)
         val channel = FakeChannel().apply { serverKey = server.public.encoded }
         var consent = true
-        val outbox = Outbox(store, seals, channel, dir) { consent }
+        val outbox = Outbox(store, seals, channel, dir, consent = { consent })
         val recorder = Recorder(store, seals, JdkSigner(), clock, outbox::onSeal)
         outbox.start(backgroundScope, recorder)
         channel.connected.value = true
@@ -211,6 +211,58 @@ class OutboxTest {
         repeat(115) { t += 100; speed(0f) }
         runCurrent()
         assertTrue(channel.sent.none { it is Frame.Window })
+    }
+
+    @Test
+    fun aSevereCrashHandsTheServerOnlyTheKeysOfItsOwnMinutes() = runTest {
+        val dir = tmp.newFolder()
+        val server = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+        var t = 0L
+        val wall = { 1_700_000_000_000 + t }
+        val clock = Clock { Timestamp(t * 1_000_000, wall()) }
+        val ring = MemoryKeyRing()
+        val store = FileEventStore(dir, cipher = EpochRecordCipher(ring, wall))
+        val seals = SealStore(dir)
+        val channel = FakeChannel().apply { serverKey = server.public.encoded }
+        val outbox = Outbox(store, seals, channel, dir, minuteKey = { e, m -> ring.key(e)?.let { RecordCipher.minuteKey(it, m) } })
+        val recorder = Recorder(store, seals, JdkSigner(), clock, outbox::onSeal)
+        outbox.start(backgroundScope, recorder)
+        channel.connected.value = true
+        runCurrent()
+        suspend fun speed(kmh: Float) = recorder.record(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(kmh / 3.6f), clock.now())))
+        // Everyday driving, minutes before.
+        recorder.record(ChainEntry.Location(com.americankimchilabs.whitebox.domain.LocationFix(37.5, 127.0, 5f, 1, clock.now())))
+        t += 10 * 60_000
+        repeat(20) { t += 100; speed(60f) }
+        recorder.record(ChainEntry.Signal(SignalSample(VehicleSignal.BrakePedal(true), clock.now())))
+        t += 100; speed(60f)
+        t += 100; speed(35f) // crash
+        repeat(115) { t += 100; speed(0f) }
+        runCurrent()
+
+        val escrow = channel.sent.filterIsInstance<Frame.Escrow>()
+        assertTrue(escrow.isNotEmpty())
+        val keys = escrow.associate { (it.epoch to it.minute) to SealedBox.open(server.private, it.sealed, SealedBox.INFO_ESCROW) }
+        val family = MinuteKeysCipher(keys)
+        val capsule = recorder.capsules.value.last { it.final }.capsule
+        // The crash opens with the escrowed keys alone...
+        val crash = store.records(capsule.firstSeq, capsule.lastSeq).map { MirrorProtocol.Record.parse(it)!!.entry }
+        assertTrue(crash.any { it.startsWith("S|SPEED") })
+        crash.forEach { EntryCodec.decode(it, family) }
+        // ...the everyday location before it does not.
+        val before = MirrorProtocol.Record.parse(store.records(0, 0).single())!!.entry
+        assertTrue(runCatching { EntryCodec.decode(before, family) }.exceptionOrNull() is LockedRecordException)
+
+        // Kept until acknowledged; once every minute is, nothing more is sent.
+        channel.sent.clear()
+        escrow.map { it.epoch to it.minute }.distinct().forEach { (e, m) -> channel.incoming.tryEmit(MirrorProtocol.encode(Frame.EscrowAck(e, m))) }
+        runCurrent()
+        assertTrue(dir.resolve("mirror-escrow").readText().isBlank()) // done: nothing left pending
+        channel.connected.value = false
+        runCurrent()
+        channel.connected.value = true
+        runCurrent()
+        assertTrue(channel.sent.none { it is Frame.Escrow })
     }
 
     @Test

@@ -93,7 +93,8 @@ private fun ConsentRow(consent: Boolean, onConsent: (Boolean) -> Unit) {
     HorizontalDivider()
 }
 
-private fun qr(text: String, size: Int): ImageBitmap {
+/** A QR code of [text], [size] pixels square (ZXing's encoder; nothing leaves the car to make it). */
+internal fun qr(text: String, size: Int): ImageBitmap {
     val m = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, size, size, mapOf(EncodeHintType.MARGIN to 2))
     val pixels = IntArray(size * size) { i -> if (m[i % size, i / size]) Color.BLACK else Color.WHITE }
     return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888).asImageBitmap()

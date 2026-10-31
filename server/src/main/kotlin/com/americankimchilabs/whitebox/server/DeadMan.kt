@@ -27,7 +27,7 @@ class DeadMan(
         /** Seal what was received of this episode (it began at [episodeStartMs]). */
         data class Attest(val stream: StreamId, val episodeStartMs: Long) : Action
 
-        /** Long silence: notify contacts if the episode shows a severe event ([severeSeen] is the frame evidence). */
+        /** Long silence: record it for the family's page if the episode shows a severe event ([severeSeen] is the frame evidence). */
         data class ConsiderNotice(val stream: StreamId, val episodeStartMs: Long, val severeSeen: Boolean) : Action
     }
 

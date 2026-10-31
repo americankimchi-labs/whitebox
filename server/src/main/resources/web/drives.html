@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>White Box · 주행 기록</title>
+<link rel="stylesheet" href="/wb.css">
+</head>
+<body><main>
+<p><a href="/me">← 내 차량</a></p>
+<h1>주행 기록</h1>
+<p class="msg">이 휴대폰에서만 풀어 보여 줍니다. 평소 주행은 회원님 말고는 아무도 볼 수 없습니다.</p>
+<div id="list"><div class="card"><p class="msg">불러오는 중…</p></div></div>
+</main>
+<script src="/codec.js"></script>
+<script src="/packet.js"></script>
+<script src="/wb.js"></script>
+<script>
+const esc = WB.esc;
+const { d, s = 'live' } = WB.params();
+let ring, capsules = [];
+
+const minutes = (ms) => { const m = Math.max(1, Math.round(ms / 60000)); return m >= 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분` : `${m}분`; };
+
+async function odometerKm(drive) {
+  if (drive.odometer.length < 2) return null;
+  const [a, b] = await Promise.all(drive.odometer.map((o) => WBCodec.decode(o.entry, ring).catch(() => null)));
+  return a && b && !a.locked && !b.locked ? Math.max(0, b.value - a.value) : null;
+}
+
+/** The drive's speed over time (one reading every 2 s) and the distance it adds up to. */
+async function detail(drive, el) {
+  el.innerHTML = '<p class="msg">불러오는 중…</p>';
+  const recs = (await WB.get(`/v1/records?device=${d}&stream=${s}&from=${drive.firstSeq}&to=${drive.lastSeq}&every=2000`)) || [];
+  const pts = [];
+  for (const r of recs) {
+    if (!r.entry.startsWith('S|SPEED|')) continue;
+    const e = await WBCodec.decode(r.entry, ring).catch(() => null);
+    if (e && !e.locked) pts.push({ t: e.at.wall, v: e.value * 3.6 });
+  }
+  if (!pts.length) { el.innerHTML = '<p class="msg">이 휴대폰에서 열 수 있는 속도 기록이 없습니다.</p>'; return; }
+  let km = 0;
+  for (let i = 1; i < pts.length; i++) km += ((pts[i - 1].v + pts[i].v) / 2) * ((pts[i].t - pts[i - 1].t) / 3600000);
+  const w = 360, h = 90, t0 = pts[0].t, t1 = pts[pts.length - 1].t || t0 + 1, vmax = Math.max(30, ...pts.map((p) => p.v));
+  const x = (t) => 4 + ((t - t0) / Math.max(1, t1 - t0)) * (w - 8);
+  const y = (v) => h - 14 - (v / vmax) * (h - 24);
+  const marks = capsules.filter((c) => drive.capsules.includes(c.id))
+    .map((c) => `<line x1="${x(c.sealedAtMs)}" x2="${x(c.sealedAtMs)}" y1="6" y2="${h - 14}" stroke="${c.severe ? 'var(--bad,#c62828)' : 'var(--warn,#e65100)'}" stroke-width="2"/>`).join('');
+  el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="주행 속도" style="font:10px system-ui"><rect x="4" y="6" width="${w - 8}" height="${h - 20}" fill="var(--lane,#f1f3f5)" rx="3"/>
+    <polyline fill="none" stroke="var(--accent,#1565c0)" stroke-width="1.5" points="${pts.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')}"/>${marks}
+    <text x="8" y="17" fill="var(--muted,#5f6368)">최고 ${Math.max(...pts.map((p) => p.v)).toFixed(0)} km/h</text>
+    <text x="4" y="${h - 2}" fill="var(--muted,#5f6368)">${WB.clock(t0)}</text><text x="${w - 50}" y="${h - 2}" fill="var(--muted,#5f6368)">${WB.clock(t1)}</text></svg>
+    <p class="msg">속도로 계산한 거리 약 ${km.toFixed(1)} km${drive.odometer.length < 2 ? '' : ' (주행거리계와 다를 수 있음)'}</p>
+    ${capsules.filter((c) => drive.capsules.includes(c.id)).map((c) => `<a class="row" href="/capsule#d=${d}&s=${s}&id=${encodeURIComponent(c.id)}"><span>${esc(WBPacket.TRIGGER[c.trigger] || c.trigger)}<br><span class="sub">${WB.when(c.sealedAtMs)}</span></span><span class="badge ${c.severe ? 'bad' : 'warn'}">${c.severe ? '큰 사고' : '위험 순간'}</span></a>`).join('')}`;
+}
+
+async function load() {
+  const me = await WB.get('/v1/me');
+  if (!me) { location.href = '/me'; return; }
+  ring = await WB.ownerKeys(me, d);
+  if (ring.isEmpty()) { WB.$('list').innerHTML = '<div class="card"><p>이 휴대폰에는 기록 열쇠가 없습니다. 차량 화면의 <b>휴대폰</b> 탭에서 QR을 다시 찍어 주세요.</p></div>'; return; }
+  const drives = (await WB.get(`/v1/drives?device=${d}&stream=${s}`)) || [];
+  capsules = (await WB.get(`/v1/capsules?device=${d}&stream=${s}`)) || [];
+  if (!drives.length) { WB.$('list').innerHTML = '<div class="card"><p class="msg">아직 주행 기록이 없습니다.</p></div>'; return; }
+  const byDay = new Map();
+  for (const dr of drives) { const k = WB.day(dr.startMs); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(dr); }
+  const cards = [];
+  let i = 0;
+  for (const [dayName, list] of byDay) {
+    const rows = [];
+    for (const dr of list) {
+      const km = await odometerKm(dr);
+      const risky = dr.capsules.length;
+      rows.push(`<div class="row" style="display:block"><button class="plain" style="width:100%;text-align:left;color:inherit" data-i="${i}">
+        <b>${WB.clock(dr.startMs)}–${WB.clock(dr.endMs)}</b> · ${minutes(dr.endMs - dr.startMs)}${km != null ? ` · ${km.toFixed(1)} km` : ''}
+        ${risky ? `<span class="badge warn">위험 순간 ${risky}</span>` : ''}${dr.bookmarks ? ` <span class="badge">음성 보관 ${dr.bookmarks}</span>` : ''}</button>
+        <div id="detail-${i}" hidden></div></div>`);
+      list[list.indexOf(dr)].index = i++;
+    }
+    cards.push(`<div class="card"><h2>${esc(dayName)}</h2>${rows.join('')}</div>`);
+  }
+  WB.$('list').innerHTML = cards.join('');
+  const flat = drives;
+  document.querySelectorAll('[data-i]').forEach((b) => b.onclick = () => {
+    const el = WB.$('detail-' + b.dataset.i);
+    el.hidden = !el.hidden;
+    if (!el.hidden && !el.dataset.loaded) { el.dataset.loaded = '1'; detail(flat.find((x) => x.index === Number(b.dataset.i)), el); }
+  });
+}
+load();
+</script>
+</body>
+</html>

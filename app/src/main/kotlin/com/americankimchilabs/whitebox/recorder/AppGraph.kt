@@ -1,6 +1,7 @@
 package com.americankimchilabs.whitebox.recorder
 
 import android.content.Context
+import com.americankimchilabs.whitebox.data.CapsuleShares
 import com.americankimchilabs.whitebox.data.ClaimClient
 import com.americankimchilabs.whitebox.data.FileEventStore
 import com.americankimchilabs.whitebox.data.Outbox
@@ -30,6 +31,8 @@ class ActiveSession(
     val claim: ClaimClient? = null,
     val webBase: String? = null,
     val outbox: Outbox? = null,
+    /** The evidence packet's QR links; null without a server. */
+    val shares: CapsuleShares? = null,
 )
 
 object AppGraph {
