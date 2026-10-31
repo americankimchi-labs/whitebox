@@ -306,4 +306,29 @@ class MirrorServiceTest {
         assertEquals(1_700_000_001_000L, all.last().startMs)
         assertEquals(listOf(0L..9L), r.service.drives(s.stream!!) { it == 0 }.map { it.firstSeq..it.lastSeq }) // the seller's own
     }
+
+    @Test
+    fun aHandoverCommandFromThePhoneIsSentOnConnectingUntilTheCarAcknowledgesIt() {
+        val dir = tmp.newFolder()
+        val key = ServerKey(dir)
+        val texts = mutableListOf<String>()
+        val identity = Identity(dir, key, object : SmsSender { override fun send(phone: String, text: String) { texts += text } })
+        val service = MirrorService(FileStreamStore(dir), key, identity)
+        val car = Car()
+        val deviceId = MirrorProtocol.deviceId(car.publicKey)
+        identity.sendOtp("01012345678", "claim", "o")
+        val code = Regex("\\[(\\d{6})]").find(texts.last())!!.groupValues[1]
+        val owner = (identity.claim(identity.claimCode(StreamId(deviceId, "live")), "01012345678", code, "K", "M") as Identity.ClaimResult.Claimed).ownerId
+        identity.handoverCommand(owner, deviceId, arm = true)
+
+        val s = service.session()
+        val ready = s.onText(car.auth(s.greeting()))!!.map { MirrorProtocol.decode(it) }
+        val cmd = ready.filterIsInstance<Frame.HandoverCommand>().single()
+        s.send(Frame.HandoverStatus("ARMED", cmd.requestedAtWall, cmd.requestedAtWall, "-"))
+        assertNull(identity.handoverFrame(deviceId)) // the car's status already shows it done
+        s.send(Frame.HandoverAck(cmd.commandId)) // the late acknowledgement changes nothing
+        assertEquals("ARMED", identity.handoverStatus(deviceId)!!.phase)
+        val again = service.session()
+        assertTrue(again.onText(car.auth(again.greeting()))!!.map { MirrorProtocol.decode(it) }.none { it is Frame.HandoverCommand })
+    }
 }

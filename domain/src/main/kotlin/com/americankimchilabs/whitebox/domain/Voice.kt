@@ -25,7 +25,12 @@ enum class BookmarkSource {
 }
 
 /** Every line the car speaks. Kept short: a long synthetic voice is tiring. */
-enum class VoiceLine { KEEP_QUESTION, KEPT, RELEASED, CRASH_GUIDANCE, BOOKMARKED }
+enum class VoiceLine {
+    KEEP_QUESTION, KEPT, RELEASED, CRASH_GUIDANCE, BOOKMARKED,
+
+    // Handover mode: to the hired driver, polite and short.
+    HANDOVER_STARTED, HANDOVER_SET_DESTINATION, HANDOVER_SLOW_DOWN, HANDOVER_DRIVE_SAFELY, HANDOVER_CHECK_ROUTE,
+}
 
 /**
  * Matching recognised Korean speech. On-device recognition garbles words (a synthetic "방금 저장해" came back as

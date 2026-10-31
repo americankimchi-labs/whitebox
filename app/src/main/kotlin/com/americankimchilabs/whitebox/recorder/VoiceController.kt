@@ -30,6 +30,10 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import com.americankimchilabs.whitebox.domain.HandoverPhase
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -80,6 +84,9 @@ class VoiceController(
     private val assistant: AssistantCommands,
     private val beacon: AudioBeaconPort,
     private val text: (VoiceLine) -> String,
+    /** Handover mode: its lines to the hired driver, and its phase (the keep question is not theirs to answer). */
+    private val handoverLines: Flow<VoiceLine> = emptyFlow(),
+    private val handoverPhase: StateFlow<HandoverPhase> = MutableStateFlow(HandoverPhase.OFF),
 ) {
     private val voice = Mutex()
     private val busy = MutableStateFlow(false)
@@ -88,6 +95,7 @@ class VoiceController(
     fun start(scope: CoroutineScope): Job = scope.launch {
         resilient("keep question") { keepQuestions() }
         resilient("lines") { recorder.say.collect { lines.send(it) } }
+        resilient("handover lines") { handoverLines.collect { lines.send(it) } }
         resilient("speaker") { for (line in lines) speakLine(line) }
         resilient("assistant") { assistant.bookmarks().collect { request -> request.respond(bookmark(BookmarkSource.ASSISTANT)) } }
         resilient("offline listener") { offlineBookmarks() }
@@ -111,7 +119,12 @@ class VoiceController(
 
     private suspend fun keepQuestions() {
         recorder.pendingIncident.filterNotNull().distinctUntilChanged { a, b -> a.id == b.id }.collect { capsule ->
-            exclusive { askToKeep(capsule) }
+            // A hired driver at the wheel: the moment is the owner's, kept without asking (as if unanswered).
+            if (handoverPhase.value == HandoverPhase.ACTIVE || handoverPhase.value == HandoverPhase.ENDING) {
+                recorder.answerIncident(capsule.id, keep = true, answered = false)
+            } else {
+                exclusive { askToKeep(capsule) }
+            }
         }
     }
 

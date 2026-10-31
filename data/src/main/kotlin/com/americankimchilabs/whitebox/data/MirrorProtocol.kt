@@ -30,6 +30,8 @@ import java.util.Base64
  *   without the car or the owner's phone.
  * - `SHARE|capsuleId|codeHash|expiresMs` — the driver showed a capsule's QR: the link's code (its hash here) lets
  *   anyone holding the link fetch that capsule's encrypted records; the keys travel only in the link.
+ * - `HANDOVER|phase|requestedAtWall|sinceWall|tripId` — handover mode on the car (OFF/ARMED/ACTIVE/ENDING), on each
+ *   change and on connecting; `HANDOVERACK|commandId` — a command from the owner's phone was carried out.
  * - `WINDOW|pseudonym|sealed` — a closed capsule's signal window (core signals, triggers, the driver's answer),
  *   sealed to the server's key under a random pseudonym, with no device id: the labeled data the terms allow.
  *
@@ -46,6 +48,8 @@ import java.util.Base64
  *   nobody yet: whoever ends up owning the car gets it, so nothing recorded during the wait goes to the wrong person.
  * - `CLAIMDECLINED|transferId` — the owner declined: the pending epoch is the owner's.
  * - `ESCROWACK|epoch|minute`, `SHAREACK|capsuleId`
+ * - `HANDOVERCMD|commandId|ARM|requestedAtWall` / `HANDOVERCMD|commandId|END|0` — the owner's phone turned handover
+ *   mode on or off; resent on every connection until the car acknowledges it.
  * - `WINDOWDELACK|pseudonym`
  */
 object MirrorProtocol {
@@ -105,6 +109,13 @@ object MirrorProtocol {
         /** The driver showed a capsule's QR: whoever presents the code whose hash this is may fetch that capsule. */
         data class Share(val capsuleId: String, val codeHash: String, val expiresMs: Long) : Frame
         data class ShareAck(val capsuleId: String) : Frame
+
+        /** The owner's phone turned handover mode on ([arm], at [requestedAtWall]) or off; resent until acknowledged. */
+        data class HandoverCommand(val commandId: String, val arm: Boolean, val requestedAtWall: Long) : Frame
+        data class HandoverAck(val commandId: String) : Frame
+
+        /** Where handover mode stands on the car, for the owner's phone: sent on every change and on connecting. */
+        data class HandoverStatus(val phase: String, val requestedAtWall: Long, val sinceWall: Long, val tripId: String) : Frame
     }
 
     private val b64e = Base64.getEncoder()
@@ -135,6 +146,9 @@ object MirrorProtocol {
         is Frame.EscrowAck -> "ESCROWACK|${f.epoch}|${f.minute}"
         is Frame.Share -> "SHARE|${f.capsuleId}|${f.codeHash}|${f.expiresMs}"
         is Frame.ShareAck -> "SHAREACK|${f.capsuleId}"
+        is Frame.HandoverCommand -> "HANDOVERCMD|${f.commandId}|${if (f.arm) "ARM" else "END"}|${f.requestedAtWall}"
+        is Frame.HandoverAck -> "HANDOVERACK|${f.commandId}"
+        is Frame.HandoverStatus -> "HANDOVER|${f.phase}|${f.requestedAtWall}|${f.sinceWall}|${f.tripId}"
     }
 
     /** Null for anything malformed: a bad frame is dropped, never allowed to break the channel. */
@@ -172,6 +186,9 @@ object MirrorProtocol {
             "ESCROWACK" -> rest.split("|").let { Frame.EscrowAck(it[0].toInt(), it[1].toLong()) }
             "SHARE" -> rest.split("|").let { Frame.Share(it[0], it[1], it[2].toLong()) }
             "SHAREACK" -> Frame.ShareAck(rest)
+            "HANDOVERCMD" -> rest.split("|").let { Frame.HandoverCommand(it[0], it[1] == "ARM", it[2].toLong()) }
+            "HANDOVERACK" -> Frame.HandoverAck(rest)
+            "HANDOVER" -> rest.split("|").let { Frame.HandoverStatus(it[0], it[1].toLong(), it[2].toLong(), it[3]) }
             else -> null
         }
     }.getOrNull()

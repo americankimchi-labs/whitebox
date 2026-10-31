@@ -41,7 +41,21 @@ enum class CruiseState { OTHER, ENABLED, ACTIVATED, USER_OVERRIDE, SUSPENDED, FO
 /** HAZARD is not readable by third-party apps today; kept so a future source needs no new kind. */
 enum class Lamp { LOW_BEAM, HIGH_BEAM, TAIL_LAMP, HAZARD }
 
-enum class RoadContextType { SPEED_LIMIT, CAUTION_POINT, ENFORCEMENT_CAMERA }
+enum class RoadContextType {
+    SPEED_LIMIT,
+    CAUTION_POINT,
+    ENFORCEMENT_CAMERA,
+
+    /**
+     * The nearest speed enforcement ahead as `kind;limit;average;remaining`: kind POINT (a camera) or SECTION (구간단속),
+     * limit and the section's running average in km/h (0 for a camera), metres to the camera or the section's end;
+     * "NONE" when none is announced any more. Enforcement is where speeding matters on Korean roads.
+     */
+    SPEED_ENFORCEMENT,
+
+    /** The navigation's route: "GUIDING", "REROUTED" (left the route), "ARRIVED", "CANCELLED", or "NONE" (free drive). */
+    ROUTE,
+}
 
 enum class GearPosition { PARK, REVERSE, NEUTRAL, DRIVE, MANUAL, UNKNOWN }
 

@@ -3,6 +3,7 @@ package com.americankimchilabs.whitebox.data
 import com.americankimchilabs.whitebox.core.MirrorChannel
 import com.americankimchilabs.whitebox.data.MirrorProtocol.Frame
 import com.americankimchilabs.whitebox.data.MirrorProtocol.Record
+import com.americankimchilabs.whitebox.domain.CapsuleTrigger
 import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.EscalationEvent
 import com.americankimchilabs.whitebox.domain.EscalationLevel
@@ -79,7 +80,8 @@ class Outbox(
             synchronized(escrowFile) { escrowFile.appendText("${seal.capsule.id}|${seal.capsule.firstSeq}|${seal.capsule.lastSeq}\n") }
             sendEscrow()
         }
-        if (seal.final && consent()) {
+        // A whole handover trip is not a dangerous moment: it is never sent as detection data.
+        if (seal.final && consent() && seal.capsule.trigger != CapsuleTrigger.HANDOVER) {
             synchronized(windowFile) { windowFile.appendText("${UUID.randomUUID()}|${seal.capsule.firstSeq}|${seal.capsule.lastSeq}\n") }
             sendWindows()
         }

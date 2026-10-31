@@ -3,6 +3,7 @@ package com.americankimchilabs.whitebox.recorder
 import android.content.Context
 import com.americankimchilabs.whitebox.data.CapsuleShares
 import com.americankimchilabs.whitebox.data.ClaimClient
+import com.americankimchilabs.whitebox.data.HandoverController
 import com.americankimchilabs.whitebox.data.FileEventStore
 import com.americankimchilabs.whitebox.data.Outbox
 import com.americankimchilabs.whitebox.data.Recorder
@@ -33,6 +34,8 @@ class ActiveSession(
     val outbox: Outbox? = null,
     /** The evidence packet's QR links; null without a server. */
     val shares: CapsuleShares? = null,
+    /** Handover mode (대리 운전); runs with or without a server. */
+    val handover: HandoverController? = null,
 )
 
 object AppGraph {

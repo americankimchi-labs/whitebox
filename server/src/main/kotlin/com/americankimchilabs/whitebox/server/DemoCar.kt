@@ -7,6 +7,7 @@ import com.americankimchilabs.whitebox.data.RecordCipher
 import com.americankimchilabs.whitebox.data.MemoryKeyRing
 import com.americankimchilabs.whitebox.data.CapsuleShares
 import com.americankimchilabs.whitebox.data.ClaimClient
+import com.americankimchilabs.whitebox.data.HandoverController
 import com.americankimchilabs.whitebox.data.FileEventStore
 import com.americankimchilabs.whitebox.data.MirrorProtocol
 import com.americankimchilabs.whitebox.data.MirrorProtocol.Frame
@@ -18,6 +19,8 @@ import com.americankimchilabs.whitebox.domain.AudioEvent
 import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.Chirp
 import com.americankimchilabs.whitebox.domain.EscalationLevel
+import com.americankimchilabs.whitebox.domain.IgnitionState
+import com.americankimchilabs.whitebox.domain.VehicleSignal
 import com.americankimchilabs.whitebox.domain.RecorderEvent
 import com.americankimchilabs.whitebox.domain.SignalSample
 import com.americankimchilabs.whitebox.domain.StartReason
@@ -59,12 +62,15 @@ import kotlin.system.exitProcess
  *     ./gradlew :server:demoCar                      # terminal 2
  *     ./gradlew :server:demoCar --args="--drive-on"
  *     ./gradlew :server:demoCar --args="--phone"     # first connect a phone (browser) to this car, then drive
+ *     ./gradlew :server:demoCar --args="--phone --handover"  # the drive as a 대리 운전 trip, with its report
  *
  * Each run is a new car (fresh key and chain), shown on the dashboard as its own `replay` row.
  */
 fun main(args: Array<String>): Unit = runBlocking {
     val url = args.firstOrNull { it.startsWith("ws://") || it.startsWith("wss://") } ?: "ws://localhost:8080/v1/stream"
-    val driveOn = "--drive-on" in args
+    val withHandover = "--handover" in args
+    // A handover trip ends normally: parked, engine off, and its report after the grace period.
+    val driveOn = "--drive-on" in args || withHandover
     val withPhone = "--phone" in args
     val dir = Files.createTempDirectory("whitebox-demo-car").toFile()
     val signer = DemoKey()
@@ -84,6 +90,10 @@ fun main(args: Array<String>): Unit = runBlocking {
     // The evidence packet's QR, as the car shows it on its packet screen.
     val shares = CapsuleShares(store, channel, dir, MirrorProtocol.deviceId(signer.publicKey), MirrorProtocol.STREAM_REPLAY, { e, m -> ring.key(e)?.let { RecordCipher.minuteKey(it, m) } })
     val sharing = launch(Dispatchers.Default) { shares.start(this) }
+    // Handover mode, as on the car; the grace before a trip is final is shortened to 20 s for the demonstration.
+    val handover = HandoverController(recorder, store, dir, clock, channel, graceMs = if (withHandover) DEMO_GRACE_MS else Tuning.HANDOVER_GRACE_MS)
+    val handoverJob = launch(Dispatchers.Default) { handover.start(this) }
+    val voice = launch(Dispatchers.Default) { handover.say.collect { say("voice to the driver: $it") } }
 
     say("connecting to $url")
     if (withTimeoutOrNull(10_000) { channel.connected.first { it } } == null) {
@@ -117,6 +127,10 @@ fun main(args: Array<String>): Unit = runBlocking {
     }
 
     val powerLossAtMs = DemoDrive.IMPACT_AT_MS + POWER_LOSS_AFTER_IMPACT_MS
+    if (withHandover) {
+        handover.armOnCar()
+        say("handover mode (대리 운전) armed: it starts when the car leaves Park; watch the 대리 운전 card on the phone page")
+    }
     say(if (driveOn) "driving the demo drive (≈ 70 s), ending normally" else "driving the demo drive; crash at ${DemoDrive.IMPACT_AT_MS / 1000.0} s, then power loss")
     val fixes = launch { ScriptedLocationSource(DemoDrive.locations(), clock).fixes().collect { recorder.record(ChainEntry.Location(it)) } }
     val driveStartWall = System.currentTimeMillis()
@@ -147,6 +161,14 @@ fun main(args: Array<String>): Unit = runBlocking {
     val wav = writeDashcamStandIn(dir, driveStartWall, System.currentTimeMillis(), synchronized(played) { played.toList() })
     val qrLink = recorder.capsules.value.lastOrNull { it.capsule.trigger.severe }?.capsule?.let { shares.link(it, web) }
 
+    if (withHandover) {
+        recorder.record(ChainEntry.Signal(SignalSample(VehicleSignal.Ignition(IgnitionState.OFF), clock.now())))
+        say("parked and the engine switched off: the trip is ending; final in ${DEMO_GRACE_MS / 1000} s unless the car drives off again")
+        withTimeoutOrNull(DEMO_GRACE_MS + 10_000) { handover.phase.first { it == com.americankimchilabs.whitebox.domain.HandoverPhase.OFF } }
+        recorder.capsules.value.lastOrNull { it.capsule.trigger == com.americankimchilabs.whitebox.domain.CapsuleTrigger.HANDOVER && it.final }?.let { trip ->
+            say("trip report sealed (${trip.capsule.id}); its QR, as the car shows it:\n\n    ${shares.link(trip.capsule, web)}\n")
+        }
+    }
     if (driveOn) {
         delay(Tuning.NORMAL_BATCH_INTERVAL_S * 1_000L + 1_000) // the last batch
         say("drive over: the car returned to NORMAL (all-clear) and every record is mirrored; nothing more happens")
@@ -161,6 +183,8 @@ fun main(args: Array<String>): Unit = runBlocking {
     say("dashcam stand-in (pick it under 블랙박스 영상과 맞춰 보기 on the capsule page): ${wav.absolutePath}")
     qrLink?.let { say("the crash's evidence-packet QR (what an insurer or the police would scan; opens without signing in):\n\n    $it\n") }
     sharing.cancel()
+    handoverJob.cancel()
+    voice.cancel()
     exitProcess(0)
 }
 
@@ -193,6 +217,9 @@ private fun writeDashcamStandIn(dir: java.io.File, startWall: Long, endWall: Lon
 }
 
 private const val DASHCAM_CLOCK_ERROR_MS = 2_700L
+
+/** The handover grace period in the demonstration (on the car: [Tuning.HANDOVER_GRACE_MS]). */
+private const val DEMO_GRACE_MS = 20_000L
 
 /** The demo car "loses power" this long after the impact: the crash records go out first. */
 private const val POWER_LOSS_AFTER_IMPACT_MS = 300L

@@ -79,6 +79,12 @@ fun Route.phoneRoutes(service: MirrorService, identity: Identity) {
                 "id" to d,
                 "current" to (d in current),
                 "wraps" to wrapList(identity.wraps(d, owner.id)),
+                "handover" to if (d in current) identity.handoverStatus(d).let { h ->
+                    obj(
+                        "phase" to (h?.phase ?: "OFF"), "requestedAtWall" to h?.requestedAtWall, "sinceWall" to h?.sinceWall,
+                        "tripId" to h?.tripId?.takeIf { it != "-" }, "pending" to identity.handoverPending(d),
+                    )
+                } else null,
                 // A car sold on shows nothing about its life since (no state, no activity, no record counts).
                 "streams" to service.statuses().filter { it.stream.deviceId == d }.map { s ->
                     if (d in current) obj(
@@ -111,6 +117,33 @@ fun Route.phoneRoutes(service: MirrorService, identity: Identity) {
                 "contactsLeft" to left, "opened" to opened, "transfersIn" to incoming, "transfersOut" to outgoing,
             ),
         )
+    }
+
+    /** The owner turns handover mode (대리 운전) on or off for their car from the phone. */
+    post("/v1/handover") {
+        val owner = call.owner(identity) ?: return@post call.unauthorized()
+        val p = call.receiveParameters()
+        val device = p["device"].orEmpty()
+        identity.handoverCommand(owner.id, device, p["action"] == "arm") ?: return@post call.fail("이 차의 차주만 바꿀 수 있습니다.")
+        service.handoverChanged(device)
+        call.ok()
+    }
+
+    /**
+     * The owner made a share link for one of their capsules on the phone: the phone derived the capsule's minute keys
+     * and put them in the link; the server keeps only the hash of the link's code, for 90 days.
+     */
+    post("/v1/share") {
+        val p = call.receiveParameters()
+        val device = p["device"].orEmpty()
+        val owner = call.owner(identity)?.takeIf { identity.wraps(device, it.id).isNotEmpty() } ?: return@post call.unauthorized()
+        val stream = StreamId(device, p["stream"] ?: "live")
+        val epochs = identity.wraps(device, owner.id).map { it.epoch }.toSet()
+        val c = service.capsules(stream).firstOrNull { it.id == p["id"] && epochs.containsAll(it.epochs) } ?: return@post call.fail("기록을 찾을 수 없습니다.")
+        val hash = p["hash"].orEmpty().takeIf { it.matches(Regex("[0-9a-f]{64}")) } ?: return@post call.fail("잘못된 요청입니다.")
+        val expires = service.now() + SHARE_VALID_MS
+        service.addShare(stream, c.id, hash, expires)
+        call.json(obj("ok" to true, "expiresMs" to expires))
     }
 
     /** The owner answers a takeover request for their car. */
@@ -269,6 +302,9 @@ fun Route.phoneRoutes(service: MirrorService, identity: Identity) {
         call.ok()
     }
 }
+
+/** A share link made on the phone lasts as long as one shown on the car. */
+private const val SHARE_VALID_MS = com.americankimchilabs.whitebox.data.CapsuleShares.VALID_MS
 
 /** Who opened a capsule, in the opening log, when it was someone holding its QR link. */
 private const val SHARE_LINK = "share"

@@ -15,7 +15,7 @@ private val TRIGGER = mapOf(
     "REAR_SHOVE" to "후방 충격 (정차·제동 중)", "MANUAL" to "음성으로 보관", "HARD_BRAKE" to "급제동", "EVASIVE_STEER" to "급핸들 (회피)",
     "BRAKE_SWERVE" to "급제동 + 급핸들", "SHIFT_TO_NEUTRAL" to "주행 중 중립(N) 변속", "BRAKE_SPEED_RISE" to "브레이크를 밟는데 속도 상승",
     "BRAKE_NO_DECEL" to "브레이크를 밟는데 감속 없음", "BRAKE_PUMPING" to "브레이크 반복 조작", "PARKING_BRAKE_MOVING" to "주행 중 주차 브레이크",
-    "LURCH" to "정차 중 급출발", "POST_EVENT_EXIT" to "위험 상황 직후 하차", "ALERT_RESOLVED" to "급제동 후 정차",
+    "LURCH" to "정차 중 급출발", "HANDOVER" to "대리 운전 리포트", "POST_EVENT_EXIT" to "위험 상황 직후 하차", "ALERT_RESOLVED" to "급제동 후 정차",
 )
 
 /**

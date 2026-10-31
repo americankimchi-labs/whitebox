@@ -187,6 +187,8 @@ private fun DrivingContext.with(s: VehicleSignal): DrivingContext = when (s) {
     is VehicleSignal.CruiseTargetSpeed -> copy(cruiseTargetMps = s.metersPerSecond)
     is VehicleSignal.ParkingBrake -> copy(parkingBrake = s.engaged)
     is VehicleSignal.RoadContext -> when {
+        // Handover mode's inputs (enforcement distance, route state), not context of the moment.
+        s.type == RoadContextType.SPEED_ENFORCEMENT || s.type == RoadContextType.ROUTE -> this
         s.type == RoadContextType.SPEED_LIMIT -> copy(speedLimitKmh = s.value.toIntOrNull()?.takeIf { it > 0 })
         s.value == "NONE" -> copy(roadAlerts = roadAlerts.filter { it.first != s.type })
         else -> copy(roadAlerts = roadAlerts + (s.type to s.value))

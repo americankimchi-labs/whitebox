@@ -1,6 +1,7 @@
 package com.americankimchilabs.whitebox.data
 
 import com.americankimchilabs.whitebox.core.Clock
+import com.americankimchilabs.whitebox.domain.CapsuleTrigger
 import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.DriveEvent
 import com.americankimchilabs.whitebox.domain.EngineOutput
@@ -94,6 +95,15 @@ class Recorder(
         val capsule = _incident.value?.takeIf { it.id == capsuleId } ?: return@withLock
         append(ChainEntry.Escalation(EscalationEvent.IncidentAnswered(capsule.id, keep, answered), clock.now()))
         _incident.value = null
+    }
+
+    /**
+     * Seals the records from [firstSeq] to the head as one capsule (a handover trip's report): provisionally while it
+     * may still go on, [final] once it is over. Signed over the head like every seal, and told to [onSeal].
+     */
+    suspend fun sealRange(id: String, trigger: CapsuleTrigger, firstSeq: Long, final: Boolean) = mutex.withLock {
+        val head = store.head() ?: return@withLock
+        seal(IncidentCapsule(id, trigger, firstSeq, head.lastSeq), final)
     }
 
     /** Nobody resolved the question in the longest time it can take: silence, the capsule stays in the library. */

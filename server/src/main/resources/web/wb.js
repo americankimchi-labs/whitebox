@@ -76,9 +76,14 @@ const WB = (() => {
    * empty if this phone has none (a new phone, or the family's).
    */
   async function ownerKeys(me, device) {
+    return WBCodec.keyring({ roots: await ownerRoots(me, device) });
+  }
+
+  /** The car's root keys this phone holds for [device] (epoch → key), opened here; {} if none. */
+  async function ownerRoots(me, device) {
     const key = me && await phoneKey('owner');
     const dev = me && key && key.publicKey === me.key ? me.devices.find((d) => d.id === device) : null;
-    return WBCodec.keyring({ roots: dev ? await unwrapAll(dev.wraps, 'owner') : {} });
+    return dev ? unwrapAll(dev.wraps, 'owner') : {};
   }
 
   /** Proof for the car that this phone saw its screen: HMAC-SHA256 with the QR secret. */
@@ -120,5 +125,5 @@ const WB = (() => {
   const mapLink = (lat, lon) => `https://map.kakao.com/link/map/${encodeURIComponent('기록 위치')},${lat.toFixed(6)},${lon.toFixed(6)}`;
   const secure = () => window.isSecureContext && !!crypto.subtle;
 
-  return { newPhoneKey, phoneKey, unwrap, unwrapAll, ownerKeys, claimMac, checkCode, post, get, $, show, say, ago, when, day, clock, esc, params, mapLink, secure, b64, unb64 };
+  return { newPhoneKey, phoneKey, unwrap, unwrapAll, ownerKeys, ownerRoots, claimMac, checkCode, post, get, $, show, say, ago, when, day, clock, esc, params, mapLink, secure, b64, unb64 };
 })();

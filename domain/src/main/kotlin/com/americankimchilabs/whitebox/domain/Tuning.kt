@@ -160,6 +160,34 @@ object Tuning {
     /** One chirp this often while driving; longer than any plausible GPS-time pre-alignment error, so unambiguous. */
     const val CHIRP_PERIOD_S = 15
 
+    // Handover mode (대리 운전)
+
+    /** Armed but no trip started this long after: cancelled (the owner changed plans). */
+    const val HANDOVER_ARM_EXPIRY_MS = 12 * 3_600_000L
+
+    /**
+     * After the trip looks finished (engine off, or parked a while), it is final only if the car stays put this long:
+     * a 대리기사 often stops at the entrance and then moves the car to its parking spot, or waits a moment for the
+     * owner. Driving off within it resumes the same trip.
+     */
+    const val HANDOVER_GRACE_MS = 10 * 60_000L
+
+    /** Parked with the engine still on this long ends the trip (engine-off ends it at once, still with the grace). */
+    const val HANDOVER_PARKED_END_MS = 10 * 60_000L
+
+    /** Speeding counts only above an enforcement limit by more than this (km/h), as Korean enforcement does. */
+    const val HANDOVER_SPEEDING_MARGIN_KMH = 10
+
+    /**
+     * 급가속: speed up by this much (km/h) within one second, from at least [HARD_ACCEL_MIN_KMH]. The common Korean
+     * definition used for commercial-vehicle digital tachograph analysis (11 km/h per second); tune on real data.
+     */
+    const val HARD_ACCEL_KMH_PER_S = 11f
+    const val HARD_ACCEL_MIN_KMH = 5f
+
+    /** The same spoken reminder at most this often (each kind on its own). */
+    const val HANDOVER_VOICE_COOLDOWN_MS = 60_000L
+
     /** A speed sample older than this does not count as the current speed. */
     const val SPEED_STALE_MS = 500
 }

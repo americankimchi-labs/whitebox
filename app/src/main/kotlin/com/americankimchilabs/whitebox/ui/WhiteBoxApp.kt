@@ -1,5 +1,8 @@
 package com.americankimchilabs.whitebox.ui
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import com.americankimchilabs.whitebox.domain.CapsuleTrigger
+import com.americankimchilabs.whitebox.domain.HandoverPhase
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -135,6 +138,11 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
     var regrantLater by remember { mutableStateOf(false) }
 
     val consent by remember(context) { DataConsent.state(context) }.collectAsState()
+    val handoverPhase by (session.handover?.phase ?: remember { MutableStateFlow(HandoverPhase.OFF) }).collectAsState()
+    val handoverSince by (session.handover?.since ?: remember { MutableStateFlow(0L) }).collectAsState()
+    var handoverSheet by remember(session) { mutableStateOf(false) }
+    // The maps app comes forward for a destination when handover mode asks and this screen is showing.
+    LaunchedEffect(session) { session.handover?.openMaps?.collect { openMaps(context) } }
 
     // Setup is parked only.
     if (parked && setup == SetupMode.FIRST_RUN) {
@@ -156,6 +164,7 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
         Spacer(Modifier.padding(8.dp))
         if (!parked) {
             // Driving: read-only, nothing to scroll or press (distraction-optimized).
+            HandoverDrivingBanner(handoverPhase)
             rows.take(4).forEach {
                 Text("${labels.time(it.entry.at.wallMillis)}  ${labels.row(it.entry)}", style = MaterialTheme.typography.headlineSmall)
             }
@@ -164,11 +173,19 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
         if (regrantPromptAllowed(missing, live.gear ?: GearPosition.PARK) && !regrantLater) {
             RegrantBanner(missing.joinToString { labels.permission(it) }, onAllow = { setup = SetupMode.REGRANT }, onLater = { regrantLater = true })
         }
+        if (handoverSheet && handoverPhase == HandoverPhase.OFF) {
+            BackHandler { handoverSheet = false }
+            HandoverSheet(session, onClose = { handoverSheet = false })
+            return@Column
+        }
+        HandoverBar(session, handoverPhase, handoverSince, onOpen = { handoverSheet = true })
+        Spacer(Modifier.padding(4.dp))
         val shown = open
         if (shown != null) {
             // Back (touch or the CCP Back key) leaves the packet first; only the top screen hides the app.
             BackHandler { open = null }
-            EvidencePacket(labels, shown, session, onBack = { open = null })
+            if (shown.capsule.trigger == CapsuleTrigger.HANDOVER) TripReport(labels, shown, session, onBack = { open = null })
+            else EvidencePacket(labels, shown, session, onBack = { open = null })
             return@Column
         }
         TabRow(selectedTabIndex = tab) {
@@ -180,13 +197,14 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
             when (tab) {
                 0 -> Timeline(labels, rows)
                 1 -> CapsuleList(labels, capsules, onOpen = { open = it })
-                else -> PhoneTab(session.claim, session.webBase, consent == true, onConsent = { agree ->
+                else -> PhoneTab(session.claim, session.webBase, consent == true, handoverOn = handoverPhase != HandoverPhase.OFF, onConsent = { agree ->
                     DataConsent.set(context, agree)
                     if (!agree) session.outbox?.withdrawConsent()
                 })
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(top = 12.dp)) {
+        // Switching the source would stop the real recording: never while a hired driver has the car.
+        if (handoverPhase == HandoverPhase.OFF) Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(top = 12.dp)) {
             OutlinedButton(onClick = { onSource(SourceMode.REPLAY) }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.action_replay)) }
             OutlinedButton(onClick = { onSource(SourceMode.LIVE) }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.action_live)) }
         }

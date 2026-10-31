@@ -71,6 +71,14 @@ fun everyEntryShape(): List<ChainEntry> = listOf(
     ChainEntry.Audio(AudioEvent.Bookmark(BookmarkSource.OFFLINE_LISTENER), ts(15)),
     ChainEntry.Audio(AudioEvent.Spoke(VoiceLine.KEEP_QUESTION, complete = false), ts(15)),
     ChainEntry.Audio(AudioEvent.Beacon(3, ts(15)), ts(15)),
+    ChainEntry.Handover(com.americankimchilabs.whitebox.domain.HandoverEvent.Armed(com.americankimchilabs.whitebox.domain.HandoverSource.PHONE, 1_700_000_000_015), ts(15)),
+    ChainEntry.Handover(com.americankimchilabs.whitebox.domain.HandoverEvent.Started(9, com.americankimchilabs.whitebox.domain.HandoverSource.CAR, 1_700_000_000_014), ts(15)),
+    ChainEntry.Handover(com.americankimchilabs.whitebox.domain.HandoverEvent.Observed(com.americankimchilabs.whitebox.domain.HandoverEventKind.HARD_ACCEL, 12.5f, null), ts(15)),
+    ChainEntry.Handover(com.americankimchilabs.whitebox.domain.HandoverEvent.Observed(com.americankimchilabs.whitebox.domain.HandoverEventKind.SPEEDING, 95f, 80f), ts(15)),
+    ChainEntry.Handover(com.americankimchilabs.whitebox.domain.HandoverEvent.Ending(com.americankimchilabs.whitebox.domain.HandoverEndReason.PARKED), ts(15)),
+    ChainEntry.Handover(com.americankimchilabs.whitebox.domain.HandoverEvent.Resumed, ts(15)),
+    ChainEntry.Handover(com.americankimchilabs.whitebox.domain.HandoverEvent.Ended(com.americankimchilabs.whitebox.domain.HandoverEndReason.OWNER, "H9"), ts(15)),
+    ChainEntry.Handover(com.americankimchilabs.whitebox.domain.HandoverEvent.Cancelled(com.americankimchilabs.whitebox.domain.HandoverSource.CAR, com.americankimchilabs.whitebox.domain.HandoverEndReason.OWNER), ts(15)),
 ) + contextSignals().mapIndexed { i, s -> ChainEntry.Signal(SignalSample(s, ts(16L + i))) }
 
 /** Every context and reserved signal kind, including labels with separator characters the codec must neutralise. */

@@ -17,8 +17,8 @@ data class DriveEvent(
 
 /**
  * What a chain entry holds: a vehicle or location reading, the recorder's own state (gap honesty, [RecorderEvent]),
- * a decision of the escalation engine ([EscalationEvent]), so the evidence states why a capsule exists, or what the car
-said and heard ([AudioEvent]).
+ * a decision of the escalation engine ([EscalationEvent]), so the evidence states why a capsule exists, what the car
+ * said and heard ([AudioEvent]), or the course of a handover trip ([HandoverEvent]).
  */
 sealed interface ChainEntry {
     val at: Timestamp
@@ -36,6 +36,8 @@ sealed interface ChainEntry {
     data class Escalation(val event: EscalationEvent, override val at: Timestamp) : ChainEntry
 
     data class Audio(val event: AudioEvent, override val at: Timestamp) : ChainEntry
+
+    data class Handover(val event: HandoverEvent, override val at: Timestamp) : ChainEntry
 }
 
 enum class EscalationLevel { NORMAL, ALERT, TRIGGERED }
@@ -124,6 +126,9 @@ enum class CapsuleTrigger(val severe: Boolean, val unit: MeasureUnit = MeasureUn
 
     /** A door opened while stopped shortly after a dangerous moment. */
     POST_EVENT_EXIT(false, MeasureUnit.NONE),
+
+    /** A whole handover trip (대리 운전), sealed as its report when it ends. */
+    HANDOVER(false, MeasureUnit.NONE),
 }
 
 /** What [EscalationEvent.Triggered.measured] holds: a speed change, the speed at the moment, a steering rate, a count. */

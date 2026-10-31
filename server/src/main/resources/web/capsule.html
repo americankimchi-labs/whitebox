@@ -28,7 +28,7 @@ tr:first-child td{border-top:0}
 
 <div id="packet" hidden>
   <div class="card" id="shared-note" hidden>
-    <p><b>운전자가 QR로 공유한 증거 요약입니다.</b> 이 기록 하나만 열리며, 원본과 같은지 이 휴대폰에서 직접 확인했습니다.</p>
+    <p><b>차주가 공유한 기록입니다.</b> 이 기록 하나만 열리며, 원본과 같은지 이 휴대폰에서 직접 확인했습니다.</p>
   </div>
   <div class="card">
     <h1 id="title"></h1>
@@ -39,7 +39,12 @@ tr:first-child td{border-top:0}
     <div class="verdict"><span class="mark" id="mark"></span><span id="verdict"></span></div>
     <p class="msg" id="verdict-sub"></p>
   </div>
-  <div class="card">
+  <div class="card" id="trip-card" hidden>
+    <h2 id="trip-events-title"></h2>
+    <div id="trip-events"></div>
+    <div id="trip-graph"></div>
+  </div>
+  <div class="card" id="lines-card">
     <h2>감지 직전 운전자의 조작</h2>
     <ul class="bullets" id="lines"></ul>
     <h3>감지 전 10초 ~ 후 5초</h3>
@@ -53,8 +58,12 @@ tr:first-child td{border-top:0}
     <h2>블랙박스 영상과 맞춰 보기</h2>
     <div id="sync"></div>
   </div>
+  <div class="card noprint" id="share-card" hidden>
+    <button class="wide secondary" id="share">공유 링크 만들기</button>
+    <p class="msg" id="share-msg">이 기록 하나만 열리는 링크를 만듭니다. 기록을 여는 열쇠는 링크 안에만 들어 있어 서버도 볼 수 없고, 90일 동안 열립니다.</p>
+  </div>
   <div class="card noprint">
-    <button class="wide secondary" onclick="print()">증거 요약 인쇄 · PDF로 저장</button>
+    <button class="wide secondary" id="print" onclick="print()">증거 요약 인쇄 · PDF로 저장</button>
     <p class="msg">한 장짜리 요약으로 인쇄됩니다. 원본은 차와 서버에 봉인된 그대로 남습니다.</p>
   </div>
   <details class="card"><summary>자세히 (검증 정보)</summary><div id="tech" class="tech"></div></details>
@@ -75,7 +84,8 @@ async function load() {
   if (!d || !id) return deny();
   if (shareCode) return loadShared();
   const me = await WB.get('/v1/me');
-  let ring = await WB.ownerKeys(me, d);
+  ownerRoots = await WB.ownerRoots(me, d);
+  let ring = WBCodec.keyring({ roots: ownerRoots });
   const q = `/v1/capsule?device=${encodeURIComponent(d)}&stream=${encodeURIComponent(s)}&id=${encodeURIComponent(id)}`;
   let data = await WB.get(q);
   if (!data || data.ok === false) return deny();
@@ -103,6 +113,8 @@ async function show(data, ring) {
   if (!events.length) return deny();
   // An owner's phone without the car's key, on a moment that is not a big crash: nothing here can be opened.
   if (!events.some((x) => (x.e.type === 'S' || x.e.type === 'L') && !x.e.locked)) return noKey();
+  if (Object.keys(ownerRoots).length && !shareCode) offerShare(c, data);
+  if (c.trigger === 'HANDOVER') return renderTrip(c, data, events, await WBVerify.capsule(data));
   // As on the car: the detection that names the capsule (a crash escalates a near-miss capsule), else the first;
   // without one (a server seal), the first alert.
   const triggers = events.filter((x) => x.e.type === 'E' && x.e.event === 'TRIGGER');
@@ -131,7 +143,97 @@ async function loadShared() {
   await show(data, WBCodec.keyring({ minutes }));
 }
 
+let ownerRoots = {};
+
 function deny() { WB.show('loading', false); WB.show('denied'); }
+
+/**
+ * The owner makes a share link here, on the phone: the keys of the minutes this record covers go into the link after
+ * `#`; the server is told only the hash of a random code.
+ */
+function offerShare(c, data) {
+  WB.show('share-card');
+  WB.$('share').onclick = async () => {
+    try {
+      const entries = data.records.map(WBCodec.parseLine).filter((r) => r && r.seq >= c.firstSeq).map((r) => r.entry);
+      const keys = [];
+      for (const em of WBCodec.minutesOf(entries)) {
+        const [e, m] = em.split(':');
+        if (!ownerRoots[e]) continue;
+        const k = await WBCodec.minuteKey(ownerRoots[e], Number(m));
+        keys.push(`${e}.${m}.${WB.b64(k).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`);
+      }
+      const code = WB.b64(crypto.getRandomValues(new Uint8Array(16))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      await WB.post('/v1/share', { device: d, stream: s, id: c.id, hash: await WBCodec.sha256Hex(code) });
+      const link = `${location.origin}/capsule#d=${d}&s=${s}&id=${encodeURIComponent(c.id)}&t=${code}&k=${keys.join(',')}`;
+      // Shared through the phone's share sheet, or copied; either may be unavailable, the link is shown regardless.
+      let copied = false;
+      if (navigator.share) { try { await navigator.share({ title: 'White Box', url: link }); } catch (e) { /* closed */ } }
+      else if (navigator.clipboard) { try { await navigator.clipboard.writeText(link); copied = true; } catch (e) { /* not allowed here */ } }
+      WB.$('share-msg').innerHTML = `링크를 만들었습니다${copied ? ' (복사됨)' : ''}. 90일 동안 이 기록만 열립니다.<br><a href="${link}" style="word-break:break-all">${esc(link.slice(0, 60))}…</a>`;
+    } catch (e) { WB.say('share-msg', e.message, true); }
+  };
+}
+
+const HANDOVER_EVENT = {
+  SPEEDING: (e) => `단속 카메라에서 ${e.value.toFixed(0)} km/h (제한 ${e.limit} km/h)`,
+  SECTION_SPEEDING: (e) => `구간 단속 평균 ${e.value.toFixed(0)} km/h (제한 ${e.limit} km/h)`,
+  HARD_BRAKE: (e) => `급제동 (속도 변화 ${e.value.toFixed(0)} km/h)`,
+  CRASH: (e) => `충격 감지 (속도 변화 ${e.value.toFixed(0)} km/h) · 증거 요약이 따로 보관됨`,
+  HARD_ACCEL: (e) => `급가속 (1초에 +${e.value.toFixed(0)} km/h)`,
+  SHARP_STEER: (e) => `급핸들 (${e.value.toFixed(0)}°/s)`,
+  ROUTE_LEFT: () => '경로 이탈',
+  ARRIVED: () => '목적지 도착',
+};
+const END_REASON = { IGNITION_OFF: '시동 꺼짐', PARKED: '오래 주차', ARRIVED: '도착 후 주차', OWNER: '차주가 끔', EXPIRED: '12시간 동안 출발 없음', RESTART: '기기가 다시 켜짐' };
+
+/** A handover trip: who drove how, from start to end, on one page. */
+function renderTrip(c, data, events, v) {
+  WB.show('loading', false);
+  WB.show('packet');
+  ['lines-card', 'context-card', 'sync-card'].forEach((id) => WB.show(id, false));
+  WB.show('trip-card');
+  WB.$('print').textContent = '리포트 인쇄 · PDF로 저장';
+  WB.$('title').textContent = '대리 운전 리포트';
+  WB.$('kind').textContent = c.final ? '대리기사님이 운전한 주행 · 시작부터 끝까지 봉인됨' : '대리 운전 마무리 중 · 아직 확정되지 않음';
+  const h = events.filter((x) => x.e.type === 'H');
+  const start = h.find((x) => x.e.event === 'STARTED');
+  const ended = [...h].reverse().find((x) => x.e.event === 'ENDED');
+  const observed = h.filter((x) => x.e.event === 'EVENT' && HANDOVER_EVENT[x.e.kind]);
+  const speeds = events.filter((x) => x.e.type === 'S' && x.e.kind === 'SPEED' && !x.e.locked).map((x) => ({ t: x.e.at.wall, v: x.e.value * 3.6 }));
+  const odo = events.filter((x) => x.e.type === 'S' && x.e.kind === 'ODOMETER' && !x.e.locked).map((x) => x.e.value);
+  let km = 0;
+  for (let i = 1; i < speeds.length; i++) km += ((speeds[i - 1].v + speeds[i].v) / 2) * ((speeds[i].t - speeds[i - 1].t) / 3600000);
+  if (odo.length >= 2) km = odo[odo.length - 1] - odo[0];
+  const t0 = events[0].e.at.wall, t1 = events[events.length - 1].e.at.wall;
+  const top = speeds.length ? Math.max(...speeds.map((p) => p.v)) : 0;
+  const facts = [
+    ['시간', `${WB.when(t0)} – ${WB.clock(t1)}`],
+    ['운전 시간', `${Math.max(1, Math.round((t1 - t0) / 60000))}분`],
+    ['거리', `약 ${km.toFixed(1)} km`],
+    ['최고 속도', `${top.toFixed(0)} km/h`],
+  ];
+  if (start) facts.push(['켠 곳', start.e.by === 'PHONE' ? '차주 휴대폰' : '차']);
+  if (ended) facts.push(['끝난 이유', END_REASON[ended.e.reason] || ended.e.reason]);
+  WB.$('facts').innerHTML = facts.map(([k, val]) => `<tr><td>${k}</td><td>${esc(val)}</td></tr>`).join('');
+  WB.$('trip-events-title').textContent = `기록된 운전 ${observed.length}건`;
+  WB.$('trip-events').innerHTML = observed.map((x) => `<div class="row"><span>${esc(HANDOVER_EVENT[x.e.kind](x.e))}</span><span class="sub">${WB.clock(x.e.at.wall)}</span></div>`).join('')
+    || '<p class="good">급제동, 급가속, 단속 카메라 과속 등이 없었습니다.</p>';
+  if (speeds.length > 1) {
+    const w = 360, hgt = 110, vmax = Math.max(60, top);
+    const x = (t) => 4 + ((t - t0) / Math.max(1, t1 - t0)) * (w - 8);
+    const y = (val) => hgt - 14 - (val / vmax) * (hgt - 24);
+    const marks = observed.map((o) => `<line x1="${x(o.e.at.wall)}" x2="${x(o.e.at.wall)}" y1="6" y2="${hgt - 14}" stroke="var(--warn,#e65100)" stroke-width="2"/>`).join('');
+    WB.$('trip-graph').innerHTML = `<svg viewBox="0 0 ${w} ${hgt}" width="100%" role="img" aria-label="주행 속도와 기록된 운전" style="font:11px system-ui"><rect x="4" y="6" width="${w - 8}" height="${hgt - 20}" fill="var(--lane,#f1f3f5)" rx="3"/>${marks}
+      <polyline fill="none" stroke="var(--accent,#1565c0)" stroke-width="1.5" points="${speeds.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')}"/>
+      <text x="8" y="18" fill="var(--muted,#5f6368)">최고 ${top.toFixed(0)} km/h</text><text x="4" y="${hgt - 2}" fill="var(--muted,#5f6368)">${WB.clock(t0)}</text><text x="${w - 4}" y="${hgt - 2}" text-anchor="end" fill="var(--muted,#5f6368)">${WB.clock(t1)}</text></svg>`;
+  }
+  WB.$('mark').textContent = v.ok ? '✓' : '✗';
+  WB.$('mark').className = 'mark ' + (v.ok ? 'good' : 'bad');
+  WB.$('verdict').textContent = v.ok ? '원본 그대로입니다 · 변조 없음' : '원본과 다릅니다';
+  WB.$('verdict-sub').textContent = v.ok ? `기록 ${v.chain.checked}건이 차의 해시 체인, 서명과 맞는지 이 휴대폰에서 직접 확인했습니다.` : `확인 결과: ${v.chain.reason || '서명이 맞지 않음'}.`;
+  WB.$('tech').innerHTML = [`리포트 ${c.id} · 기록 #${c.firstSeq}–#${c.lastSeq} (${events.length}건)`, `체인: ${v.chain.ok ? `해시·연결 ${v.chain.checked}건 확인` : `#${v.chain.brokenAt} ${v.chain.reason}`}`].map(esc).join('<br>');
+}
 function noKey() { WB.show('loading', false); WB.show('nokey'); }
 
 /** Detections whose measured value is a speed change (the car shows "before → after" for these). */

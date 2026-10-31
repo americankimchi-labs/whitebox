@@ -37,11 +37,16 @@ import com.google.zxing.qrcode.QRCodeWriter
  * secret; the phone page uses it to prove to the car that it saw this screen.
  */
 @Composable
-fun PhoneTab(claim: ClaimClient?, webBase: String?, consent: Boolean, onConsent: (Boolean) -> Unit) {
+fun PhoneTab(claim: ClaimClient?, webBase: String?, consent: Boolean, handoverOn: Boolean = false, onConsent: (Boolean) -> Unit) {
     Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ConsentRow(consent, onConsent)
         if (claim == null || webBase == null) {
             Text(stringResource(R.string.phone_no_mirror), style = MaterialTheme.typography.titleLarge)
+            return@Column
+        }
+        // While a hired driver has the car, nobody may connect a phone to it (it could be used to take the car over).
+        if (handoverOn) {
+            Text(stringResource(R.string.phone_handover_blocked), style = MaterialTheme.typography.titleLarge)
             return@Column
         }
         val state by claim.state.collectAsState()

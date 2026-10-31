@@ -88,7 +88,7 @@
 
   /**
    * One record's entry decoded: {type:'S', kind, value, at, src} (signal), {type:'L', lat, lon, acc, gps, at},
-   * {type:'R'|'E'|'A', event, …, at}. An encrypted value without its key decodes as {…, locked: true}.
+   * {type:'R'|'E'|'A'|'H', event, …, at}. An encrypted value without its key decodes as {…, locked: true}.
    */
   async function decode(entry, ring) {
     const f = entry.split('|');
@@ -137,6 +137,19 @@
           case 'SPOKE': return { type: 'A', event: 'SPOKE', line: f[3], complete: bool(f[4]), at };
           case 'BEACON': return { type: 'A', event: 'BEACON', chirpId: Number(f[3]), playedAt: ts(f[4]), at };
           default: throw new Error('unknown audio event ' + f[2]);
+        }
+      }
+      case 'H': {
+        const at = ts(f[1]);
+        switch (f[2]) {
+          case 'ARMED': return { type: 'H', event: 'ARMED', by: f[3], requestedAtWall: Number(f[4]), at };
+          case 'CANCELLED': return { type: 'H', event: 'CANCELLED', by: f[3], reason: f[4], at };
+          case 'STARTED': return { type: 'H', event: 'STARTED', fromSeq: Number(f[3]), by: f[4], requestedAtWall: Number(f[5]), at };
+          case 'EVENT': return { type: 'H', event: 'EVENT', kind: f[3], value: Number(f[4]), limit: f[5] === '-' ? null : Number(f[5]), at };
+          case 'ENDING': return { type: 'H', event: 'ENDING', reason: f[3], at };
+          case 'RESUMED': return { type: 'H', event: 'RESUMED', at };
+          case 'ENDED': return { type: 'H', event: 'ENDED', reason: f[3], capsuleId: f[4], at };
+          default: throw new Error('unknown handover event ' + f[2]);
         }
       }
       default: throw new Error('unknown entry type ' + f[0]);

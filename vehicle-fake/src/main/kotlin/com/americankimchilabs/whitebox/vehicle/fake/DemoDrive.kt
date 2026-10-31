@@ -102,6 +102,7 @@ object DemoDrive {
         now(VehicleSignal.Wiper("FRONT_WINDSHIELD", "OFF"))
         now(VehicleSignal.CruiseControl(CruiseState.ENABLED))
         now(VehicleSignal.RoadContext(RoadContextType.SPEED_LIMIT, "60"))
+        now(VehicleSignal.RoadContext(RoadContextType.ROUTE, "GUIDING")) // a destination set before leaving
         speed(3_000) // parked
         now(VehicleSignal.ParkingBrake(false))
         now(VehicleSignal.Gear(GearPosition.DRIVE))
@@ -118,7 +119,13 @@ object DemoDrive {
         now(VehicleSignal.BrakePedal(true)) // ordinary brake: 5 km/h/s, no ALERT
         speed(2_000, to = 40f)
         now(VehicleSignal.BrakePedal(false))
-        speed(5_000, to = 60f)
+        speed(2_000, to = 60f)
+        // A speed camera on a 40 km/h stretch: announced 600 m ahead, passed at 60 km/h (handover mode's speeding).
+        now(VehicleSignal.RoadContext(RoadContextType.SPEED_ENFORCEMENT, "POINT;40;0;600"))
+        speed(2_000)
+        now(VehicleSignal.RoadContext(RoadContextType.SPEED_ENFORCEMENT, "POINT;40;0;80"))
+        speed(1_000)
+        now(VehicleSignal.RoadContext(RoadContextType.SPEED_ENFORCEMENT, "NONE"))
 
         now(VehicleSignal.TurnSignal(TurnSignalState.RIGHT)) // lane change right
         speed(2_000)

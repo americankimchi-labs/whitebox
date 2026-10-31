@@ -23,6 +23,10 @@ import com.americankimchilabs.whitebox.domain.EvidenceTimeline
 import com.americankimchilabs.whitebox.domain.Gap
 import com.americankimchilabs.whitebox.domain.GapCause
 import com.americankimchilabs.whitebox.domain.GearPosition
+import com.americankimchilabs.whitebox.domain.HandoverEndReason
+import com.americankimchilabs.whitebox.domain.HandoverEvent
+import com.americankimchilabs.whitebox.domain.HandoverEventKind
+import com.americankimchilabs.whitebox.domain.HandoverSource
 import com.americankimchilabs.whitebox.domain.IncidentCapsule
 import com.americankimchilabs.whitebox.domain.Lamp
 import com.americankimchilabs.whitebox.domain.LocationFix
@@ -88,6 +92,14 @@ class WebVectorsTest {
         ChainEntry.Audio(AudioEvent.Bookmark(BookmarkSource.ASSISTANT), ts(16)),
         ChainEntry.Audio(AudioEvent.Spoke(VoiceLine.KEEP_QUESTION, complete = false), ts(16)),
         ChainEntry.Audio(AudioEvent.Beacon(3, ts(15)), ts(16)),
+        ChainEntry.Handover(HandoverEvent.Armed(HandoverSource.PHONE, 1_700_000_000_017), ts(17)),
+        ChainEntry.Handover(HandoverEvent.Started(7, HandoverSource.PHONE, 1_700_000_000_017), ts(17)),
+        ChainEntry.Handover(HandoverEvent.Observed(HandoverEventKind.SPEEDING, 95.5f, 80f), ts(17)),
+        ChainEntry.Handover(HandoverEvent.Observed(HandoverEventKind.NO_ROUTE, 0f, null), ts(17)),
+        ChainEntry.Handover(HandoverEvent.Ending(HandoverEndReason.IGNITION_OFF), ts(17)),
+        ChainEntry.Handover(HandoverEvent.Resumed, ts(17)),
+        ChainEntry.Handover(HandoverEvent.Ended(HandoverEndReason.ARRIVED, "H7"), ts(17)),
+        ChainEntry.Handover(HandoverEvent.Cancelled(HandoverSource.CAR, HandoverEndReason.EXPIRED), ts(17)),
     ) + listOf(
         VehicleSignal.CruiseControl(CruiseState.ACTIVATED),
         VehicleSignal.CruiseTargetSpeed(13.8889f),
@@ -210,6 +222,15 @@ class WebVectorsTest {
             is AudioEvent.Bookmark -> obj("type" to "A", "event" to "BOOKMARK", "source" to a.source.name, "at" to at(e.at))
             is AudioEvent.Spoke -> obj("type" to "A", "event" to "SPOKE", "line" to a.line.name, "complete" to a.complete, "at" to at(e.at))
             is AudioEvent.Beacon -> obj("type" to "A", "event" to "BEACON", "chirpId" to a.chirpId, "playedAt" to at(a.playedAt), "at" to at(e.at))
+        }
+        is ChainEntry.Handover -> when (val h = e.event) {
+            is HandoverEvent.Armed -> obj("type" to "H", "event" to "ARMED", "by" to h.by.name, "requestedAtWall" to h.requestedAtWall, "at" to at(e.at))
+            is HandoverEvent.Cancelled -> obj("type" to "H", "event" to "CANCELLED", "by" to h.by.name, "reason" to h.reason.name, "at" to at(e.at))
+            is HandoverEvent.Started -> obj("type" to "H", "event" to "STARTED", "fromSeq" to h.fromSeq, "by" to h.by.name, "requestedAtWall" to h.requestedAtWall, "at" to at(e.at))
+            is HandoverEvent.Observed -> obj("type" to "H", "event" to "EVENT", "kind" to h.kind.name, "value" to h.value, "limit" to h.limit, "at" to at(e.at))
+            is HandoverEvent.Ending -> obj("type" to "H", "event" to "ENDING", "reason" to h.reason.name, "at" to at(e.at))
+            HandoverEvent.Resumed -> obj("type" to "H", "event" to "RESUMED", "at" to at(e.at))
+            is HandoverEvent.Ended -> obj("type" to "H", "event" to "ENDED", "reason" to h.reason.name, "capsuleId" to h.capsuleId, "at" to at(e.at))
         }
     }
 

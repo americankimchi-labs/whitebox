@@ -34,6 +34,8 @@ const val ESCROW = "escrow"
 const val SEVERE_SILENT = "severe-silent"
 const val OPENED = "opened"
 const val SHARES = "shares"
+
+private val HANDOVER_PHASE = mapOf("OFF" to "꺼짐", "ARMED" to "대기 중", "ACTIVE" to "운행 중", "ENDING" to "마무리 중")
 private const val EVENTS_KEPT = 30
 
 class MirrorService(
@@ -47,6 +49,7 @@ class MirrorService(
     private val random = SecureRandom()
     private val events = HashMap<StreamId, ArrayDeque<Pair<Long, String>>>()
     private val lastLevel = HashMap<StreamId, EscalationLevel>()
+    private val lastHandover = HashMap<StreamId, String>()
 
     /** A readable history per stream for the dashboard (the durable record is the stream's logs). */
     @Synchronized
@@ -110,6 +113,15 @@ class MirrorService(
                     val code = identity?.claimCode(s) ?: return emptyList()
                     note(s, now, "차 화면에 휴대폰 연결 QR 표시")
                     listOf(MirrorProtocol.encode(Frame.ClaimCode(code)))
+                }
+                is Frame.HandoverAck -> {
+                    identity?.handoverAcked(s.deviceId, f.commandId)
+                    emptyList()
+                }
+                is Frame.HandoverStatus -> {
+                    identity?.setHandoverStatus(s.deviceId, MirrorProtocol.encode(f))
+                    if (lastHandover.put(s, f.phase) != f.phase) note(s, now, "대리 운전 모드: ${HANDOVER_PHASE[f.phase] ?: f.phase}")
+                    emptyList()
                 }
                 is Frame.TransferAck -> {
                     identity?.transferAcked(s.deviceId, f.transferId)
@@ -191,6 +203,7 @@ class MirrorService(
             return listOf(MirrorProtocol.encode(Frame.Ready(id.deviceId, key.publicKey)), MirrorProtocol.encode(Frame.Ack(store.contiguousHead(id)))) +
                 listOfNotNull(
                     identity?.transferFrame(id.deviceId),
+                    identity?.handoverFrame(id.deviceId),
                     identity?.pendingClaim(id.deviceId),
                 )
         }
@@ -217,6 +230,17 @@ class MirrorService(
 
     /** A takeover went through: the car gives its new owner the key epoch it started at the request. */
     fun transferred(t: Identity.Transfer) = claimed(t.deviceId, Frame.Claimed(t.toOwnerId, t.phoneKey, t.mac, t.masked))
+
+    /** The owner turned handover mode on or off: tell the car now if it is connected (else on reconnect, until it acks). */
+    fun handoverChanged(deviceId: String) {
+        val text = identity?.handoverFrame(deviceId) ?: return
+        synchronized(live) { live.filterKeys { it.deviceId == deviceId }.values.toList() }.forEach { it.pushes.trySend(text) }
+    }
+
+    /** A share link the owner made on the phone for one of their capsules (the keys stay in the link). */
+    fun addShare(stream: StreamId, capsuleId: String, codeHash: String, expiresMs: Long) {
+        if (store.log(stream, SHARES).none { it.startsWith("$capsuleId|$codeHash|") }) store.appendLog(stream, SHARES, "$capsuleId|$codeHash|$expiresMs")
+    }
 
     /** A takeover was requested or declined: tell the car now if it is connected (else on reconnect, until it acks). */
     fun transferChanged(deviceId: String) {

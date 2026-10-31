@@ -29,4 +29,21 @@ class RoadContextChangesTest {
         assertEquals(listOf(RoadContext(CAUTION_POINT, "NONE")), c.list(CAUTION_POINT, emptyMap()))
         assertEquals(emptyList<RoadContext>(), c.list(CAUTION_POINT, emptyMap()))
     }
+
+    @Test
+    fun enforcementIsReportedAsItChangesAndRouteEventsAsTheyHappen() {
+        val c = RoadContextChanges()
+        fun e(v: List<com.americankimchilabs.whitebox.domain.VehicleSignal.RoadContext>) = v.map { it.value }
+        assertEquals(listOf("POINT;80;0;600"), e(c.enforcement(Enforcement(false, 80, 0, 604))))
+        assertEquals(emptyList<String>(), e(c.enforcement(Enforcement(false, 80, 0, 601)))) // same 10 m step
+        assertEquals(listOf("POINT;80;0;590"), e(c.enforcement(Enforcement(false, 80, 0, 590))))
+        assertEquals(listOf("NONE"), e(c.enforcement(null)))
+        assertEquals(emptyList<String>(), e(c.enforcement(null)))
+        assertEquals(listOf("GUIDING"), e(c.route("GUIDING")))
+        assertEquals(emptyList<String>(), e(c.route("GUIDING")))
+        assertEquals(listOf("REROUTED"), e(c.route("REROUTED")))
+        assertEquals(listOf("REROUTED"), e(c.route("REROUTED"))) // every re-route counts
+        assertEquals(emptyList<String>(), e(c.route("GUIDING")))
+        assertEquals(listOf("ARRIVED"), e(c.route("ARRIVED")))
+    }
 }

@@ -49,6 +49,8 @@
       case 'CRUISE_TARGET_SPEED': return { ...c, cruiseTargetMps: v };
       case 'PARKING_BRAKE': return { ...c, parkingBrake: v };
       case 'ROAD_CONTEXT':
+        // Handover mode's inputs (enforcement distance, route state), not context of the moment.
+        if (v.type === 'SPEED_ENFORCEMENT' || v.type === 'ROUTE') return c;
         if (v.type === 'SPEED_LIMIT') { const n = parseInt(v.value, 10); return { ...c, speedLimitKmh: n > 0 ? n : null }; }
         if (v.value === 'NONE') return { ...c, roadAlerts: c.roadAlerts.filter((a) => a[0] !== v.type) };
         return { ...c, roadAlerts: [...c.roadAlerts, [v.type, v.value]] };
@@ -125,7 +127,7 @@
     REAR_SHOVE: '후방 충격 (정차·제동 중)', ALERT_RESOLVED: '급제동 후 정차', MANUAL: '음성으로 보관', HARD_BRAKE: '급제동',
     EVASIVE_STEER: '급핸들 (회피)', BRAKE_SWERVE: '급제동 + 급핸들', SHIFT_TO_NEUTRAL: '주행 중 중립(N) 변속', BRAKE_SPEED_RISE: '브레이크를 밟는데 속도 상승',
     BRAKE_NO_DECEL: '브레이크를 밟는데 감속 없음', BRAKE_PUMPING: '브레이크 반복 조작', PARKING_BRAKE_MOVING: '주행 중 주차 브레이크', LURCH: '정차 중 급출발',
-    POST_EVENT_EXIT: '위험 상황 직후 하차', SERVER_SEAL: '사고 뒤 신호 끊김 (서버 봉인)',
+    POST_EVENT_EXIT: '위험 상황 직후 하차', SERVER_SEAL: '사고 뒤 신호 끊김 (서버 봉인)', HANDOVER: '대리 운전 리포트',
   };
   const GEAR = { PARK: 'P', REVERSE: 'R', NEUTRAL: 'N', DRIVE: 'D', MANUAL: 'M', UNKNOWN: '?' };
   const TURN = { OFF: '꺼짐', LEFT: '좌측 점멸', RIGHT: '우측 점멸' };

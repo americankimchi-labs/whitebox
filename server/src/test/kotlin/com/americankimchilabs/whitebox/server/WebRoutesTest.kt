@@ -150,4 +150,40 @@ class WebRoutesTest {
         car.now += 2_000 // expired
         assertEquals(400, open("C21", code).status.value)
     }
+
+    @Test
+    fun handoverFromThePhoneReachesTheCarUntilAcknowledgedAndItsStatusShows() = testApplication {
+        val car = SoldCar()
+        application { whiteBox(car.service, tickMs = 60_000) }
+        val buyer = car.login(Identity.OWNER, buyer)
+        val seller = car.login(Identity.OWNER, seller)
+        suspend fun post(path: String, token: String, vararg p: Pair<String, String>) = client.submitForm(path, parameters { p.forEach { (k, v) -> append(k, v) } }) { header("Cookie", "wb_owner=$token") }
+        assertEquals(400, post("/v1/handover", seller, "device" to "car1", "action" to "arm").status.value) // sold: not theirs any more
+        assertEquals(200, post("/v1/handover", buyer, "device" to "car1", "action" to "arm").status.value)
+        val cmd = com.americankimchilabs.whitebox.data.MirrorProtocol.decode(car.identity.handoverFrame("car1")!!) as com.americankimchilabs.whitebox.data.MirrorProtocol.Frame.HandoverCommand
+        assertTrue(cmd.arm)
+        assertTrue("\"pending\":true" in client.get("/v1/me") { header("Cookie", "wb_owner=$buyer") }.bodyAsText())
+        // The car carries it out and reports back.
+        car.identity.handoverAcked("car1", cmd.commandId)
+        car.identity.setHandoverStatus("car1", com.americankimchilabs.whitebox.data.MirrorProtocol.encode(com.americankimchilabs.whitebox.data.MirrorProtocol.Frame.HandoverStatus("ARMED", car.now, car.now, "-")))
+        val me = client.get("/v1/me") { header("Cookie", "wb_owner=$buyer") }.bodyAsText()
+        assertTrue(me, "\"phase\":\"ARMED\"" in me && "\"pending\":null" in me)
+        assertEquals(null, car.identity.handoverFrame("car1"))
+    }
+
+    @Test
+    fun aShareLinkMadeOnThePhoneOpensThatCapsuleOnly() = testApplication {
+        val car = SoldCar()
+        application { whiteBox(car.service, tickMs = 60_000) }
+        val buyer = car.login(Identity.OWNER, buyer)
+        val code = "phone-made-code"
+        val hash = com.americankimchilabs.whitebox.data.CapsuleShares.codeHash(code)
+        val made = client.submitForm("/v1/share", parameters { append("device", "car1"); append("stream", "live"); append("id", "C21"); append("hash", hash) }) { header("Cookie", "wb_owner=$buyer") }
+        assertEquals(200, made.status.value)
+        // Not for a capsule of the seller's time.
+        assertEquals(400, client.submitForm("/v1/share", parameters { append("device", "car1"); append("stream", "live"); append("id", "C0"); append("hash", hash) }) { header("Cookie", "wb_owner=$buyer") }.status.value)
+        val open = client.submitForm("/v1/shared", parameters { append("device", "car1"); append("stream", "live"); append("id", "C21"); append("t", code) })
+        assertEquals(200, open.status.value)
+        assertEquals(400, client.submitForm("/v1/shared", parameters { append("device", "car1"); append("stream", "live"); append("id", "C0"); append("t", code) }).status.value)
+    }
 }

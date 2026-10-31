@@ -3,6 +3,10 @@ package com.americankimchilabs.whitebox.data
 import com.americankimchilabs.whitebox.domain.AudioEvent
 import com.americankimchilabs.whitebox.domain.BookmarkSource
 import com.americankimchilabs.whitebox.domain.CapsuleTrigger
+import com.americankimchilabs.whitebox.domain.HandoverEndReason
+import com.americankimchilabs.whitebox.domain.HandoverEvent
+import com.americankimchilabs.whitebox.domain.HandoverEventKind
+import com.americankimchilabs.whitebox.domain.HandoverSource
 import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.CruiseState
 import com.americankimchilabs.whitebox.domain.Lamp
@@ -33,7 +37,7 @@ import com.americankimchilabs.whitebox.domain.VoiceLine
  *
  * With a [RecordCipher], what a record says is encrypted and what it is stays readable: a signal's value
  * (`S|KIND|v1.…|time|source time`) and a location fix as a whole (`L|v1.…|time`), each bound to its record's type and
- * time. Recorder, escalation and audio records are not personal and stay plain, so the server can run the dead-man
+ * time. Recorder, escalation, audio and handover records are not personal and stay plain, so the server can run the dead-man
  * switch on them. Records written without a cipher (older chains, tests) decode as before.
  */
 object EntryCodec {
@@ -60,6 +64,15 @@ object EntryCodec {
             is AudioEvent.Bookmark -> listOf("BOOKMARK", v.source)
             is AudioEvent.Spoke -> listOf("SPOKE", v.line, v.complete)
             is AudioEvent.Beacon -> listOf("BEACON", v.chirpId, ts(v.playedAt))
+        }
+        is ChainEntry.Handover -> listOf("H", ts(e.at)) + when (val v = e.event) {
+            is HandoverEvent.Armed -> listOf("ARMED", v.by, v.requestedAtWall)
+            is HandoverEvent.Cancelled -> listOf("CANCELLED", v.by, v.reason)
+            is HandoverEvent.Started -> listOf("STARTED", v.fromSeq, v.by, v.requestedAtWall)
+            is HandoverEvent.Observed -> listOf("EVENT", v.kind, v.value, v.limit ?: "-")
+            is HandoverEvent.Ending -> listOf("ENDING", v.reason)
+            HandoverEvent.Resumed -> listOf("RESUMED")
+            is HandoverEvent.Ended -> listOf("ENDED", v.reason, v.capsuleId)
         }
     }.joinToString("|") { clean(it.toString()) }
 
@@ -94,6 +107,19 @@ object EntryCodec {
                     "SPOKE" -> AudioEvent.Spoke(VoiceLine.valueOf(f[3]), f[4].toBooleanStrict())
                     "BEACON" -> AudioEvent.Beacon(f[3].toInt(), ts(f[4]))
                     else -> error("unknown audio event ${f[2]}")
+                },
+                ts(f[1]),
+            )
+            "H" -> ChainEntry.Handover(
+                when (f[2]) {
+                    "ARMED" -> HandoverEvent.Armed(HandoverSource.valueOf(f[3]), f[4].toLong())
+                    "CANCELLED" -> HandoverEvent.Cancelled(HandoverSource.valueOf(f[3]), HandoverEndReason.valueOf(f[4]))
+                    "STARTED" -> HandoverEvent.Started(f[3].toLong(), HandoverSource.valueOf(f[4]), f[5].toLong())
+                    "EVENT" -> HandoverEvent.Observed(HandoverEventKind.valueOf(f[3]), f[4].toFloat(), f[5].takeIf { it != "-" }?.toFloat())
+                    "ENDING" -> HandoverEvent.Ending(HandoverEndReason.valueOf(f[3]))
+                    "RESUMED" -> HandoverEvent.Resumed
+                    "ENDED" -> HandoverEvent.Ended(HandoverEndReason.valueOf(f[3]), f[4])
+                    else -> error("unknown handover event ${f[2]}")
                 },
                 ts(f[1]),
             )

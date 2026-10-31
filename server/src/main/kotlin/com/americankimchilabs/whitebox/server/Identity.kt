@@ -99,6 +99,8 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
     private val transfers = LinkedHashMap<String, Transfer>()
     private val pendingClaims = HashMap<String, String>() // device → CLAIMED frame not yet answered by the car
     private val transferFrames = HashMap<String, Pair<String, String>>() // device → (transfer, CLAIMPENDING/CLAIMDECLINED) until the car acks
+    private val handoverCommands = HashMap<String, Pair<String, String>>() // device → (command, HANDOVERCMD) until the car acks
+    private val handoverStatus = HashMap<String, String>() // device → the car's last HANDOVER status frame
     private val sessions = HashMap<String, Session>()
     private val otps = HashMap<String, Otp>()
     private val claimCodes = HashMap<String, ClaimCode>()
@@ -124,6 +126,9 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
             "PD" -> pendingClaims.remove(f[1])
             "PF" -> transferFrames[f[1]] = f[2] to line.substringAfter("PF|${f[1]}|${f[2]}|")
             "PFD" -> if (transferFrames[f[1]]?.first == f[2]) transferFrames.remove(f[1])
+            "HC" -> handoverCommands[f[1]] = f[2] to line.substringAfter("HC|${f[1]}|${f[2]}|")
+            "HCD" -> if (handoverCommands[f[1]]?.first == f[2]) handoverCommands.remove(f[1])
+            "HS" -> handoverStatus[f[1]] = line.substringAfter("HS|${f[1]}|")
             "T" -> transfers[f[1]] = Transfer(f[1], f[2], f[3], f[4], f[5], f[6], f[7], f[8].toLong())
             "TS" -> transfers[f[1]]?.state = f[2]
             "S" -> sessions[f[1]] = Session(f[2], f[3], f[4].toLong())
@@ -304,6 +309,46 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
 
     @Synchronized
     fun pendingClaim(deviceId: String): String? = pendingClaims[deviceId]
+
+    // ---- handover mode (대리 운전) ----
+
+    /**
+     * The owner turned handover mode on or off for [deviceId] on the phone. The newest command replaces one the car has
+     * not heard yet; it is sent now if the car is connected, else when it connects, until acknowledged.
+     */
+    @Synchronized
+    fun handoverCommand(ownerId: String, deviceId: String, arm: Boolean): String? {
+        if (deviceOwner[deviceId] != ownerId) return null
+        val id = token(9)
+        record("HC", deviceId, id, MirrorProtocol.encode(MirrorProtocol.Frame.HandoverCommand(id, arm, if (arm) clock() else 0)))
+        return handoverCommands.getValue(deviceId).second
+    }
+
+    @Synchronized
+    fun handoverFrame(deviceId: String): String? = handoverCommands[deviceId]?.second
+
+    @Synchronized
+    fun handoverAcked(deviceId: String, commandId: String) {
+        if (handoverCommands[deviceId]?.first == commandId) record("HCD", deviceId, commandId)
+    }
+
+    /** Whether a command from the phone is still on its way to the car (and which). */
+    @Synchronized
+    fun handoverPending(deviceId: String): Boolean? = handoverCommands[deviceId]?.second?.let { (MirrorProtocol.decode(it) as? MirrorProtocol.Frame.HandoverCommand)?.arm }
+
+    /** The car's status; one that shows the pending command carried out settles it even if its acknowledgement is late. */
+    @Synchronized
+    fun setHandoverStatus(deviceId: String, frame: String) {
+        if (handoverStatus[deviceId] != frame) record("HS", deviceId, frame)
+        val status = MirrorProtocol.decode(frame) as? MirrorProtocol.Frame.HandoverStatus ?: return
+        val (id, pending) = handoverCommands[deviceId] ?: return
+        val cmd = MirrorProtocol.decode(pending) as? MirrorProtocol.Frame.HandoverCommand ?: return
+        val done = if (cmd.arm) status.phase != "OFF" && status.requestedAtWall == cmd.requestedAtWall else status.phase == "OFF"
+        if (done) record("HCD", deviceId, id)
+    }
+
+    @Synchronized
+    fun handoverStatus(deviceId: String): MirrorProtocol.Frame.HandoverStatus? = handoverStatus[deviceId]?.let { MirrorProtocol.decode(it) as? MirrorProtocol.Frame.HandoverStatus }
 
     /** A takeover request, or its decline, the car has not acknowledged yet. */
     @Synchronized

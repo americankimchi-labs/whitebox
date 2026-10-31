@@ -14,6 +14,10 @@ import com.americankimchilabs.whitebox.domain.EscalationEvent
 import com.americankimchilabs.whitebox.domain.EscalationLevel
 import com.americankimchilabs.whitebox.domain.GapCause
 import com.americankimchilabs.whitebox.domain.GearPosition
+import com.americankimchilabs.whitebox.domain.HandoverEndReason
+import com.americankimchilabs.whitebox.domain.HandoverEvent
+import com.americankimchilabs.whitebox.domain.HandoverEventKind
+import com.americankimchilabs.whitebox.domain.HandoverSource
 import com.americankimchilabs.whitebox.domain.Lamp
 import com.americankimchilabs.whitebox.domain.RecorderEvent
 import com.americankimchilabs.whitebox.domain.RecorderPermission
@@ -92,6 +96,7 @@ class Labels(private val res: Resources) {
             CapsuleTrigger.PARKING_BRAKE_MOVING -> R.string.trigger_parking_brake_moving
             CapsuleTrigger.LURCH -> R.string.trigger_lurch
             CapsuleTrigger.POST_EVENT_EXIT -> R.string.trigger_post_event_exit
+            CapsuleTrigger.HANDOVER -> R.string.trigger_handover
         },
     )
 
@@ -247,7 +252,13 @@ class Labels(private val res: Resources) {
             is VehicleSignal.Wiper -> res.getString(R.string.row_wiper, wiper(s.mode))
             is VehicleSignal.CruiseControl -> res.getString(R.string.row_cruise, cruise(s.state))
             is VehicleSignal.RoadContext -> when {
-                s.type == RoadContextType.SPEED_LIMIT || s.value == "NONE" -> null
+                s.type == RoadContextType.SPEED_LIMIT || s.type == RoadContextType.SPEED_ENFORCEMENT || s.value == "NONE" -> null
+                s.type == RoadContextType.ROUTE -> when (s.value) {
+                    "GUIDING" -> res.getString(R.string.row_route_guiding)
+                    "REROUTED" -> res.getString(R.string.row_route_rerouted)
+                    "ARRIVED" -> res.getString(R.string.row_route_arrived)
+                    else -> null
+                }
                 else -> res.getString(R.string.row_road, roadContext(s.value))
             }
             // Not listed: continuous or slow-changing values the packet shows as context instead.
@@ -283,7 +294,44 @@ class Labels(private val res: Resources) {
             is AudioEvent.Spoke -> res.getString(if (a.complete) R.string.row_spoke else R.string.row_spoke_cut, res.getString(voiceLineText(a.line)))
             is AudioEvent.Beacon -> null // every few seconds while driving; the packet's sync data, not a timeline row
         }
+        is ChainEntry.Handover -> handoverRow(e.event)
     }
+
+    fun handoverRow(h: HandoverEvent): String = when (h) {
+        is HandoverEvent.Armed -> res.getString(R.string.row_handover_armed, source(h.by))
+        is HandoverEvent.Cancelled -> res.getString(R.string.row_handover_cancelled, endReason(h.reason))
+        is HandoverEvent.Started -> res.getString(R.string.row_handover_started)
+        is HandoverEvent.Observed -> handoverEvent(h)
+        is HandoverEvent.Ending -> res.getString(R.string.row_handover_ending, endReason(h.reason))
+        HandoverEvent.Resumed -> res.getString(R.string.row_handover_resumed)
+        is HandoverEvent.Ended -> res.getString(R.string.row_handover_ended, endReason(h.reason))
+    }
+
+    /** One thing handover mode noticed, in words with its value. */
+    fun handoverEvent(h: HandoverEvent.Observed): String = when (h.kind) {
+        HandoverEventKind.SPEEDING -> res.getString(R.string.handover_speeding, h.value, h.limit ?: 0f)
+        HandoverEventKind.SECTION_SPEEDING -> res.getString(R.string.handover_section_speeding, h.value, h.limit ?: 0f)
+        HandoverEventKind.HARD_BRAKE -> res.getString(R.string.handover_hard_brake, h.value)
+        HandoverEventKind.CRASH -> res.getString(R.string.handover_crash, h.value)
+        HandoverEventKind.HARD_ACCEL -> res.getString(R.string.handover_hard_accel, h.value)
+        HandoverEventKind.SHARP_STEER -> res.getString(R.string.handover_sharp_steer, h.value)
+        HandoverEventKind.ROUTE_LEFT -> res.getString(R.string.handover_route_left)
+        HandoverEventKind.ARRIVED -> res.getString(R.string.handover_arrived)
+        HandoverEventKind.NO_ROUTE -> res.getString(R.string.handover_no_route)
+    }
+
+    fun source(s: HandoverSource) = res.getString(if (s == HandoverSource.CAR) R.string.handover_by_car else R.string.handover_by_phone)
+
+    fun endReason(r: HandoverEndReason) = res.getString(
+        when (r) {
+            HandoverEndReason.IGNITION_OFF -> R.string.handover_end_ignition
+            HandoverEndReason.PARKED -> R.string.handover_end_parked
+            HandoverEndReason.ARRIVED -> R.string.handover_end_arrived
+            HandoverEndReason.OWNER -> R.string.handover_end_owner
+            HandoverEndReason.EXPIRED -> R.string.handover_end_expired
+            HandoverEndReason.RESTART -> R.string.handover_end_restart
+        },
+    )
 }
 
 /** The words of each line the car speaks (also what the timeline quotes). */
@@ -293,6 +341,11 @@ fun voiceLineText(line: VoiceLine): Int = when (line) {
     VoiceLine.RELEASED -> R.string.voice_released
     VoiceLine.CRASH_GUIDANCE -> R.string.voice_crash_guidance
     VoiceLine.BOOKMARKED -> R.string.voice_bookmarked
+    VoiceLine.HANDOVER_STARTED -> R.string.voice_handover_started
+    VoiceLine.HANDOVER_SET_DESTINATION -> R.string.voice_handover_set_destination
+    VoiceLine.HANDOVER_SLOW_DOWN -> R.string.voice_handover_slow_down
+    VoiceLine.HANDOVER_DRIVE_SAFELY -> R.string.voice_handover_drive_safely
+    VoiceLine.HANDOVER_CHECK_ROUTE -> R.string.voice_handover_check_route
 }
 
 /**

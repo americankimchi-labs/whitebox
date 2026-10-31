@@ -64,9 +64,26 @@ async function distanceKm(drive, ring) {
 const ANSWER = { kept: '보관하기로 함', released: '보관하지 않기로 함', unanswered: '대답이 없어 보관' };
 function capsuleRow(dev, stream, c) {
   const name = WBPacket.TRIGGER[c.trigger] || c.trigger;
-  const tag = c.severe ? '<span class="badge bad">큰 사고</span>' : '<span class="badge warn">위험 순간</span>';
+  const tag = c.severe ? '<span class="badge bad">큰 사고</span>' : c.trigger === 'HANDOVER' ? '<span class="badge">대리 운전</span>' : '<span class="badge warn">위험 순간</span>';
   const answer = c.answer ? ` · ${ANSWER[c.answer]}` : '';
   return `<a class="row" href="/capsule#d=${dev}&s=${stream}&id=${encodeURIComponent(c.id)}"><span>${esc(name)}<br><span class="sub">${WB.when(c.sealedAtMs)}${answer}</span></span>${tag}</a>`;
+}
+
+/** 대리 운전 모드 for the owner's car: where it stands, and the one button that makes sense now. */
+function handoverCard(dev) {
+  const h = dev.handover || { phase: 'OFF' };
+  const state = {
+    OFF: '꺼져 있습니다.',
+    ARMED: '대기 중 · 대리기사님이 출발하면 기록을 시작합니다.',
+    ACTIVE: `운행 중${h.sinceWall ? ` · ${WB.clock(h.sinceWall)}부터` : ''}. 주행이 기록되고 있습니다.`,
+    ENDING: '마무리 중 · 차가 10분 동안 출발하지 않으면 리포트가 확정됩니다.',
+  }[h.phase] || h.phase;
+  const pending = h.pending == null ? '' : `<p class="msg">${h.pending ? '켜기' : '끄기'} 요청을 차에 전달하는 중입니다. 차가 켜지고 인터넷에 연결되면 바로 반영됩니다.</p>`;
+  const button = h.phase === 'OFF' && h.pending !== true
+    ? `<button class="wide" data-handover="arm" data-device="${dev.id}">대리 운전 모드 켜기</button>`
+    : h.pending !== false ? `<button class="wide secondary" data-handover="end" data-device="${dev.id}">${h.phase === 'ARMED' || h.pending ? '대리 운전 모드 끄기' : '지금 끝내기'}</button>` : '';
+  return `<h3>대리 운전 모드</h3><p>${esc(state)}</p>${pending}${button}
+    <p class="msg">켜 두면 대리기사님이 운전하는 동안 단속 카메라 앞 과속, 급제동, 급가속, 급핸들, 경로 이탈을 기록하고, 끝나면 리포트를 남깁니다. 리포트는 보관 기록에 나타나고, 공유 링크로 대리운전 업체에 보낼 수 있습니다.</p>`;
 }
 
 async function render(force = false) {
@@ -157,11 +174,20 @@ async function render(force = false) {
           <a class="button-like secondary wide" style="text-align:center" href="/drives#d=${dev.id}&s=${live.stream}">주행 기록 모두 보기</a>`;
       }
     }
+    if (dev.current && dev.wraps.length) body += handoverCard(dev);
     cars.push(`<div class="card"><h2>${dev.current ? '내 차' : '이전에 연결했던 차'}</h2><p class="big">${status}</p>${dev.current && live && live.silentForMs != null ? `<p class="msg" data-age="${live.silentForMs}" data-at="${Date.now()}">마지막 수신 ${WB.ago(live.silentForMs)}</p>` : ''}${body}</div>`);
     tech.push(`차량 기기 ID ${dev.id}`, `이 휴대폰이 가진 차량 열쇠: ${dev.wraps.map((w) => w.epoch).join(', ') || '없음'}번`, ...(dev.current ? dev.streams.map((s) => `${s.stream}: 기록 ${s.records}건, 단계 ${s.level || '-'}`) : []));
   }
   WB.$('cars').innerHTML = cars.join('') || (me.transfersOut.length ? '' : '<div class="card"><p>연결된 차가 없습니다. 차 화면의 <b>휴대폰</b> 탭에서 QR을 찍으면 연결됩니다.</p></div>');
 
+  document.querySelectorAll('[data-handover]').forEach((b) => b.onclick = async () => {
+    const arm = b.dataset.handover === 'arm';
+    if (!confirm(arm
+      ? '대리 운전 모드를 켤까요? 대리기사님이 출발하면 기록이 시작되고, 도착해 시동을 끄면 10분 뒤 끝납니다. 운전 중에는 차에서 끌 수 없습니다.'
+      : '대리 운전 모드를 끌까요? 운행 중이라면 지금까지로 리포트가 확정됩니다.')) return;
+    await WB.post('/v1/handover', { device: b.dataset.device, action: arm ? 'arm' : 'end' }).catch((e) => alert(e.message));
+    render(true);
+  });
   WB.$('contacts').innerHTML = me.contacts.map((c) => `<div class="row"><span>${esc(c.name)} <small>${esc(c.phone)}</small></span><button class="plain" data-remove="${c.id}" data-name="${esc(c.name)}">삭제</button></div>`).join('')
     || '<p class="msg">아직 없습니다. 가족 한 분을 저장해 두시길 권합니다.</p>';
   WB.$('add').open = !me.contacts.length;
