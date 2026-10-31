@@ -58,7 +58,15 @@ android {
     }
 
     buildTypes {
+        // The cloud mirror (local.properties overrides). Debug builds default to the local mirror on the development
+        // machine (the emulator reaches its host at 10.0.2.2, the only address allowed without TLS); release builds
+        // use the deployed wss:// mirror, and keep everything on the car while none is configured. Either build can
+        // be pointed at the local mirror at run time (see MainActivity).
+        debug {
+            buildConfigField("String", "MIRROR_URL", "\"${localProps.getProperty("whitebox.mirrorUrl", "ws://10.0.2.2:8080/v1/stream")}\"")
+        }
         release {
+            buildConfigField("String", "MIRROR_URL", "\"${localProps.getProperty("whitebox.mirrorUrl.release", "")}\"")
             // Not minified: stack traces stay readable and the APK can be inspected.
             isMinifyEnabled = false
             if (releaseStore != null) signingConfig = signingConfigs.getByName("release")
@@ -90,6 +98,7 @@ dependencies {
     implementation(project(":vehicle-pleos"))
 
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.okhttp)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.service)

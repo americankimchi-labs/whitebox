@@ -87,6 +87,10 @@ class FileEventStore(
     @Synchronized
     fun hashAt(seq: Long): ByteArray = lines(seq, seq).single().second.split("\t")[3].hexToBytes()
 
+    /** Records exactly as stored (what the mirror sends), inclusive range. */
+    @Synchronized
+    fun records(fromSeq: Long, toSeq: Long): List<String> = lines(fromSeq, toSeq).map { it.second }
+
     fun close() = out.close()
 
     private fun lines(fromSeq: Long, toSeq: Long): List<Pair<Long, String>> {

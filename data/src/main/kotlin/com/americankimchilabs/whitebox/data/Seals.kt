@@ -76,10 +76,8 @@ class SealStore(dir: File) {
 
     @Synchronized
     fun append(seal: CapsuleSeal) {
-        val b64 = Base64.getEncoder()
-        val line = signedTextOf(seal) + "|" + b64.encodeToString(seal.publicKey) + "|" + b64.encodeToString(seal.signature) + "\n"
         FileOutputStream(file, true).use {
-            it.write(line.toByteArray())
+            it.write((line(seal) + "\n").toByteArray())
             it.fd.sync()
         }
     }
@@ -88,15 +86,24 @@ class SealStore(dir: File) {
     @Synchronized
     fun all(): List<CapsuleSeal> {
         if (!file.exists()) return emptyList()
-        val b64 = Base64.getDecoder()
-        return file.readLines().filter { it.isNotBlank() }.map { line ->
+        return file.readLines().filter { it.isNotBlank() }.map(::parse).associateBy { it.capsule.id }.values.toList()
+    }
+
+    companion object {
+        /** One seal as a log line (also how the mirror carries it). */
+        fun line(s: CapsuleSeal): String {
+            val b64 = Base64.getEncoder()
+            return CapsuleSeal.signedText(s.capsule, s.headHash, s.final, s.sealedAtWallMillis) + "|" +
+                b64.encodeToString(s.publicKey) + "|" + b64.encodeToString(s.signature)
+        }
+
+        fun parse(line: String): CapsuleSeal {
+            val b64 = Base64.getDecoder()
             val f = line.split("|")
-            CapsuleSeal(
+            return CapsuleSeal(
                 IncidentCapsule(f[0], CapsuleTrigger.valueOf(f[1]), f[2].toLong(), f[3].toLong()),
                 f[4].hexToBytes(), f[5].toBooleanStrict(), f[6].toLong(), b64.decode(f[7]), b64.decode(f[8]),
             )
-        }.associateBy { it.capsule.id }.values.toList()
+        }
     }
-
-    private fun signedTextOf(s: CapsuleSeal) = CapsuleSeal.signedText(s.capsule, s.headHash, s.final, s.sealedAtWallMillis)
 }

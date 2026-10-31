@@ -1,6 +1,5 @@
 package com.americankimchilabs.whitebox.data
 
-import com.americankimchilabs.whitebox.core.MirrorStore
 import com.americankimchilabs.whitebox.domain.AudioEvent
 import com.americankimchilabs.whitebox.domain.BookmarkSource
 import com.americankimchilabs.whitebox.domain.ChainEntry
@@ -33,15 +32,6 @@ class JdkSigner : Signer {
         initSign(pair.private)
         update(data)
         sign()
-    }
-}
-
-class RecordingMirror : MirrorStore {
-    val manifests = mutableListOf<IncidentCapsule>()
-    override suspend fun uploadBatch(events: List<DriveEvent>) = true
-    override suspend fun uploadSealManifest(capsule: IncidentCapsule, headHash: ByteArray): Boolean {
-        manifests += capsule
-        return true
     }
 }
 

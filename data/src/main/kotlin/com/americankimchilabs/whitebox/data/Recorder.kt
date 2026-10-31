@@ -1,7 +1,6 @@
 package com.americankimchilabs.whitebox.data
 
 import com.americankimchilabs.whitebox.core.Clock
-import com.americankimchilabs.whitebox.core.MirrorStore
 import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.DriveEvent
 import com.americankimchilabs.whitebox.domain.EngineOutput
@@ -24,7 +23,7 @@ import kotlinx.coroutines.sync.withLock
 /**
  * The record pipeline: every entry is appended durably first, then shown to the escalation engine, whose markers are
  * appended next and whose seals are signed over the head that includes them. Local seal before any upload
- * (durability wins); the mirror is told afterwards.
+ * (durability wins); [onSeal] is told afterwards.
  *
  * Calls are serialised; feed [record] from one coroutine so the chain order is the arrival order.
  */
@@ -33,7 +32,8 @@ class Recorder(
     private val seals: SealStore,
     private val signer: Signer,
     private val clock: Clock,
-    private val mirror: MirrorStore,
+    /** Told about each seal after it is durable locally (the mirror sends it first). */
+    private val onSeal: suspend (CapsuleSeal) -> Unit = {},
 ) {
     private val engine = EscalationEngine()
     private val mutex = Mutex()
@@ -108,6 +108,6 @@ class Recorder(
         val seal = CapsuleSeal.create(capsule, store.hashAt(capsule.lastSeq), final, clock.now().wallMillis, signer)
         seals.append(seal)
         _capsules.value = seals.all()
-        mirror.uploadSealManifest(capsule, seal.headHash)
+        onSeal(seal)
     }
 }

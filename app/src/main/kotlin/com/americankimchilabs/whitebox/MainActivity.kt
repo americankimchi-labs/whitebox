@@ -12,6 +12,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.americankimchilabs.whitebox.recorder.AppGraph
 import com.americankimchilabs.whitebox.recorder.RecorderService
+import com.americankimchilabs.whitebox.recorder.RecorderService.Companion.MIRROR_DEFAULT
+import com.americankimchilabs.whitebox.recorder.RecorderService.Companion.MIRROR_LOCAL
 import com.americankimchilabs.whitebox.recorder.SourceMode
 import com.americankimchilabs.whitebox.ui.WhiteBoxApp
 import com.americankimchilabs.whitebox.ui.WhiteBoxTheme
@@ -22,6 +24,12 @@ import com.americankimchilabs.whitebox.ui.WhiteBoxTheme
  *   adb shell am start --user 10 -n com.americankimchilabs.whitebox/.MainActivity --es source REPLAY
  *
  * `source` = LIVE (car) or REPLAY (scripted demo drive, restarted from the top each time).
+ *
+ * `mirror` = `local` sends the mirror to a server on the emulator's host computer (ws://10.0.2.2:8080, started with
+ * `./gradlew :server:run`), `default` returns to the build's own mirror. Only these two fixed values exist, so no
+ * app can redirect the mirror to an address of its choosing:
+ *
+ *   adb shell am start --user 10 -n com.americankimchilabs.whitebox/.MainActivity --es mirror local
  */
 class MainActivity : ComponentActivity() {
 
@@ -57,6 +65,7 @@ class MainActivity : ComponentActivity() {
 
     private fun startFrom(intent: Intent) {
         val source = intent.getStringExtra(RecorderService.EXTRA_SOURCE)?.let(SourceMode::valueOf)
-        RecorderService.start(this, source, restartReplay = source == SourceMode.REPLAY)
+        val mirror = intent.getStringExtra(RecorderService.EXTRA_MIRROR)?.takeIf { it == MIRROR_LOCAL || it == MIRROR_DEFAULT }
+        RecorderService.start(this, source, restartReplay = source == SourceMode.REPLAY, mirror = mirror)
     }
 }

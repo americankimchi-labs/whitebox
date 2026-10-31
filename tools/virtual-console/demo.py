@@ -4,6 +4,10 @@
     tools/virtual-console/heartbeat.sh &          # keeps console writes live
     adb shell am start --user 10 -n com.americankimchilabs.whitebox/.MainActivity --es source LIVE
     python3 -I tools/virtual-console/demo.py
+    python3 -I tools/virtual-console/demo.py --power-loss   # the app is stopped 0.3 s after the impact
+
+With --power-loss the recorder stops (adb force-stop) right after the crash, standing in for a head unit that loses
+power: a mirror server running on this computer then seals what it received and issues the emergency notice.
 
 Pull out of Park → lane change left with the turn signal → ordinary brake → lane change right → hard brake
 (ALERT) → crash-profile speed drop 50 → 25 km/h in one write (TRIGGERED, primary ΔV) → stillness 12 s
@@ -13,6 +17,7 @@ Steering: the console sign is the negative of what the SDK reports, so "+12" her
 matching DemoDrive's left lane change.
 """
 import math
+import subprocess
 import sys
 import time
 import json
@@ -114,6 +119,13 @@ def main():
     say("impact: 50 -> 25 km/h")
     controls(speed=25)
     time.sleep(0.1)
+    if "--power-loss" in sys.argv:
+        time.sleep(0.2)
+        subprocess.run(["adb", "shell", "am", "force-stop", "--user", "10", "com.americankimchilabs.whitebox"], check=False)
+        say("POWER LOSS: the app was stopped; watch the mirror dashboard (server seal at +10 s, notice at +60 s)")
+        speed(2, to=0, brake=100)
+        gear("Park")
+        return
     speed(2, to=0, brake=100)
     say("stillness (capsule seals after 10 s)")
     speed(12, to=0, step=0.5)

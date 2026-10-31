@@ -1,6 +1,5 @@
 package com.americankimchilabs.whitebox.core
 
-import com.americankimchilabs.whitebox.domain.DriveEvent
 import com.americankimchilabs.whitebox.domain.IncidentCapsule
 import com.americankimchilabs.whitebox.domain.LocationFix
 import com.americankimchilabs.whitebox.domain.MotionWindow
@@ -8,6 +7,7 @@ import com.americankimchilabs.whitebox.domain.SignalKind
 import com.americankimchilabs.whitebox.domain.SignalSample
 import com.americankimchilabs.whitebox.domain.Timestamp
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 
 /** Monotonic + wall time, read together. */
 fun interface Clock {
@@ -96,13 +96,18 @@ interface AudioBeaconPort {
 }
 
 /**
- * Cloud mirror: store-and-forward batches and the seal manifest. Writes are idempotent by [DriveEvent.seq].
+ * The always-open channel to the cloud mirror (kept warm, so a burst never waits for a handshake). Frames are
+ * text, each self-contained; the server stores records idempotently by device and seq.
  */
-interface MirrorStore {
-    /** Store-and-forward batch. Returns false if it should be retried later. */
-    suspend fun uploadBatch(events: List<DriveEvent>): Boolean
+interface MirrorChannel {
+    /** True while authenticated and able to send. */
+    val connected: StateFlow<Boolean>
 
-    suspend fun uploadSealManifest(capsule: IncidentCapsule, headHash: ByteArray): Boolean
+    /** Frames from the server (acknowledgements), as received. */
+    val incoming: Flow<String>
+
+    /** Queues one frame; false when not connected (the outbox keeps the data and sends it later). */
+    fun send(frame: String): Boolean
 }
 
 /** Push a viewer link to registered emergency contacts. */

@@ -14,6 +14,8 @@ import androidx.lifecycle.lifecycleScope
 import com.americankimchilabs.whitebox.BuildConfig
 import com.americankimchilabs.whitebox.R
 import com.americankimchilabs.whitebox.data.FileEventStore
+import com.americankimchilabs.whitebox.data.MirrorProtocol
+import com.americankimchilabs.whitebox.data.Outbox
 import com.americankimchilabs.whitebox.data.Recorder
 import com.americankimchilabs.whitebox.data.SealStore
 import com.americankimchilabs.whitebox.domain.ChainEntry
@@ -33,7 +35,7 @@ import com.americankimchilabs.whitebox.platform.PlatformAudioBeacon
 import com.americankimchilabs.whitebox.platform.PlatformAudioFocus
 import com.americankimchilabs.whitebox.platform.PlatformConnectivity
 import com.americankimchilabs.whitebox.platform.PlatformSpeechOutput
-import com.americankimchilabs.whitebox.platform.LoggingMirror
+import com.americankimchilabs.whitebox.platform.WebSocketMirrorChannel
 import com.americankimchilabs.whitebox.platform.PlatformLocationSource
 import com.americankimchilabs.whitebox.platform.PlatformMotionSource
 import com.americankimchilabs.whitebox.platform.RoadGradeTracker
@@ -57,6 +59,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
 import java.io.Closeable
 
 private const val TAG = "WhiteBox/Recorder"
@@ -83,6 +86,7 @@ class RecorderService : LifecycleService() {
     private var gear: GearPosition? = null
 
     private var voiceJob: Job? = null
+    private var mirrorChannel: WebSocketMirrorChannel? = null
 
     /** Speech objects live as long as the service: the car's speech service drops callbacks once a client is gone. */
     private val credentials by lazy {
@@ -105,6 +109,10 @@ class RecorderService : LifecycleService() {
             else -> StartReason.APP_OPENED
         }
         val requested = intent?.getStringExtra(EXTRA_SOURCE)?.let(SourceMode::valueOf) ?: mode ?: SourceMode.LIVE
+        val mirrorChanged = intent?.getStringExtra(EXTRA_MIRROR)?.let { m ->
+            val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+            (prefs.getString(PREF_MIRROR, MIRROR_DEFAULT) != m).also { if (it) prefs.edit().putString(PREF_MIRROR, m).apply() }
+        } ?: false
         if (!promote()) {
             // Not allowed to be foreground (a sticky restart after a boot start has no exemption). Stop cleanly
             // rather than crash-loop; the next start records the gap (STOPPED_WITHOUT_RESTART).
@@ -112,7 +120,7 @@ class RecorderService : LifecycleService() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (mode != requested || intent?.getBooleanExtra(EXTRA_RESTART_REPLAY, false) == true) {
+        if (mode != requested || mirrorChanged || intent?.getBooleanExtra(EXTRA_RESTART_REPLAY, false) == true) {
             startSession(requested, reason)
         } else {
             guardGrants()
@@ -149,7 +157,15 @@ class RecorderService : LifecycleService() {
         val dir = AppGraph.chainDir(this, next)
         if (next == SourceMode.REPLAY) dir.deleteRecursively() // each replay is a clean take
         val store = FileEventStore(dir)
-        val recorder = Recorder(store, SealStore(dir), AppGraph.signer, AndroidClock, LoggingMirror)
+        val seals = SealStore(dir)
+        val stream = if (next == SourceMode.REPLAY) MirrorProtocol.STREAM_REPLAY else MirrorProtocol.STREAM_LIVE
+        // Without a configured server the car keeps everything locally (the chain is the original either way).
+        val url = if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_MIRROR, MIRROR_DEFAULT) == MIRROR_LOCAL) LOCAL_MIRROR_URL else BuildConfig.MIRROR_URL
+        val channel = url.takeIf { it.isNotEmpty() }?.let { WebSocketMirrorChannel(it, stream, AppGraph.signer) }
+        if (channel == null) Log.i(TAG, "no mirror configured; recording locally only") else Log.i(TAG, "mirror: $url")
+        val outbox = channel?.let { Outbox(store, seals, it, dir) }
+        val recorder = Recorder(store, seals, AppGraph.signer, AndroidClock) { outbox?.onSeal(it) }
+        mirrorChannel = channel
         mode = next
         inbox = Channel(Channel.UNLIMITED)
         sessionFile = SessionFile(java.io.File(dir, "session"))
@@ -163,6 +179,8 @@ class RecorderService : LifecycleService() {
         guardGrants()
 
         jobs += lifecycleScope.launch(Dispatchers.IO) { consume(recorder) }
+        channel?.start(lifecycleScope + Dispatchers.IO)
+        outbox?.let { jobs += it.start(lifecycleScope + Dispatchers.IO, recorder) }
         voiceJob = VoiceController(
             recorder = recorder,
             send = { inbox.send(it) },
@@ -241,6 +259,8 @@ class RecorderService : LifecycleService() {
         if (mode == null) return
         voiceJob?.cancel()
         voiceJob = null
+        mirrorChannel?.close()
+        mirrorChannel = null
         jobs.forEach { it.cancel() }
         jobs.clear()
         sourceJob?.cancel()
@@ -276,11 +296,20 @@ class RecorderService : LifecycleService() {
         const val EXTRA_SOURCE = "source"
         const val EXTRA_BOOT = "boot"
         const val EXTRA_RESTART_REPLAY = "restart_replay"
+        const val EXTRA_MIRROR = "mirror"
 
-        fun start(context: Context, source: SourceMode? = null, restartReplay: Boolean = false) {
+        /** The mirror on the emulator's host computer (`./gradlew :server:run`); the only address allowed without TLS. */
+        const val MIRROR_LOCAL = "local"
+        const val MIRROR_DEFAULT = "default"
+        private const val LOCAL_MIRROR_URL = "ws://10.0.2.2:8080/v1/stream"
+        private const val PREFS = "recorder"
+        private const val PREF_MIRROR = "mirror"
+
+        fun start(context: Context, source: SourceMode? = null, restartReplay: Boolean = false, mirror: String? = null) {
             context.startForegroundService(
                 Intent(context, RecorderService::class.java)
                     .apply { source?.let { putExtra(EXTRA_SOURCE, it.name) } }
+                    .apply { mirror?.let { putExtra(EXTRA_MIRROR, it) } }
                     .putExtra(EXTRA_RESTART_REPLAY, restartReplay),
             )
         }

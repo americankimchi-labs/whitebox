@@ -47,9 +47,9 @@ class RecorderEndToEndTest {
     @Test
     fun demoDriveSealsOneVerifiedDeltaVCapsule() = runTest {
         val dir = tmp.newFolder()
-        val mirror = RecordingMirror()
+        val mirrored = mutableListOf<CapsuleSeal>()
         val store = FileEventStore(dir)
-        val recorder = Recorder(store, SealStore(dir), JdkSigner(), clock(), mirror)
+        val recorder = Recorder(store, SealStore(dir), JdkSigner(), clock()) { mirrored += it }
 
         replay(recorder, DemoDrive.signals())
 
@@ -60,7 +60,7 @@ class RecorderEndToEndTest {
         assertEquals(CapsuleCheck.Verified, verifyCapsule(seal, store))
         assertEquals(EscalationLevel.NORMAL, recorder.level.value)
         // Local seal first, then the mirror is told: provisional at the hard brake, re-sealed at impact, final at stillness.
-        assertEquals(List(3) { seal.capsule.id }, mirror.manifests.map { it.id })
+        assertEquals(List(3) { seal.capsule.id }, mirrored.map { it.capsule.id })
 
         val inCapsule = store.read(seal.capsule.firstSeq, seal.capsule.lastSeq).map { it.entry }
         val escalations = inCapsule.filterIsInstance<ChainEntry.Escalation>().map { it.event }
@@ -82,7 +82,7 @@ class RecorderEndToEndTest {
     fun sealsSurviveRestartAndDetectLaterTampering() = runTest {
         val dir = tmp.newFolder()
         val store = FileEventStore(dir)
-        replay(Recorder(store, SealStore(dir), JdkSigner(), clock(), RecordingMirror()), DemoDrive.signals())
+        replay(Recorder(store, SealStore(dir), JdkSigner(), clock()), DemoDrive.signals())
         store.close()
 
         // Edit one speed value inside the capsule, as someone with file access would.
@@ -102,7 +102,7 @@ class RecorderEndToEndTest {
     fun hardStopWithoutImpactIsKeptWithoutAsking() = runTest {
         val dir = tmp.newFolder()
         val store = FileEventStore(dir)
-        val recorder = Recorder(store, SealStore(dir), JdkSigner(), clock(), RecordingMirror())
+        val recorder = Recorder(store, SealStore(dir), JdkSigner(), clock())
         val stop = buildList {
             add(ScriptStep(0, VehicleSignal.BrakePedal(true)))
             var v = 60f
@@ -122,7 +122,7 @@ class RecorderEndToEndTest {
     fun hardBrakeThenDrivingOnAsksAndADeclineOnlyLabelsTheSealedCapsule() = runTest {
         val dir = tmp.newFolder()
         val store = FileEventStore(dir)
-        val recorder = Recorder(store, SealStore(dir), JdkSigner(), clock(), RecordingMirror())
+        val recorder = Recorder(store, SealStore(dir), JdkSigner(), clock())
         val brakeThenDriveOn = buildList {
             add(ScriptStep(0, VehicleSignal.BrakePedal(true)))
             for (v in listOf(57f, 54f, 51f, 48f, 45f)) add(ScriptStep(100, VehicleSignal.Speed(v / 3.6f)))
@@ -142,14 +142,14 @@ class RecorderEndToEndTest {
         val seal = recorder.capsules.value.last { it.capsule.id == asked.id }
         assertEquals(CapsuleCheck.Verified, verifyCapsule(seal, store))
         // Silence keeps it: a restart does not ask again.
-        assertNull(Recorder(store, SealStore(dir), JdkSigner(), clock(), RecordingMirror()).pendingIncident.value)
+        assertNull(Recorder(store, SealStore(dir), JdkSigner(), clock()).pendingIncident.value)
     }
 
     @Test
     fun anUnansweredKeepQuestionExpiresAsSilence() = runTest {
         val dir = tmp.newFolder()
         val store = FileEventStore(dir)
-        val recorder = Recorder(store, SealStore(dir), JdkSigner(), clock(), RecordingMirror())
+        val recorder = Recorder(store, SealStore(dir), JdkSigner(), clock())
         val brakeThenDriveOn = buildList {
             add(ScriptStep(0, VehicleSignal.BrakePedal(true)))
             for (v in listOf(57f, 54f, 51f, 48f, 45f)) add(ScriptStep(100, VehicleSignal.Speed(v / 3.6f)))

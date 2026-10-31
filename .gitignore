@@ -35,3 +35,6 @@ vendor/
 *.log
 # ...except the recorded evidence chains kept as artifacts (docs/artifacts/README.md)
 !docs/artifacts/**/*.log
+
+# Local mirror server data (records, keys)
+server-data/
