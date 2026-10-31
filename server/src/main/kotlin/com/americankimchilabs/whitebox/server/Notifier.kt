@@ -26,3 +26,18 @@ class LoggingNotifier(dir: File) : ContactNotifier {
         println("NOTICE $line")
     }
 }
+
+/**
+ * Emergency notices to the owner's active emergency contacts (and the owner), by text message with the link to
+ * their page, where the record opens with their own key. Also kept in the server log via [log].
+ */
+class ContactsNotifier(private val identity: Identity, private val sms: SmsSender, private val log: ContactNotifier) : ContactNotifier {
+    override fun notify(notice: EmergencyNotice) {
+        log.notify(notice)
+        val owner = identity.ownerOf(notice.stream.deviceId) ?: return
+        val ownerPhone = identity.ownerPhone(owner)
+        for (c in identity.contactsOf(owner.id).filter { it.state == Identity.ACTIVE }) {
+            sms.send(identity.contactPhone(c), "[White Box] ${maskPhone(ownerPhone)} 님 차량에서 충돌 수준 사고가 감지된 뒤 연락이 끊겼습니다. 기록은 봉인되었습니다. 확인: /contact")
+        }
+    }
+}

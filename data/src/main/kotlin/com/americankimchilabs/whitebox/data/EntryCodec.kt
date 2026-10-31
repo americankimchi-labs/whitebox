@@ -30,12 +30,24 @@ import com.americankimchilabs.whitebox.domain.VoiceLine
  * Canonical text form of a [ChainEntry]: what the hash covers is exactly what is stored, byte for byte.
  * Fields are '|'-separated, never contain tab or newline (the store's separators), and decode back to an equal entry.
  * Floats use Kotlin's shortest round-trip form.
+ *
+ * With a [RecordCipher], what a record says is encrypted and what it is stays readable: a signal's value
+ * (`S|KIND|v1.…|time|source time`) and a location fix as a whole (`L|v1.…|time`), each bound to its record's type and
+ * time. Recorder, escalation and audio records are not personal and stay plain, so the server can run the dead-man
+ * switch on them. Records written without a cipher (older chains, tests) decode as before.
  */
 object EntryCodec {
 
-    fun encode(e: ChainEntry): String = when (e) {
-        is ChainEntry.Signal -> listOf("S", e.sample.signal.kind.name, value(e.sample.signal), ts(e.at), e.sample.sourceElapsedNanos ?: "-")
-        is ChainEntry.Location -> with(e.fix) { listOf("L", latitude, longitude, accuracyMeters ?: "-", gpsTimeMillis, ts(e.at)) }
+    fun encode(e: ChainEntry, cipher: RecordCipher? = null): String = when (e) {
+        is ChainEntry.Signal -> {
+            val kind = e.sample.signal.kind.name
+            val value = value(e.sample.signal)
+            listOf("S", kind, cipher?.seal(value, "S|$kind|${ts(e.at)}") ?: value, ts(e.at), e.sample.sourceElapsedNanos ?: "-")
+        }
+        is ChainEntry.Location -> with(e.fix) {
+            if (cipher == null) listOf("L", latitude, longitude, accuracyMeters ?: "-", gpsTimeMillis, ts(e.at))
+            else listOf("L", cipher.seal("$latitude;$longitude;${accuracyMeters ?: "-"};$gpsTimeMillis", "L|${ts(e.at)}"), ts(e.at))
+        }
         is ChainEntry.Recorder -> listOf("R", ts(e.at)) + recorder(e.event)
         is ChainEntry.Escalation -> listOf("E", ts(e.at)) + when (val v = e.event) {
             is EscalationEvent.LevelChanged -> listOf("LEVEL", v.level, v.causeSeq)
@@ -51,15 +63,20 @@ object EntryCodec {
         }
     }.joinToString("|") { clean(it.toString()) }
 
-    fun decode(s: String): ChainEntry {
+    /** Throws [LockedRecordException] for an encrypted record when [cipher] is null. */
+    fun decode(s: String, cipher: RecordCipher? = null): ChainEntry {
         val f = s.split("|")
         return when (f[0]) {
-            "S" -> ChainEntry.Signal(
-                SignalSample(signal(SignalKind.valueOf(f[1]), f[2]), ts(f[3]), f[4].takeIf { it != "-" }?.toLong()),
-            )
-            "L" -> ChainEntry.Location(
-                LocationFix(f[1].toDouble(), f[2].toDouble(), f[3].takeIf { it != "-" }?.toFloat(), f[4].toLong(), ts(f[5])),
-            )
+            "S" -> {
+                val value = if (RecordCipher.isSealed(f[2])) open(cipher, f[2], "S|${f[1]}|${f[3]}") else f[2]
+                ChainEntry.Signal(SignalSample(signal(SignalKind.valueOf(f[1]), value), ts(f[3]), f[4].takeIf { it != "-" }?.toLong()))
+            }
+            "L" -> if (RecordCipher.isSealed(f[1])) {
+                val v = open(cipher, f[1], "L|${f[2]}").split(";")
+                ChainEntry.Location(LocationFix(v[0].toDouble(), v[1].toDouble(), v[2].takeIf { it != "-" }?.toFloat(), v[3].toLong(), ts(f[2])))
+            } else {
+                ChainEntry.Location(LocationFix(f[1].toDouble(), f[2].toDouble(), f[3].takeIf { it != "-" }?.toFloat(), f[4].toLong(), ts(f[5])))
+            }
             "R" -> ChainEntry.Recorder(recorder(f.drop(2)), ts(f[1]))
             "E" -> ChainEntry.Escalation(
                 when (f[2]) {
@@ -83,6 +100,24 @@ object EntryCodec {
             else -> error("unknown entry type ${f[0]}")
         }
     }
+
+    /** When a record was made, readable with or without the key. */
+    fun timestamp(s: String): Timestamp {
+        val f = s.split("|")
+        return ts(
+            when (f[0]) {
+                "S" -> f[3]
+                "L" -> if (RecordCipher.isSealed(f[1])) f[2] else f[5]
+                else -> f[1]
+            },
+        )
+    }
+
+    /** True for a record whose content is encrypted. */
+    fun isSealed(s: String): Boolean = s.split("|").let { f -> f.size > 2 && (RecordCipher.isSealed(f[1]) || RecordCipher.isSealed(f[2])) }
+
+    private fun open(cipher: RecordCipher?, sealed: String, aad: String): String =
+        (cipher ?: throw LockedRecordException()).open(sealed, aad)
 
     private fun ts(t: Timestamp) = "${t.elapsedNanos};${t.wallMillis}"
 
@@ -167,3 +202,6 @@ object EntryCodec {
         else -> error("unknown recorder event ${f[0]}")
     }
 }
+
+/** The record is encrypted and no key was given (the server, or a reader without access). */
+class LockedRecordException : IllegalStateException("record is encrypted")

@@ -106,6 +106,9 @@ interface MirrorChannel {
     /** Frames from the server (acknowledgements), as received. */
     val incoming: Flow<String>
 
+    /** The server's public key (X.509), as it presented on the current connection; null before the first. */
+    val serverKey: ByteArray?
+
     /** Queues one frame; false when not connected (the outbox keeps the data and sends it later). */
     fun send(frame: String): Boolean
 }

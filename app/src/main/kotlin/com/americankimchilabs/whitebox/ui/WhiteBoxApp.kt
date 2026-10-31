@@ -55,6 +55,7 @@ import com.americankimchilabs.whitebox.domain.VehicleSignal
 import com.americankimchilabs.whitebox.domain.regrantPromptAllowed
 import com.americankimchilabs.whitebox.platform.recorderGrants
 import com.americankimchilabs.whitebox.recorder.ActiveSession
+import com.americankimchilabs.whitebox.platform.DataConsent
 import com.americankimchilabs.whitebox.recorder.AppGraph
 import com.americankimchilabs.whitebox.recorder.SourceMode
 import kotlinx.coroutines.Dispatchers
@@ -133,6 +134,8 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
     LaunchedEffect(grants) { if (setup == null && grants.isEmpty()) setup = SetupMode.FIRST_RUN }
     var regrantLater by remember { mutableStateOf(false) }
 
+    val consent by remember(context) { DataConsent.state(context) }.collectAsState()
+
     // Setup is parked only.
     if (parked && setup == SetupMode.FIRST_RUN) {
         SetupFlow(SetupStep.all(), intro = true, onDone = { setup = null; onGrantsChanged() })
@@ -140,6 +143,11 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
     }
     if (parked && setup == SetupMode.REGRANT) {
         SetupFlow(stepsFor(missing), intro = false, onDone = { setup = null; onGrantsChanged() })
+        return
+    }
+    // Asked once, parked, after setup; never again once answered (changeable on the phone tab).
+    if (parked && consent == null) {
+        ConsentPrompt(onAnswer = { DataConsent.set(context, it) })
         return
     }
 
@@ -166,11 +174,16 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
         TabRow(selectedTabIndex = tab) {
             Tab(tab == 0, { tab = 0 }, Modifier.ccpFocus(RectangleShape), text = { Text(stringResource(R.string.tab_timeline), style = MaterialTheme.typography.titleMedium) })
             Tab(tab == 1, { tab = 1 }, Modifier.ccpFocus(RectangleShape), text = { Text(stringResource(R.string.tab_capsules, capsules.size), style = MaterialTheme.typography.titleMedium) })
+            Tab(tab == 2, { tab = 2 }, Modifier.ccpFocus(RectangleShape), text = { Text(stringResource(R.string.tab_phone), style = MaterialTheme.typography.titleMedium) })
         }
         Column(Modifier.weight(1f)) {
             when (tab) {
                 0 -> Timeline(labels, rows)
-                else -> CapsuleList(labels, capsules, onOpen = { open = it })
+                1 -> CapsuleList(labels, capsules, onOpen = { open = it })
+                else -> PhoneTab(session.claim, session.webBase, consent == true, onConsent = { agree ->
+                    DataConsent.set(context, agree)
+                    if (!agree) session.outbox?.withdrawConsent()
+                })
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(top = 12.dp)) {

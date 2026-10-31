@@ -53,6 +53,8 @@ class WebSocketMirrorChannel(
     override val incoming = _incoming.asSharedFlow()
 
     @Volatile private var socket: WebSocket? = null
+    @Volatile override var serverKey: ByteArray? = null
+        private set
     private var job: Job? = null
 
     fun start(scope: CoroutineScope) {
@@ -85,10 +87,17 @@ class WebSocketMirrorChannel(
                 is Frame.Ready -> {
                     Log.i(TAG, "mirror connected ($stream)")
                     wasReady = true
+                    serverKey = f.serverKey
                     _connected.value = true
                 }
                 is Frame.Denied -> {
                     Log.w(TAG, "mirror refused the car: ${f.reason}")
+                    webSocket.close(1000, null)
+                }
+                null -> if (!_connected.value) {
+                    // Before READY every frame must be understood: anything else means the server runs another
+                    // version of the protocol, and the car would otherwise wait silently forever.
+                    Log.e(TAG, "mirror speaks a different protocol version (cannot read: ${text.take(40)}); update the app or the server")
                     webSocket.close(1000, null)
                 }
                 else -> _incoming.tryEmit(text)

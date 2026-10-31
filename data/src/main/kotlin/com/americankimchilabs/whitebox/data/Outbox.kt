@@ -16,6 +16,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+import java.util.UUID
 
 /**
  * Store-and-forward from the local chain (the original) to the cloud mirror, by escalation level:
@@ -26,6 +27,10 @@ import java.io.File
  *   [Tuning.ALERT_FORWARD_MAX_HZ] per kind; the rest follows in batches every second. The level change back to NORMAL
  *   goes out the same way and is the all-clear for the server's dead-man switch.
  * - A seal goes out at once, ahead of everything, followed immediately by the unsent tail it covers.
+ * - Records are end-to-end encrypted; the server may read only crash signals: each immediately forwarded core-signal
+ *   record carries a copy sealed to the server's key, and each closed capsule's signal window (core signals,
+ *   triggers, the driver's answer) is sent once, sealed to the server's key, under a random pseudonym — only with the
+ *   driver's consent ([consent]); withdrawing it ([withdrawConsent]) deletes every window sent before.
  *
  * The acknowledged seq and the acknowledged seals are persisted, so nothing is lost across restarts and nothing is
  * resent forever; the server is idempotent by seq, so resending after a reconnect is always safe.
@@ -35,9 +40,16 @@ class Outbox(
     private val seals: SealStore,
     private val channel: MirrorChannel,
     dir: File,
+    /** The driver agreed to share pseudonymous capsule windows for improving detection. */
+    private val consent: () -> Boolean = { false },
 ) {
     private val ackFile = File(dir, "mirror-acked")
     private val sealAckFile = File(dir, "mirror-seals")
+    /** Capsule windows not yet acknowledged: `pseudonym|firstSeq|lastSeq` per line. */
+    private val windowFile = File(dir, "mirror-windows")
+    /** Pseudonyms the server holds (deleted if consent is withdrawn), and deletions not yet confirmed. */
+    private val sentWindowsFile = File(dir, "mirror-windows-sent")
+    private val deleteFile = File(dir, "mirror-windows-delete")
 
     @Volatile var acked: Long = ackFile.takeIf { it.exists() }?.readText()?.trim()?.toLongOrNull() ?: -1L
         private set
@@ -52,7 +64,51 @@ class Outbox(
     /** Called by the recorder after a seal is durable locally: it goes out first. */
     fun onSeal(seal: CapsuleSeal) {
         send(Frame.Seal(SealStore.line(seal)))
+        if (seal.final && consent()) {
+            synchronized(windowFile) { windowFile.appendText("${UUID.randomUUID()}|${seal.capsule.firstSeq}|${seal.capsule.lastSeq}\n") }
+            sendWindows()
+        }
         kick.trySend(Unit)
+    }
+
+    /** The driver withdrew consent: nothing more is sent, and every window sent before is deleted on the server. */
+    fun withdrawConsent() {
+        synchronized(windowFile) {
+            windowFile.delete()
+            val sent = lines(sentWindowsFile)
+            if (sent.isNotEmpty()) deleteFile.appendText(sent.joinToString("") { it + "\n" })
+            sentWindowsFile.delete()
+        }
+        sendDeletes()
+    }
+
+    private fun lines(f: File) = f.takeIf { it.exists() }?.readLines()?.filter { it.isNotBlank() } ?: emptyList()
+
+    private fun sendDeletes() {
+        if (!channel.connected.value) return
+        synchronized(windowFile) { lines(deleteFile) }.forEach { send(Frame.WindowDelete(it)) }
+    }
+
+    /** Builds each pending window from the local chain and sends it sealed to the server; kept until acknowledged. */
+    private fun sendWindows() {
+        sendDeletes()
+        val key = channel.serverKey ?: return
+        if (!channel.connected.value || !consent()) return
+        val pending = synchronized(windowFile) { windowFile.takeIf { it.exists() }?.readLines()?.filter { it.isNotBlank() } ?: emptyList() }
+        for (line in pending) {
+            val (pseudonym, from, to) = line.split("|")
+            val window = store.read(from.toLong(), to.toLong()).map { it.entry }
+                .filter { e -> e is ChainEntry.Escalation || (e is ChainEntry.Signal && e.sample.signal.kind in CORE) }
+                .joinToString("\n") { EntryCodec.encode(it) }
+            runCatching { SealedBox.seal(key, window.toByteArray(), SealedBox.INFO_SERVER) }.getOrNull()?.let { send(Frame.Window(pseudonym, it)) }
+        }
+    }
+
+    private fun serverCopy(e: ChainEntry): String? {
+        if (e !is ChainEntry.Signal) return null // markers are plain already
+        val key = channel.serverKey ?: return null
+        // A bad server key must never stop the records themselves from going out.
+        return runCatching { SealedBox.seal(key, EntryCodec.encode(e).toByteArray(), SealedBox.INFO_SERVER) }.getOrNull()
     }
 
     fun start(scope: CoroutineScope, recorder: Recorder): Job = scope.launch {
@@ -63,6 +119,7 @@ class Outbox(
                 sentUpTo = acked
                 resync = true
                 seals.all().filter { MirrorProtocol.sealKey(it) !in sealsAcked }.forEach { send(Frame.Seal(SealStore.line(it))) }
+                sendWindows()
                 kick.trySend(Unit)
             }
         }
@@ -77,11 +134,14 @@ class Outbox(
                 // The record that raised the level precedes the change in the chain: it goes out with it, at once.
                 val cause = ((e.entry as? ChainEntry.Escalation)?.event as? EscalationEvent.LevelChanged)?.causeSeq
                 if (change != null && change != EscalationLevel.NORMAL && cause != null && cause < e.seq) {
-                    store.records(cause, cause).singleOrNull()?.let { r -> repeat(2) { send(Frame.Event(change, r)) } }
+                    val r = store.records(cause, cause).singleOrNull()
+                    val copy = store.read(cause, cause).singleOrNull()?.entry?.let(::serverCopy)
+                    if (r != null) repeat(2) { send(Frame.Event(change, r, copy)) }
                 }
                 if (!forwardsImmediately(e.entry, e.entry.at.elapsedNanos)) return@collect
                 val record = store.records(e.seq, e.seq).single()
-                repeat(2) { send(Frame.Event(level, record)) }
+                val copy = serverCopy(e.entry)
+                repeat(2) { send(Frame.Event(level, record, copy)) }
             }
         }
         launch {
@@ -113,6 +173,16 @@ class Outbox(
                 kick.trySend(Unit)
             }
             is Frame.SealAck -> if (sealsAcked.add(f.sealKey)) sealAckFile.appendText(f.sealKey + "\n")
+            is Frame.WindowAck -> synchronized(windowFile) {
+                val pending = lines(windowFile)
+                if (pending.any { it.startsWith(f.pseudonym + "|") }) {
+                    windowFile.writeText(pending.filterNot { it.startsWith(f.pseudonym + "|") }.joinToString("") { it + "\n" })
+                    sentWindowsFile.appendText(f.pseudonym + "\n")
+                }
+            }
+            is Frame.WindowDeleted -> synchronized(windowFile) {
+                deleteFile.writeText(lines(deleteFile).filter { it != f.pseudonym }.joinToString("") { it + "\n" })
+            }
             else -> Unit
         }
     }

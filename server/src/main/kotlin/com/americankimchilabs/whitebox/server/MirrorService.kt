@@ -34,6 +34,8 @@ class MirrorService(
     private val store: StreamStore,
     private val key: ServerKey,
     private val notifier: ContactNotifier,
+    /** Phone claims and key wraps; absent in tests that only exercise the mirror. */
+    val identity: Identity? = null,
     private val clock: () -> Long = System::currentTimeMillis,
     private val deadMan: DeadMan = DeadMan(),
 ) {
@@ -59,7 +61,11 @@ class MirrorService(
         })
     }
 
+    private val live = HashMap<StreamId, Session>()
+
     inner class Session {
+        /** Frames the server sends without being asked (a finished claim). */
+        val pushes = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.UNLIMITED)
         private val nonce = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(16).also(random::nextBytes))
         var stream: StreamId? = null
             private set
@@ -81,6 +87,7 @@ class MirrorService(
                 is Frame.Event -> {
                     val r = Record.parse(f.record) ?: return emptyList()
                     conflicts(s, store.put(s, listOf(r), now), now)
+                    f.serverCopy?.let { keepCopy(s, r, it) }
                     deadMan.onFrame(s, f.level, severe(r), now)
                     levelSeen(s, f.level, now)
                     emptyList()
@@ -93,6 +100,35 @@ class MirrorService(
                     val head = store.contiguousHead(s)
                     anchor(s, head, now)
                     listOf(MirrorProtocol.encode(Frame.Ack(head)))
+                }
+                is Frame.ClaimRequest -> {
+                    val code = identity?.claimCode(s) ?: return emptyList()
+                    note(s, now, "차량 화면에 휴대폰 연결 QR 표시")
+                    listOf(MirrorProtocol.encode(Frame.ClaimCode(code)))
+                }
+                is Frame.TransferAck -> {
+                    identity?.transferAcked(s.deviceId, f.transferId)
+                    emptyList()
+                }
+                is Frame.Wrap -> {
+                    val id = identity ?: return emptyList()
+                    // The car wraps only to its current owner (it checked the claim's MAC); anything else is ignored.
+                    if (id.ownerOf(s.deviceId)?.id != f.recipientId) return emptyList()
+                    id.putWrap(s.deviceId, f.recipientId, f.epoch, f.sealed)
+                    note(s, now, "차량 키(${f.epoch}번)를 소유자 휴대폰만 열 수 있게 봉인해 보관")
+                    emptyList()
+                }
+                is Frame.Window -> {
+                    val plain = runCatching { String(key.open(f.sealed)) }.getOrNull() ?: return emptyList()
+                    // Stored under the pseudonym alone: no device, no time of arrival, no stream.
+                    store.putLabeled(f.pseudonym, key.encryptAtRest(plain, "window|${f.pseudonym}"))
+                    note(s, now, "사고 구간 신호 수신 (가명 처리, 기기와 분리 보관)")
+                    listOf(MirrorProtocol.encode(Frame.WindowAck(f.pseudonym)))
+                }
+                is Frame.WindowDelete -> {
+                    if (!store.deleteLabeled(f.pseudonym)) return emptyList()
+                    note(s, now, "운전자가 사고 데이터 제공을 그만둠: 보냈던 구간 신호 삭제")
+                    listOf(MirrorProtocol.encode(Frame.WindowDeleted(f.pseudonym)))
                 }
                 is Frame.Seal -> {
                     val seal = runCatching { SealStore.parse(f.sealLine) }.getOrNull() ?: return emptyList()
@@ -126,8 +162,14 @@ class MirrorService(
             stream = id
             publicKey = f.publicKey
             note(id, clock(), "차량 연결 (기기 키 확인)")
+            synchronized(live) { live[id] = this }
             // Where the car should resume: authoritative, even if lower than what the car believes was acknowledged.
-            return listOf(MirrorProtocol.encode(Frame.Ready(id.deviceId)), MirrorProtocol.encode(Frame.Ack(store.contiguousHead(id))))
+            return listOf(MirrorProtocol.encode(Frame.Ready(id.deviceId, key.publicKey)), MirrorProtocol.encode(Frame.Ack(store.contiguousHead(id)))) +
+                listOfNotNull(
+                    identity?.transferFrame(id.deviceId),
+                    identity?.pendingClaim(id.deviceId),
+                    MirrorProtocol.encode(Frame.Rotate).takeIf { identity?.pendingRotation(id.deviceId) == true },
+                )
         }
     }
 
@@ -135,7 +177,34 @@ class MirrorService(
 
     /** The car's connection ended (normally, or because the car went silent). */
     fun closed(session: Session) {
-        session.stream?.let { note(it, clock(), "연결 끊김") }
+        session.stream?.let { s ->
+            note(s, clock(), "연결 끊김")
+            synchronized(live) { if (live[s] === session) live.remove(s) }
+        }
+    }
+
+    /** A phone finished claiming [deviceId]'s car: tell the car now if it is connected, else when it reconnects. */
+    fun claimed(deviceId: String, frame: Frame.Claimed) {
+        val text = MirrorProtocol.encode(frame)
+        identity?.setPendingClaim(deviceId, text)
+        val sessions = synchronized(live) { live.filterKeys { it.deviceId == deviceId }.values.toList() }
+        sessions.forEach { it.pushes.trySend(text) }
+        sessions.firstOrNull()?.stream?.let { note(it, clock(), "휴대폰 인증 완료 (${frame.maskedPhone}) — 차량의 확인을 기다리는 중") }
+    }
+
+    /** A takeover went through: the car gives its new owner the key epoch it started at the request. */
+    fun transferred(t: Identity.Transfer) = claimed(t.deviceId, Frame.Claimed(t.toOwnerId, t.phoneKey, t.mac, t.masked))
+
+    /** A takeover was requested or declined: tell the car now if it is connected (else on reconnect, until it acks). */
+    fun transferChanged(deviceId: String) {
+        val text = identity?.transferFrame(deviceId) ?: return
+        synchronized(live) { live.filterKeys { it.deviceId == deviceId }.values.toList() }.forEach { it.pushes.trySend(text) }
+    }
+
+    /** An emergency contact was removed: each of the owner's cars starts a new key epoch (now, or when it reconnects). */
+    fun rotate(deviceIds: List<String>) {
+        val text = MirrorProtocol.encode(Frame.Rotate)
+        synchronized(live) { live.filterKeys { it.deviceId in deviceIds }.values.toList() }.forEach { it.pushes.trySend(text) }
     }
 
     private fun conflicts(stream: StreamId, result: PutResult, now: Long) {
@@ -145,6 +214,7 @@ class MirrorService(
     /** One dead-man step; the server calls it about twice a second. */
     fun tick() {
         val now = clock()
+        identity?.dueTransfers()?.forEach { transferred(it) }
         for (action in deadMan.tick(now)) when (action) {
             is DeadMan.Action.Attest -> attest(action.stream, action.episodeStartMs, now)
             is DeadMan.Action.ConsiderNotice -> {
@@ -163,6 +233,13 @@ class MirrorService(
     }
 
     fun serverPublicKey(): ByteArray = key.publicKey
+
+    /** The newest [n] records of [stream] held, as (seq, entry) with values still encrypted. */
+    fun lastRecords(stream: StreamId, n: Int): List<Pair<Long, String>> {
+        val hi = store.highestSeq(stream)
+        if (hi < 0) return emptyList()
+        return store.records(stream, maxOf(0, hi - n + 1), hi).mapNotNull { Record.parse(it) }.map { it.seq to it.entry }
+    }
 
     /** What the dashboard shows for each mirrored stream. */
     data class Status(
@@ -235,9 +312,19 @@ class MirrorService(
         return from
     }
 
-    /** The car's elapsed-time clock of a record, in ms. */
+    /** The car's elapsed-time clock of a record, in ms (readable without the record's key). */
     private fun carMs(line: String?): Long? = line?.let { Record.parse(it) }
-        ?.let { runCatching { EntryCodec.decode(it.entry).at.elapsedNanos / 1_000_000 }.getOrNull() }
+        ?.let { runCatching { EntryCodec.timestamp(it.entry).elapsedNanos / 1_000_000 }.getOrNull() }
+
+    /**
+     * A crash-signal copy the car sealed to this server, kept (encrypted at rest) only if it matches the record it came
+     * with, so a copy cannot claim something the chain does not hold.
+     */
+    private fun keepCopy(stream: StreamId, r: Record, sealed: String) {
+        val plain = runCatching { String(key.open(sealed)) }.getOrNull() ?: return
+        if (EntryCodec.timestamp(plain) != EntryCodec.timestamp(r.entry) || plain.substringBefore('|') != r.entry.substringBefore('|')) return
+        store.appendLog(stream, "signal-copies", "${r.seq}|${key.encryptAtRest(plain, "copy|$stream|${r.seq}")}")
+    }
 
     /** A crash-level trigger recorded by the car. */
     private fun severe(r: Record): Boolean {
@@ -252,9 +339,15 @@ class MirrorService(
     private fun severeSignature(stream: StreamId, episodeStartMs: Long): Boolean {
         val from = windowStart(stream, episodeStartMs, clock())
         val engine = EscalationEngine()
+        // Records are end-to-end encrypted; plain ones (older chains) are read directly, encrypted ones through the
+        // crash-signal copies the car sealed to this server.
+        val copies = store.log(stream, "signal-copies").mapNotNull { l ->
+            val seq = l.substringBefore('|').toLong()
+            runCatching { seq to key.decryptAtRest(l.substringAfter('|'), "copy|$stream|$seq") }.getOrNull()
+        }.toMap()
         return store.records(stream, from, store.highestSeq(stream)).asSequence()
             .mapNotNull { Record.parse(it) }
-            .mapNotNull { r -> runCatching { DriveEvent(r.seq, EntryCodec.decode(r.entry)) }.getOrNull() }
+            .mapNotNull { r -> runCatching { DriveEvent(r.seq, EntryCodec.decode(copies[r.seq] ?: r.entry)) }.getOrNull() }
             .any { event ->
                 engine.onEvent(event).any { o ->
                     o is EngineOutput.Append && (o.event as? EscalationEvent.Triggered)?.trigger?.severe == true

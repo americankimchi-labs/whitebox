@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>White Box · 휴대폰 연결</title>
+<style>
+:root{--fg:#111;--muted:#666;--bg:#fafafa;--card:#fff;--line:#e0e0e0;--accent:#1565c0;--bad:#c62828;--good:#2e7d32}
+body{font:16px/1.55 system-ui,-apple-system,"Apple SD Gothic Neo",sans-serif;margin:0;background:var(--bg);color:var(--fg)}
+main{max-width:480px;margin:0 auto;padding:20px 16px}
+h1{font-size:22px;margin:4px 0 12px}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:12px 0}
+label{display:block;font-size:14px;color:var(--muted);margin:10px 0 4px}input{width:100%;box-sizing:border-box;font:inherit;padding:12px;border:1px solid var(--line);border-radius:8px}
+button{width:100%;font:inherit;font-weight:600;padding:13px;margin-top:12px;border:0;border-radius:8px;background:var(--accent);color:#fff}
+button:disabled{opacity:.5}.msg{font-size:14px;margin-top:8px;color:var(--muted)}.bad{color:var(--bad)}.ok{color:var(--good);font-weight:600}
+details{font-size:14px;color:var(--muted)}summary{cursor:pointer}
+</style>
+</head>
+<body><main>
+<h1>휴대폰을 차량과 연결합니다</h1>
+<p>연결하면 이 휴대폰에서 내 차의 주행 기록을 볼 수 있습니다. 기록은 이 휴대폰과, 나중에 등록할 비상 연락처만 열 수 있습니다.</p>
+
+<div class="card" id="step-phone">
+  <label for="phone">휴대폰 번호</label>
+  <input id="phone" inputmode="tel" autocomplete="tel" placeholder="010-1234-5678">
+  <button id="send">인증번호 받기</button>
+  <div id="phone-msg" class="msg"></div>
+</div>
+
+<div class="card" id="step-otp" hidden>
+  <label for="otp">문자로 받은 인증번호 6자리</label>
+  <input id="otp" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+  <button id="claim">연결하기</button>
+  <div id="otp-msg" class="msg"></div>
+</div>
+
+<div class="card" id="done" hidden>
+  <p class="ok">연결되었습니다.</p>
+  <p>차량이 확인을 마치면 내 기록이 열립니다.</p>
+  <button onclick="location.href='/me'">내 차량 보기</button>
+</div>
+
+<div class="card" id="pending" hidden>
+  <p class="ok">요청했습니다.</p>
+  <p>이 차는 다른 휴대폰에 연결되어 있어, 그 소유자에게 확인 문자를 보냈습니다. 거절하지 않으면 <b id="auto"></b>에 자동으로 연결되고, <b>지금 요청한 때부터</b>의 기록을 볼 수 있습니다. 기다리는 동안의 기록도 빠짐없이 남습니다. 이전 소유자의 기록은 보이지 않습니다.</p>
+  <button onclick="location.href='/me'">진행 상황 보기</button>
+</div>
+
+<div class="card" id="bad-link" hidden><p class="bad">차량 화면의 QR 코드로 다시 열어 주세요.</p></div>
+
+<details class="card"><summary>자세히</summary>
+<p>이 휴대폰 브라우저 안에서 새 키를 만들고, 그 공개 키만 서버로 보냅니다. 차량은 QR 코드에 담긴 비밀값으로 이 휴대폰이 화면을 실제로 본 것인지 확인한 다음, 기록을 여는 키를 이 휴대폰 키로만 열리게 봉인해 보냅니다. 서버는 QR의 비밀값도, 봉인된 키의 내용도 알 수 없습니다.</p>
+<p id="tech" style="word-break:break-all"></p>
+</details>
+</main>
+<script src="/wb.js"></script>
+<script>
+const [code, secret] = (location.hash.slice(1) || '').split('.');
+if (!code || !secret) { WB.show('step-phone', false); WB.show('bad-link'); }
+if (!WB.secure()) WB.say('phone-msg', '이 페이지는 보안 연결(https 또는 이 컴퓨터의 localhost)에서만 동작합니다.', true);
+WB.$('tech').textContent = `연결 코드 ${code || '-'}`;
+let phone = '';
+WB.$('send').onclick = async () => {
+  phone = WB.$('phone').value;
+  try {
+    await WB.post('/v1/otp', { phone, purpose: 'claim' });
+    WB.show('step-otp');
+    WB.say('phone-msg', '인증번호를 보냈습니다.');
+  } catch (e) { WB.say('phone-msg', e.message, true); }
+};
+WB.$('claim').onclick = async () => {
+  const button = WB.$('claim');
+  button.disabled = true;
+  try {
+    const key = await WB.newPhoneKey('owner');
+    const mac = await WB.claimMac(secret, code, key);
+    const r = await WB.post('/v1/claim', { code, phone, otp: WB.$('otp').value, key, mac });
+    WB.show('step-phone', false); WB.show('step-otp', false);
+    if (r.pending) { WB.$('auto').textContent = WB.when(r.autoAtMs); WB.show('pending'); } else WB.show('done');
+  } catch (e) { WB.say('otp-msg', e.message, true); button.disabled = false; }
+};
+</script>
+</body>
+</html>

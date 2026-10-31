@@ -1,6 +1,9 @@
 package com.americankimchilabs.whitebox.server
 
+import com.americankimchilabs.whitebox.data.AesGcmRecordCipher
+import com.americankimchilabs.whitebox.data.SealedBox
 import java.io.File
+import java.security.SecureRandom
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.PrivateKey
@@ -10,13 +13,15 @@ import java.security.spec.PKCS8EncodedKeySpec
 import java.util.Base64
 
 /**
- * The server's own signing key (ECDSA P-256, like the cars'): it signs head anchors and dead-man seals, so a
- * server-attested statement can be checked by anyone with [publicKey]. Created on first start in [dir]; a deployment
- * provides it from its secret store instead of the local disk.
+ * The server's own keys, created on first start in [dir] (a deployment provides them from its secret store instead):
+ * - a P-256 key pair: signs head anchors and dead-man seals (anyone with [publicKey] can check them), and opens what
+ *   cars seal to the server (crash signal copies, capsule windows);
+ * - an AES-256 data key: what the server may read is kept encrypted at rest with it.
  */
 class ServerKey(dir: File) {
     private val privateFile = File(dir.apply { mkdirs() }, "server-key.pk8")
     private val publicFile = File(dir, "server-key.pub")
+    private val dataKeyFile = File(dir, "server-data.key")
     private val private: PrivateKey
     val publicKey: ByteArray
 
@@ -30,6 +35,30 @@ class ServerKey(dir: File) {
         }
         private = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(privateFile.readBytes()))
         publicKey = publicFile.readBytes()
+        if (!dataKeyFile.exists()) {
+            dataKeyFile.writeBytes(ByteArray(32).also(SecureRandom()::nextBytes))
+            dataKeyFile.setReadable(false, false)
+            dataKeyFile.setReadable(true, true)
+        }
+    }
+
+    private val atRest = AesGcmRecordCipher(dataKeyFile.readBytes())
+
+    /** Opens something a car sealed to this server. */
+    fun open(sealed: String): ByteArray = SealedBox.open(private, sealed, SealedBox.INFO_SERVER)
+
+    /** Encrypts [plain] for storage under the server's data key ([purpose] binds it to its use). */
+    fun encryptAtRest(plain: String, purpose: String): String = atRest.seal(plain, purpose)
+
+    fun decryptAtRest(stored: String, purpose: String): String = atRest.open(stored, purpose)
+
+    /** HMAC-SHA256 under a key derived from the secret data key, for lookups that must not be reversible by guessing. */
+    fun keyedHash(purpose: String, value: String): String {
+        val k = SealedBox.hkdf(dataKeyFile.readBytes(), "whitebox-hash|$purpose".toByteArray(), 32)
+        return javax.crypto.Mac.getInstance("HmacSHA256").run {
+            init(javax.crypto.spec.SecretKeySpec(k, "HmacSHA256"))
+            doFinal(value.toByteArray())
+        }.joinToString("") { "%02x".format(it) }
     }
 
     fun sign(text: String): String = Base64.getEncoder().encodeToString(

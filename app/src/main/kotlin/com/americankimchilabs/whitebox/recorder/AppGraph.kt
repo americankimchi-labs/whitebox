@@ -1,7 +1,9 @@
 package com.americankimchilabs.whitebox.recorder
 
 import android.content.Context
+import com.americankimchilabs.whitebox.data.ClaimClient
 import com.americankimchilabs.whitebox.data.FileEventStore
+import com.americankimchilabs.whitebox.data.Outbox
 import com.americankimchilabs.whitebox.data.Recorder
 import com.americankimchilabs.whitebox.data.Signer
 import com.americankimchilabs.whitebox.domain.RecorderPermission
@@ -17,8 +19,18 @@ import java.io.File
  */
 enum class SourceMode { LIVE, REPLAY }
 
-/** The running recorder, shared by the service (writer) and the UI (reader) in one process. */
-class ActiveSession(val mode: SourceMode, val recorder: Recorder, val store: FileEventStore)
+/**
+ * The running recorder, shared by the service (writer) and the UI (reader) in one process. [claim] and [webBase]
+ * exist when a mirror is configured: the phone connection and the address of its pages.
+ */
+class ActiveSession(
+    val mode: SourceMode,
+    val recorder: Recorder,
+    val store: FileEventStore,
+    val claim: ClaimClient? = null,
+    val webBase: String? = null,
+    val outbox: Outbox? = null,
+)
 
 object AppGraph {
     private val _session = MutableStateFlow<ActiveSession?>(null)

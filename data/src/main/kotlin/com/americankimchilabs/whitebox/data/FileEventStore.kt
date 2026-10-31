@@ -13,6 +13,9 @@ import java.security.MessageDigest
  *
  *     seq \t prevHashHex \t EntryCodec \t hashHex \n      hash = SHA-256("seq \t prevHashHex \t EntryCodec")
  *
+ * With a [RecordCipher] the entry's values are encrypted before hashing, so the file is encrypted at rest and the
+ * chain (and anyone holding a copy, the mirror included) can be verified without the key.
+ *
  * Every append is one write plus fsync before it returns (one durable write per event).
  * Recovery on open: a process killed mid-write leaves an unterminated last line; that tail (and only that) is
  * truncated. Anything wrong in a complete line is left in place for [verify] to report — the store never repairs
@@ -24,6 +27,8 @@ import java.security.MessageDigest
  */
 class FileEventStore(
     dir: File,
+    /** Encrypts record values before they are written (and decrypts on read); null keeps them plain. */
+    private val cipher: RecordCipher? = null,
     private val writeRecord: (FileOutputStream, ByteArray) -> Unit = { out, bytes -> out.write(bytes) },
 ) : EventStore {
 
@@ -41,7 +46,7 @@ class FileEventStore(
     @Synchronized
     override fun append(entry: ChainEntry): DriveEvent {
         val seq = offsets.size.toLong()
-        val body = "$seq\t$lastHash\t${EntryCodec.encode(entry)}"
+        val body = "$seq\t$lastHash\t${EntryCodec.encode(entry, cipher)}"
         val hash = sha256Hex(body)
         val bytes = "$body\t$hash\n".toByteArray()
         try {
@@ -60,7 +65,7 @@ class FileEventStore(
 
     @Synchronized
     override fun read(fromSeq: Long, toSeq: Long): List<DriveEvent> =
-        lines(fromSeq, toSeq).map { (seq, line) -> DriveEvent(seq, EntryCodec.decode(line.split("\t")[2])) }
+        lines(fromSeq, toSeq).map { (seq, line) -> DriveEvent(seq, EntryCodec.decode(line.split("\t")[2], cipher)) }
 
     @Synchronized
     override fun head(): SealedChain? =

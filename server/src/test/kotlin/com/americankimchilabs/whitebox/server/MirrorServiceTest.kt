@@ -1,6 +1,9 @@
 package com.americankimchilabs.whitebox.server
 
+import com.americankimchilabs.whitebox.data.AesGcmRecordCipher
 import com.americankimchilabs.whitebox.data.CapsuleSeal
+import com.americankimchilabs.whitebox.data.EntryCodec
+import com.americankimchilabs.whitebox.data.SealedBox
 import com.americankimchilabs.whitebox.data.FileEventStore
 import com.americankimchilabs.whitebox.data.MirrorProtocol
 import com.americankimchilabs.whitebox.data.MirrorProtocol.Frame
@@ -20,6 +23,7 @@ import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.server.testing.testApplication
 import io.ktor.websocket.readText
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -206,4 +210,92 @@ class MirrorServiceTest {
             assertEquals(Frame.Ack(2), MirrorProtocol.decode((incoming.receive() as WsFrame.Text).readText()))
         }
     }
+
+    @Test
+    fun anEncryptedChainStillShowsACrashThroughTheCopiesSealedToTheServer() {
+        val r = Rig()
+        val cipher = AesGcmRecordCipher(ByteArray(32) { 7 })
+        val chain = FileEventStore(tmp.newFolder(), cipher = cipher)
+        fun speed(kmh: Float) = chain.append(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(kmh / 3.6f), r.ts())))
+        val s = r.connect()
+        repeat(20) { r.t += 100; speed(60f) }
+        r.t += 100; speed(35f) // crash; the car died before writing its trigger
+        s.send(Frame.Batch(EscalationLevel.NORMAL, chain.records(0, 19)))
+        val crash = chain.records(20, 20).single()
+        assertTrue(EntryCodec.isSealed(crash.split("\t")[2])) // the server cannot read the record itself
+        val plain = EntryCodec.encode(chain.read(20, 20).single().entry)
+        val copy = SealedBox.seal(r.service.serverPublicKey(), plain.toByteArray(), SealedBox.INFO_SERVER)
+        // A copy that does not match its record is ignored.
+        val wrongCopy = SealedBox.seal(r.service.serverPublicKey(), EntryCodec.encode(chain.read(19, 19).single().entry).toByteArray(), SealedBox.INFO_SERVER)
+        s.send(Frame.Event(EscalationLevel.ALERT, crash, wrongCopy))
+        assertTrue(r.store.log(s.stream!!, "signal-copies").isEmpty())
+        // The pre-crash speeds only reach the server as records it cannot read; the engine needs them too.
+        for (seq in 0L..19L) {
+            val p = EntryCodec.encode(chain.read(seq, seq).single().entry)
+            s.send(Frame.Event(EscalationLevel.ALERT, chain.records(seq, seq).single(), SealedBox.seal(r.service.serverPublicKey(), p.toByteArray(), SealedBox.INFO_SERVER)))
+        }
+        s.send(Frame.Event(EscalationLevel.ALERT, crash, copy))
+        assertTrue(r.store.log(s.stream!!, "signal-copies").none { "SPEED" in it }) // encrypted at rest
+        r.now += Tuning.DEADMAN_NOTIFY_SILENCE_S * 1_000L
+        r.service.tick()
+        r.service.tick()
+        assertEquals(1, r.notices.size)
+    }
+
+    @Test
+    fun aCapsuleWindowIsStoredUnderItsPseudonymOnly() {
+        val r = Rig()
+        val s = r.connect()
+        val window = "S|SPEED|16.6|1;2|-\nE|3;4|TRIGGER|DELTA_V|0|-25.0"
+        val pseudonym = java.util.UUID.randomUUID().toString()
+        val replies = s.send(Frame.Window(pseudonym, SealedBox.seal(r.service.serverPublicKey(), window.toByteArray(), SealedBox.INFO_SERVER)))
+        assertEquals(listOf(Frame.WindowAck(pseudonym)), replies)
+        assertEquals(1, r.store.labeledCount())
+        val stored = r.dir.resolve("labeled/$pseudonym").readText()
+        assertTrue("SPEED" !in stored && s.stream!!.deviceId !in stored)
+    }
+
+    @Test
+    fun withdrawingConsentDeletesTheWindowOnTheServer() {
+        val r = Rig()
+        val s = r.connect()
+        val pseudonym = java.util.UUID.randomUUID().toString()
+        s.send(Frame.Window(pseudonym, SealedBox.seal(r.service.serverPublicKey(), "S|SPEED|1|1;2|-".toByteArray(), SealedBox.INFO_SERVER)))
+        assertEquals(1, r.store.labeledCount())
+        assertEquals(listOf(Frame.WindowDeleted(pseudonym)), s.send(Frame.WindowDelete(pseudonym)))
+        assertEquals(0, r.store.labeledCount())
+        assertEquals(listOf(Frame.WindowDeleted(pseudonym)), s.send(Frame.WindowDelete(pseudonym))) // already gone: still confirmed
+    }
+
+    @Test
+    fun aCarThatWasOfflineGetsItsRotationWhenItReconnects() {
+        val dir = tmp.newFolder()
+        val key = ServerKey(dir)
+        val texts = mutableListOf<String>()
+        val identity = Identity(dir, key, object : SmsSender { override fun send(phone: String, text: String) { texts += text } })
+        val service = MirrorService(FileStreamStore(dir), key, object : ContactNotifier { override fun notify(notice: EmergencyNotice) = Unit }, identity)
+        fun code() = Regex("인증번호 (\\d{6})").find(texts.last())!!.groupValues[1]
+        val car = Car()
+        val deviceId = MirrorProtocol.deviceId(car.publicKey)
+
+        // A claimed car whose owner removed a contact while the car was off.
+        val claimCode = identity.claimCode(StreamId(deviceId, "live"))
+        identity.sendOtp("01012345678", "claim", "owner")
+        val owner = (identity.claim(claimCode, "01012345678", code(), "PHONEKEY", "MAC") as Identity.ClaimResult.Claimed).ownerId
+        identity.putWrap(deviceId, owner, 0, "W0")
+        val mom = identity.invite(owner, "엄마", "01022223333", "http://x")
+        identity.sendOtp("01022223333", "contact", "mom")
+        identity.accept(mom.inviteToken, "01022223333", code(), "MOMKEY")
+        identity.activate(owner, mom.id)
+        identity.removeContact(mom.id, byContact = false)
+
+        val session = service.session()
+        val replies = session.onText(car.auth(session.greeting()))!!.map { MirrorProtocol.decode(it) }
+        assertTrue(replies.contains(Frame.Rotate))
+        session.onText(MirrorProtocol.encode(Frame.Wrap(owner, 1, "W1"))) // the car's new epoch
+        assertFalse(identity.pendingRotation(deviceId))
+        val again = service.session()
+        assertFalse(again.onText(car.auth(again.greeting()))!!.map { MirrorProtocol.decode(it) }.contains(Frame.Rotate)) // once
+    }
 }
+

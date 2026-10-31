@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>White Box · 내 차량</title>
+<style>
+:root{--fg:#111;--muted:#666;--bg:#fafafa;--card:#fff;--line:#e0e0e0;--accent:#1565c0;--bad:#c62828;--good:#2e7d32;--warn:#ef6c00}
+body{font:16px/1.55 system-ui,-apple-system,"Apple SD Gothic Neo",sans-serif;margin:0;background:var(--bg);color:var(--fg)}
+main{max-width:520px;margin:0 auto;padding:20px 16px}
+h1{font-size:22px;margin:4px 0 4px}h2{font-size:17px;margin:0 0 8px}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:12px 0}
+label{display:block;font-size:14px;color:var(--muted);margin:10px 0 4px}input{width:100%;box-sizing:border-box;font:inherit;padding:12px;border:1px solid var(--line);border-radius:8px}
+button{font:inherit;font-weight:600;padding:11px 14px;margin-top:10px;border:0;border-radius:8px;background:var(--accent);color:#fff}
+button.plain{background:transparent;color:var(--accent);padding:6px 4px;margin-top:0}button.danger{background:var(--bad)}
+.wide{width:100%}.msg{font-size:14px;margin-top:8px;color:var(--muted)}.bad{color:var(--bad)}.good{color:var(--good)}.warn{color:var(--warn)}
+.big{font-size:20px;font-weight:600}.row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line)}
+.row:first-child{border-top:0}.code{font:600 22px ui-monospace,monospace;letter-spacing:2px}.alert{border-color:var(--warn);background:#fff8f0}
+details{font-size:14px;color:var(--muted)}summary{cursor:pointer}small{color:var(--muted)}
+</style>
+</head>
+<body><main>
+<h1>내 차량</h1>
+<div id="who" class="msg"></div>
+
+<div class="card" id="login" hidden>
+  <h2>다시 인증해 주세요</h2>
+  <p class="msg">차량에 연결한 휴대폰 번호로 인증하면 됩니다. 이 휴대폰의 열쇠는 그대로 있습니다.</p>
+  <label for="lphone">휴대폰 번호</label><input id="lphone" inputmode="tel" placeholder="010-1234-5678">
+  <button class="wide" id="lsend">인증번호 받기</button>
+  <div id="lotp-step" hidden>
+    <label for="lotp">문자로 받은 인증번호 6자리</label><input id="lotp" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+    <button class="wide" id="lgo">확인</button>
+  </div>
+  <div id="lmsg" class="msg"></div>
+  <p class="msg">휴대폰을 바꿨다면 <a href="/recover">새 휴대폰으로 복구하기</a></p>
+</div>
+
+<div id="alerts"></div>
+
+<div class="card" id="nokey" hidden>
+  <p class="bad">이 휴대폰(브라우저)에는 기록을 여는 열쇠가 없습니다.</p>
+  <p>휴대폰을 바꿨거나 브라우저 데이터를 지운 경우입니다. 차량 화면의 <b>휴대폰</b> 탭에서 다시 연결하거나, 차량에 갈 수 없다면 비상 연락처의 도움으로 복구하세요.</p>
+  <button class="wide" onclick="location.href='/recover'">새 휴대폰으로 복구하기</button>
+</div>
+
+<div id="cars"></div>
+
+<div class="card" id="contacts-card" hidden>
+  <h2>비상 연락처</h2>
+  <p class="msg">큰 사고 뒤 연락이 끊기면 알림을 받고, 사고 기록을 대신 열어 볼 수 있는 가족입니다. 휴대폰을 잃어버렸을 때 기록을 되찾는 길이기도 해서 꼭 등록하기를 권합니다.</p>
+  <div id="contacts"></div>
+  <details><summary>연락처 추가</summary>
+    <label for="cname">이름</label><input id="cname" maxlength="20" placeholder="예: 엄마">
+    <label for="cphone">휴대폰 번호</label><input id="cphone" inputmode="tel" placeholder="010-1234-5678">
+    <button class="wide" id="invite">초대 문자 보내기</button>
+    <div id="invite-msg" class="msg"></div>
+  </details>
+</div>
+
+<details class="card"><summary>자세히</summary><div id="tech" style="word-break:break-all"></div></details>
+</main>
+<script src="/wb.js"></script>
+<script>
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const roots = {}; // device → epoch → key
+let last = '';
+let busy = false;
+
+function describe(o) {
+  if (o.kind === 'LOCATION') {
+    const [lat, lon] = o.value.split(';').map(Number);
+    return { label: '마지막 위치', text: `${lat.toFixed(5)}, ${lon.toFixed(5)}`, link: `https://maps.google.com/?q=${lat},${lon}` };
+  }
+  if (o.kind === 'SPEED') return { label: '마지막 속도', text: `${Math.round(Number(o.value) * 3.6)} km/h` };
+  return null;
+}
+
+async function render(force = false) {
+  const me = await WB.get('/v1/me');
+  if (!me) { WB.show('login'); WB.show('contacts-card', false); WB.$('cars').innerHTML = ''; WB.$('alerts').innerHTML = ''; return; }
+  WB.show('login', false);
+  WB.show('contacts-card');
+  // Re-draw only when something changed, so nothing moves under the user's finger.
+  const sig = JSON.stringify(me, (k, v) => k === 'silentForMs' ? (v == null ? null : v < 30000) : v);
+  document.querySelectorAll('[data-age]').forEach((e) => { e.textContent = `마지막 수신 ${WB.ago(Number(e.dataset.age) + (Date.now() - Number(e.dataset.at)))}`; });
+  if (sig === last && !force) return;
+  last = sig;
+
+  let key = await WB.phoneKey('owner');
+  // Recovered on this phone but signed in here rather than on the recovery page: adopt the recovered key.
+  if (!key || key.publicKey !== me.key) {
+    const recovered = await WB.phoneKey('recover');
+    if (recovered && recovered.publicKey === me.key) { await WB.moveKey('recover', 'owner'); key = recovered; }
+  }
+  const mine = key && key.publicKey === me.key;
+  WB.$('who').textContent = `${me.phone} 휴대폰으로 연결됨`;
+  WB.show('nokey', !mine && me.devices.length > 0);
+  const tech = [`이 휴대폰 열쇠 확인 코드: ${key ? await WB.checkCode(key.publicKey) : '없음'}`];
+
+  const alerts = [];
+  for (const t of me.transfersIn) {
+    alerts.push(`<div class="card alert"><h2>다른 휴대폰이 내 차를 연결하려 합니다</h2>
+      <p>${esc(t.phone)} 휴대폰이 ${WB.when(t.createdMs)}에 차량 화면의 QR로 연결을 요청했습니다.</p>
+      <p>차를 판매·양도했다면 승인하세요. 모르는 요청이라면 거절하세요. <b>${WB.when(t.autoAtMs)}</b>까지 거절하지 않으면 자동으로 넘어갑니다.</p>
+      <p class="msg">넘어가도 요청 전까지의 기록은 계속 회원님만 볼 수 있고, 새 휴대폰은 요청한 때부터의 기록을 봅니다. 거절하면 그동안의 기록도 회원님이 봅니다.</p>
+      <button data-transfer="${t.id}" data-approve="yes">승인 (차를 넘겼어요)</button>
+      <button class="danger" data-transfer="${t.id}" data-approve="no">거절 (제 차입니다)</button></div>`);
+  }
+  for (const t of me.transfersOut) {
+    alerts.push(t.state === 'pending'
+      ? `<div class="card alert"><h2>기존 소유자의 확인을 기다리는 중</h2><p>이 차는 다른 휴대폰에 연결되어 있어 그 소유자에게 확인을 요청했습니다. 거절하지 않으면 <b>${WB.when(t.autoAtMs)}</b>에 자동으로 연결되고, 요청한 때(${WB.when(t.createdMs)})부터의 기록을 볼 수 있습니다.</p></div>`
+      : `<div class="card alert"><h2 class="bad">기존 소유자가 연결을 거절했습니다</h2><p>본인 차량이 맞다면 판매자에게 연결 해제를 요청하세요.</p></div>`);
+  }
+  WB.$('alerts').innerHTML = alerts.join('');
+  document.querySelectorAll('[data-transfer]').forEach((b) => b.onclick = async () => {
+    const yes = b.dataset.approve === 'yes';
+    if (!confirm(yes ? '차량 연결을 넘길까요? 앞으로의 기록은 새 휴대폰이 보게 됩니다.' : '이 요청을 거절할까요?')) return;
+    await WB.post('/v1/transfer/answer', { id: b.dataset.transfer, approve: yes ? 'yes' : 'no' }).catch((e) => alert(e.message));
+    render(true);
+  });
+
+  const cars = [];
+  for (const dev of me.devices) {
+    if (mine) roots[dev.id] = Object.assign(roots[dev.id] || {}, await WB.unwrapAll(dev.wraps.filter((w) => !(roots[dev.id] || {})[w.epoch]), 'owner'));
+    const withData = dev.current ? dev.streams.filter((s) => s.records > 0) : dev.streams;
+    const live = withData.find((s) => s.stream === 'live') || withData[0];
+    const status = !dev.current ? '다른 휴대폰으로 넘어간 차입니다'
+      : !live ? '아직 기록이 올라오지 않았습니다'
+      : live.level === 'TRIGGERED' ? '<span class="bad">사고가 감지되었습니다</span>'
+      : live.level === 'ALERT' ? '<span class="warn">위험 신호가 감지되었습니다</span>'
+      : live.silentForMs != null && live.silentForMs < 30000 ? '<span class="good">기록 중</span>' : '차량이 꺼져 있습니다';
+    let body = '';
+    if (!dev.wraps.length) {
+      body = '<p class="msg">차량이 연결을 확인하는 중입니다. 차량이 켜져 있고 인터넷에 연결되어 있어야 합니다.</p>';
+    } else if (mine && live) {
+      const rows = [];
+      for (const kind of ['L', 'S']) {
+        const recs = await WB.get(`/v1/records?device=${dev.id}&stream=${live.stream}&kind=${kind}&last=${kind === 'S' ? 30 : 1}`);
+        const opened = [];
+        for (const r of recs || []) { try { const o = await WB.openRecord(roots[dev.id], r.entry); if (o) opened.push(o); } catch (e) { /* skip */ } }
+        const pick = kind === 'L' ? opened.at(-1) : opened.filter((o) => o.kind === 'SPEED').at(-1);
+        const d = pick && describe(pick);
+        if (d) rows.push(`<div class="row"><span>${d.label}</span><span>${d.link ? `<a href="${d.link}" target="_blank" rel="noopener">${d.text}</a>` : d.text} <small>${WB.when(pick.time)}</small></span></div>`);
+      }
+      body = (rows.join('') || '<p class="msg">아직 열 수 있는 기록이 없습니다.</p>') + '<p class="msg">이 정보는 서버가 아니라 이 휴대폰에서 풀었습니다.</p>';
+    }
+    cars.push(`<div class="card"><h2>${dev.current ? '내 차' : '이전에 연결했던 차 <small>(그때까지의 기록)</small>'}</h2><p class="big">${status}</p>${dev.current && live && live.silentForMs != null ? `<p class="msg" data-age="${live.silentForMs}" data-at="${Date.now()}">마지막 수신 ${WB.ago(live.silentForMs)}</p>` : ''}${body}</div>`);
+    tech.push(`차량 기기 ID ${dev.id}`, `차량 열쇠 ${dev.wraps.map((w) => w.epoch).join(', ')}번`, ...(dev.current ? dev.streams.map((s) => `${s.stream}: 기록 ${s.records}건, 단계 ${s.level || '-'}`) : []));
+  }
+  WB.$('cars').innerHTML = cars.join('') || (me.transfersOut.length ? '' : '<div class="card"><p>연결된 차량이 없습니다.</p></div>');
+
+  const rows = [];
+  for (const c of me.contacts) {
+    if (c.state === 'active') {
+      rows.push(`<div class="row"><span>${esc(c.name)} <small>${c.phone}</small></span><span><span class="good">등록됨</span> <button class="plain" data-remove="${c.id}" data-name="${esc(c.name)}">삭제</button></span></div>`);
+    } else if (c.state === 'accepted') {
+      const cc = await WB.checkCode(c.key);
+      rows.push(`<div class="row" style="display:block"><b>${esc(c.name)}</b> 님이 동의했습니다.<br>
+        <span class="msg">통화로 상대 화면의 확인 코드가 아래와 같은지 확인한 뒤 승인하세요.</span><br>
+        <span class="code">${cc}</span><br><button data-approve-contact="${c.id}">코드가 같아요, 승인</button> <button class="plain" data-remove="${c.id}" data-name="${esc(c.name)}">취소</button></div>`);
+    } else {
+      rows.push(`<div class="row"><span>${esc(c.name)} <small>${c.phone}</small></span><span><span class="msg">동의 기다리는 중</span> <button class="plain" data-remove="${c.id}" data-name="${esc(c.name)}">취소</button></span></div>`);
+    }
+  }
+  WB.$('contacts').innerHTML = rows.join('') || '<p class="msg">아직 없습니다.</p>';
+  document.querySelectorAll('[data-approve-contact]').forEach((b) => b.onclick = () => share(me, me.contacts.find((c) => c.id === b.dataset.approveContact), true));
+  document.querySelectorAll('[data-remove]').forEach((b) => b.onclick = async () => {
+    if (!confirm(`${b.dataset.name} 님을 비상 연락처에서 뺄까요? 앞으로의 기록은 볼 수 없게 됩니다.`)) return;
+    await WB.post('/v1/contacts/remove', { contact: b.dataset.remove }).catch((e) => alert(e.message));
+    render(true);
+  });
+  WB.$('tech').innerHTML = tech.map(esc).join('<br>');
+  if (mine) keepContactsCurrent(me);
+}
+
+/** Wraps every car key the contact does not hold yet (all of them when approving). */
+async function share(me, contact, approving) {
+  const pairs = [['contact', contact.id]];
+  for (const dev of me.devices) {
+    for (const [epoch, root] of Object.entries(roots[dev.id] || {})) {
+      if (!approving && contact.holds.some((h) => h.device === dev.id && h.epoch === Number(epoch))) continue;
+      pairs.push(['device', dev.id], ['epoch', epoch], ['sealed', await WB.seal(contact.key, root)]);
+    }
+  }
+  if (pairs.length === 1) return;
+  try { await WB.postPairs('/v1/contacts/wrap', pairs); } catch (e) { if (approving) alert(e.message); }
+  last = '';
+  render();
+}
+
+/** After the car starts a new key (a contact was removed), the remaining contacts get it quietly, with no tap needed. */
+async function keepContactsCurrent(me) {
+  if (busy) return;
+  busy = true;
+  try { for (const c of me.contacts.filter((c) => c.state === 'active')) await share(me, c, false); } finally { busy = false; }
+}
+
+WB.$('invite').onclick = async () => {
+  try {
+    await WB.post('/v1/contacts/invite', { name: WB.$('cname').value, phone: WB.$('cphone').value });
+    WB.say('invite-msg', '초대 문자를 보냈습니다. 상대가 동의하면 여기에 승인 버튼이 나타납니다.');
+    WB.$('cname').value = ''; WB.$('cphone').value = '';
+    render(true);
+  } catch (e) { WB.say('invite-msg', e.message, true); }
+};
+WB.$('lsend').onclick = async () => {
+  try { await WB.post('/v1/otp', { phone: WB.$('lphone').value, purpose: 'login' }); WB.show('lotp-step'); WB.say('lmsg', '인증번호를 보냈습니다.'); }
+  catch (e) { WB.say('lmsg', e.message, true); }
+};
+WB.$('lgo').onclick = async () => {
+  try { await WB.post('/v1/login', { role: 'owner', phone: WB.$('lphone').value, otp: WB.$('lotp').value }); last = ''; render(true); }
+  catch (e) { WB.say('lmsg', e.message, true); }
+};
+render();
+setInterval(render, 5000);
+</script>
+</body>
+</html>

@@ -29,12 +29,15 @@ import java.io.File
 fun main() {
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
     val dir = File(System.getenv("WHITEBOX_DATA") ?: "server-data")
-    val service = MirrorService(FileStreamStore(dir), ServerKey(dir), LoggingNotifier(dir))
+    val key = ServerKey(dir)
+    val sms = DemoSmsSender()
+    val identity = Identity(dir, key, sms)
+    val service = MirrorService(FileStreamStore(dir), key, ContactsNotifier(identity, sms, LoggingNotifier(dir)), identity)
     println("White Box mirror on :$port, data in ${dir.absolutePath}")
-    embeddedServer(Netty, port = port, host = "0.0.0.0") { whiteBox(service) }.start(wait = true)
+    embeddedServer(Netty, port = port, host = "0.0.0.0") { whiteBox(service, sms) }.start(wait = true)
 }
 
-fun Application.whiteBox(service: MirrorService, tickMs: Long = 500) {
+fun Application.whiteBox(service: MirrorService, sms: DemoSmsSender? = null, tickMs: Long = 500) {
     install(WebSockets) {
         // Keeps the car's channel warm through idle NAT and load-balancer timeouts.
         pingPeriodMillis = 15_000
@@ -51,13 +54,16 @@ fun Application.whiteBox(service: MirrorService, tickMs: Long = 500) {
         webSocket("/v1/stream") {
             val session = service.session()
             send(Frame.Text(session.greeting()))
+            val pushes = launch { for (p in session.pushes) send(Frame.Text(p)) }
             try {
                 receive(session)
             } finally {
+                pushes.cancel()
                 service.closed(session)
             }
         }
-        get("/") { call.respondText(dashboard(service), ContentType.Text.Html) }
+        get("/") { call.respondText(dashboard(service, sms), ContentType.Text.Html) }
+        service.identity?.let { phoneRoutes(service, it) }
         get("/health") { call.respondText("ok") }
         get("/v1/server-key") { call.respondBytes(service.serverPublicKey(), ContentType.Application.OctetStream) }
     }

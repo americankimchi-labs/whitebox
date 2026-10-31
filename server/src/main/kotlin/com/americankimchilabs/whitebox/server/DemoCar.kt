@@ -2,6 +2,9 @@ package com.americankimchilabs.whitebox.server
 
 import com.americankimchilabs.whitebox.core.Clock
 import com.americankimchilabs.whitebox.core.MirrorChannel
+import com.americankimchilabs.whitebox.data.EpochRecordCipher
+import com.americankimchilabs.whitebox.data.MemoryKeyRing
+import com.americankimchilabs.whitebox.data.ClaimClient
 import com.americankimchilabs.whitebox.data.FileEventStore
 import com.americankimchilabs.whitebox.data.MirrorProtocol
 import com.americankimchilabs.whitebox.data.MirrorProtocol.Frame
@@ -48,21 +51,26 @@ import kotlin.system.exitProcess
  *     ./gradlew :server:run                          # terminal 1, then open http://localhost:8080
  *     ./gradlew :server:demoCar                      # terminal 2
  *     ./gradlew :server:demoCar --args="--drive-on"
+ *     ./gradlew :server:demoCar --args="--phone"     # first connect a phone (browser) to this car, then drive
  *
  * Each run is a new car (fresh key and chain), shown on the dashboard as its own `replay` row.
  */
 fun main(args: Array<String>): Unit = runBlocking {
     val url = args.firstOrNull { it.startsWith("ws://") || it.startsWith("wss://") } ?: "ws://localhost:8080/v1/stream"
     val driveOn = "--drive-on" in args
+    val withPhone = "--phone" in args
     val dir = Files.createTempDirectory("whitebox-demo-car").toFile()
     val signer = DemoKey()
     val clock = Clock {
         Timestamp(System.nanoTime(), System.currentTimeMillis())
     }
     val channel = JdkMirrorChannel(url, MirrorProtocol.STREAM_REPLAY, signer, this)
-    val store = FileEventStore(dir)
+    // Like the car: record values are encrypted with this car's own root keys before they enter the chain.
+    val ring = MemoryKeyRing()
+    val store = FileEventStore(dir, cipher = EpochRecordCipher(ring))
     val seals = SealStore(dir)
-    val outbox = Outbox(store, seals, channel, dir)
+    // A test car takes part in improving detection (a real driver is asked once, and it is off unless they agree).
+    val outbox = Outbox(store, seals, channel, dir) { true }
     val recorder = Recorder(store, seals, signer, clock, outbox::onSeal)
     val work = launch(Dispatchers.Default) { outbox.start(this, recorder) }
 
@@ -73,6 +81,30 @@ fun main(args: Array<String>): Unit = runBlocking {
     }
     say("connected as device ${MirrorProtocol.deviceId(signer.publicKey).take(12)}… (stream replay); watch http://localhost:8080")
     recorder.record(ChainEntry.Recorder(RecorderEvent.RecordingStarted(StartReason.APP_OPENED, null, 0), clock.now()))
+
+    if (withPhone) {
+        // What the parked car's "휴대폰" tab does: a claim code from the mirror plus this car's own secret.
+        val claim = ClaimClient(channel, ring, dir)
+        val claimJob = claim.start(this)
+        claim.request()
+        val waiting = withTimeoutOrNull(10_000) { claim.state.first { it is ClaimClient.State.Waiting } } as? ClaimClient.State.Waiting
+        if (waiting == null) {
+            say("the mirror gave no claim code")
+            exitProcess(1)
+        }
+        val web = url.replaceFirst("ws", "http").substringBefore("/v1/")
+        say("connect a phone: open this in a browser (the QR on a real car holds the same address)")
+        println()
+        println("    $web/claim#${waiting.code}.${waiting.secret}")
+        println()
+        say("the one-time code appears on the dashboard (문자, 시연용); waiting up to 10 minutes…")
+        if (withTimeoutOrNull(600_000) { claim.state.first { it is ClaimClient.State.Claimed } } == null) {
+            say("no phone connected in time")
+            exitProcess(1)
+        }
+        say("phone connected: ${(claim.state.value as ClaimClient.State.Claimed).maskedPhone}; open $web/me in that browser to watch")
+        claimJob.cancel()
+    }
 
     val powerLossAtMs = DemoDrive.IMPACT_AT_MS + POWER_LOSS_AFTER_IMPACT_MS
     say(if (driveOn) "driving the demo drive (≈ 70 s), ending normally" else "driving the demo drive; crash at ${DemoDrive.IMPACT_AT_MS / 1000.0} s, then power loss")
@@ -130,6 +162,7 @@ private class DemoKey : Signer {
 private class JdkMirrorChannel(url: String, private val stream: String, private val signer: Signer, scope: CoroutineScope) : MirrorChannel {
     override val connected = MutableStateFlow(false)
     override val incoming = MutableSharedFlow<String>(extraBufferCapacity = 256)
+    @Volatile override var serverKey: ByteArray? = null
     private val outgoing = Channel<String>(Channel.UNLIMITED)
     private var ws: WebSocket? = null
 
@@ -145,7 +178,10 @@ private class JdkMirrorChannel(url: String, private val stream: String, private 
                         is Frame.Challenge -> outgoing.trySend(
                             MirrorProtocol.encode(Frame.Auth(stream, signer.publicKey, signer.sign(MirrorProtocol.authText(stream, f.nonce).toByteArray()))),
                         )
-                        is Frame.Ready -> connected.value = true
+                        is Frame.Ready -> {
+                            serverKey = f.serverKey
+                            connected.value = true
+                        }
                         is Frame.Denied -> println("mirror refused: ${f.reason}")
                         else -> incoming.tryEmit(text)
                     }

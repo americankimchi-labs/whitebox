@@ -13,6 +13,8 @@ import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.americankimchilabs.whitebox.BuildConfig
 import com.americankimchilabs.whitebox.R
+import com.americankimchilabs.whitebox.data.EpochRecordCipher
+import com.americankimchilabs.whitebox.data.ClaimClient
 import com.americankimchilabs.whitebox.data.FileEventStore
 import com.americankimchilabs.whitebox.data.MirrorProtocol
 import com.americankimchilabs.whitebox.data.Outbox
@@ -31,6 +33,8 @@ import com.americankimchilabs.whitebox.domain.checkGrants
 import com.americankimchilabs.whitebox.domain.classifyStart
 import com.americankimchilabs.whitebox.platform.AndroidClock
 import com.americankimchilabs.whitebox.platform.FallbackSpeechOutput
+import com.americankimchilabs.whitebox.platform.DataConsent
+import com.americankimchilabs.whitebox.platform.KeystoreKeyRing
 import com.americankimchilabs.whitebox.platform.PlatformAudioBeacon
 import com.americankimchilabs.whitebox.platform.PlatformAudioFocus
 import com.americankimchilabs.whitebox.platform.PlatformConnectivity
@@ -98,6 +102,20 @@ class RecorderService : LifecycleService() {
     private val offlineListener by lazy { PleosPhraseListener(this, onDeviceOnly = true, credentials) }
     private val beacon by lazy { PlatformAudioBeacon() }
 
+    /** Record values are encrypted with the car's root keys (one per epoch) before they enter the chain. */
+    private val keyRing by lazy { KeystoreKeyRing(this) }
+    private val recordCipher by lazy { EpochRecordCipher(keyRing) }
+
+    /**
+     * Where the phone pages live: the mirror's own address over http(s). The emulator reaches its host computer as
+     * 10.0.2.2, but a browser on that computer knows it as localhost.
+     */
+    private fun webBase(mirrorUrl: String): String? = runCatching {
+        val u = java.net.URI(mirrorUrl)
+        val host = if (u.host == "10.0.2.2") "localhost" else u.host
+        "${if (u.scheme == "wss") "https" else "http"}://$host${if (u.port > 0) ":${u.port}" else ""}"
+    }.getOrNull()?.takeIf { mirrorUrl.isNotEmpty() }
+
     /** Road grade from the head unit's accelerometer (live only); its learned mounting survives restarts. */
     private val grade by lazy { RoadGradeTracker(java.io.File(filesDir, "motion-mount")) }
 
@@ -156,20 +174,22 @@ class RecorderService : LifecycleService() {
         stopSession()
         val dir = AppGraph.chainDir(this, next)
         if (next == SourceMode.REPLAY) dir.deleteRecursively() // each replay is a clean take
-        val store = FileEventStore(dir)
+        val store = FileEventStore(dir, cipher = recordCipher)
         val seals = SealStore(dir)
         val stream = if (next == SourceMode.REPLAY) MirrorProtocol.STREAM_REPLAY else MirrorProtocol.STREAM_LIVE
         // Without a configured server the car keeps everything locally (the chain is the original either way).
         val url = if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_MIRROR, MIRROR_DEFAULT) == MIRROR_LOCAL) LOCAL_MIRROR_URL else BuildConfig.MIRROR_URL
         val channel = url.takeIf { it.isNotEmpty() }?.let { WebSocketMirrorChannel(it, stream, AppGraph.signer) }
         if (channel == null) Log.i(TAG, "no mirror configured; recording locally only") else Log.i(TAG, "mirror: $url")
-        val outbox = channel?.let { Outbox(store, seals, it, dir) }
+        val outbox = channel?.let { Outbox(store, seals, it, dir) { DataConsent.agreed(this) } }
         val recorder = Recorder(store, seals, AppGraph.signer, AndroidClock) { outbox?.onSeal(it) }
         mirrorChannel = channel
+        // The phone connection belongs to the car, not to one chain: one state for both sources.
+        val claim = channel?.let { ClaimClient(it, keyRing, java.io.File(filesDir, "identity").apply { mkdirs() }) }
         mode = next
         inbox = Channel(Channel.UNLIMITED)
         sessionFile = SessionFile(java.io.File(dir, "session"))
-        AppGraph.publish(ActiveSession(next, recorder, store))
+        AppGraph.publish(ActiveSession(next, recorder, store, claim, webBase(url), outbox))
 
         val boot = bootCount()
         val started = classifyStart(sessionFile!!.read(), if (next == SourceMode.REPLAY) StartReason.APP_OPENED else reason, boot, AndroidClock.now())
@@ -180,7 +200,10 @@ class RecorderService : LifecycleService() {
 
         jobs += lifecycleScope.launch(Dispatchers.IO) { consume(recorder) }
         channel?.start(lifecycleScope + Dispatchers.IO)
+        claim?.let { jobs += it.start(lifecycleScope + Dispatchers.IO) }
         outbox?.let { jobs += it.start(lifecycleScope + Dispatchers.IO, recorder) }
+        // Consent withdrawn while this chain was not active: its earlier windows are deleted too.
+        if (DataConsent.state(this).value == false) outbox?.withdrawConsent()
         voiceJob = VoiceController(
             recorder = recorder,
             send = { inbox.send(it) },

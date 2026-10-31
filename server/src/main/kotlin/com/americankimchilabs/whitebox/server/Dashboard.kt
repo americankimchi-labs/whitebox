@@ -14,7 +14,13 @@ private fun time(ms: Long) = clock.format(Instant.ofEpochMilli(ms))
  * The mirror's live view (refreshes every second): one card per mirrored car with its state, what the server holds,
  * the seals, and a readable history of what happened.
  */
-fun dashboard(service: MirrorService): String {
+fun dashboard(service: MirrorService, sms: DemoSmsSender? = null): String {
+    val texts = sms?.recent()?.asReversed()?.joinToString("") { m ->
+        "<li><span class='t'>${time(m.atMs)}</span> <b>${esc(m.to)}</b> ${esc(m.text)}</li>"
+    }?.ifEmpty { "<li class='none'>아직 없음</li>" }
+    val smsPanel = texts?.let {
+        """<section class="card"><header><b>문자 (시연용)</b> <span class="muted">실제로 보내지 않고 여기에 표시합니다: 인증번호, 비상 연락처 초대, 비상 알림</span></header><ul class="history">$it</ul></section>"""
+    } ?: ""
     val cards = service.statuses().sortedByDescending { it.events.lastOrNull()?.first ?: 0 }.joinToString("") { s ->
         val (label, color) = when (s.level) {
             EscalationLevel.TRIGGERED -> "사고 감지" to "#c62828"
@@ -75,6 +81,7 @@ code{font-size:13px}
 <li><b>데드맨 스위치</b>: 경보 뒤 해제 없이 ${Tuning.DEADMAN_SEAL_SILENCE_S}초 무응답이면 서버가 받은 기록에 직접 서명해 봉인하고,
 ${Tuning.DEADMAN_NOTIFY_SILENCE_S}초가 지나고 충돌 수준 증거가 있을 때만 비상 연락처에 알립니다(지금은 알림 대신 기록).</li>
 </ul></div>
+$smsPanel
 $cards
 </body></html>"""
 }

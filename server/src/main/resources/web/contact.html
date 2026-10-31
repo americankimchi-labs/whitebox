@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>White Box · 비상 연락처</title>
+<style>
+:root{--fg:#111;--muted:#666;--bg:#fafafa;--card:#fff;--line:#e0e0e0;--accent:#1565c0;--bad:#c62828;--good:#2e7d32}
+body{font:16px/1.55 system-ui,-apple-system,"Apple SD Gothic Neo",sans-serif;margin:0;background:var(--bg);color:var(--fg)}
+main{max-width:520px;margin:0 auto;padding:20px 16px}
+h1{font-size:22px;margin:4px 0 12px}h2{font-size:17px;margin:0 0 8px}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:12px 0}
+label{display:block;font-size:14px;color:var(--muted);margin:10px 0 4px}input[type=tel],input[inputmode]{width:100%;box-sizing:border-box;font:inherit;padding:12px;border:1px solid var(--line);border-radius:8px}
+button{width:100%;font:inherit;font-weight:600;padding:13px;margin-top:12px;border:0;border-radius:8px;background:var(--accent);color:#fff}
+button.plain{width:auto;background:transparent;color:var(--muted);padding:6px 0;margin-top:4px;font-weight:400;text-decoration:underline}
+.msg{font-size:14px;margin-top:8px;color:var(--muted)}.bad{color:var(--bad)}.good{color:var(--good);font-weight:600}
+.code{font:600 26px ui-monospace,monospace;letter-spacing:2px}.consent{display:flex;gap:8px;align-items:flex-start;margin-top:12px}
+details{font-size:14px;color:var(--muted)}summary{cursor:pointer}ul{padding-left:20px}
+</style>
+</head>
+<body><main>
+<h1>비상 연락처</h1>
+
+<div class="card" id="invite" hidden>
+  <p id="invite-text"></p>
+  <p>등록하면:</p>
+  <ul>
+    <li>그 차량에서 큰 사고가 감지된 뒤 연락이 끊기면 문자를 받습니다.</li>
+    <li>사고 기록(시각, 위치, 당시 조작)을 이 휴대폰에서 열어 볼 수 있습니다.</li>
+    <li>그분이 휴대폰을 잃어버리면 기록 복구를 승인해 줄 수 있습니다.</li>
+  </ul>
+  <label class="consent"><input type="checkbox" id="consent"> <span>위 내용을 이해했고 비상 연락처 등록에 동의합니다. 이 페이지에서 언제든 해제할 수 있습니다.</span></label>
+  <label for="phone">내 휴대폰 번호 (초대받은 번호)</label>
+  <input id="phone" type="tel" placeholder="010-1234-5678">
+  <button id="send">인증번호 받기</button>
+  <div id="send-msg" class="msg"></div>
+  <div id="otp-step" hidden>
+    <label for="otp">문자로 받은 인증번호 6자리</label>
+    <input id="otp" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+    <button id="accept">동의하고 등록</button>
+    <div id="accept-msg" class="msg"></div>
+  </div>
+</div>
+
+<div class="card" id="login" hidden>
+  <h2>다시 인증해 주세요</h2>
+  <p class="msg">비상 연락처로 등록한 휴대폰 번호로 인증하면 됩니다.</p>
+  <label for="lphone">휴대폰 번호</label><input id="lphone" type="tel" placeholder="010-1234-5678">
+  <button id="lsend">인증번호 받기</button>
+  <div id="lotp-step" hidden>
+    <label for="lotp">문자로 받은 인증번호 6자리</label><input id="lotp" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+    <button id="lgo">확인</button>
+  </div>
+  <div id="lmsg" class="msg"></div>
+</div>
+
+<div id="home"></div>
+
+<details class="card"><summary>자세히</summary>
+<p>이 휴대폰 브라우저 안에서 열쇠를 만들고 공개 열쇠만 서버로 보냅니다. 차량 소유자의 휴대폰이 확인 코드를 대조한 뒤, 기록을 여는 열쇠를 이 휴대폰 열쇠로만 열리게 봉인해 맡깁니다. 서버는 그 열쇠를 열 수 없습니다.</p>
+<div id="tech" style="word-break:break-all"></div></details>
+</main>
+<script src="/wb.js"></script>
+<script>
+const token = location.hash.slice(1);
+let phone = '';
+let last = '';
+
+async function showInvite() {
+  const inv = token ? await WB.get('/v1/invite?token=' + encodeURIComponent(token)) : null;
+  if (!inv || inv.ok === false) return false;
+  WB.$('invite-text').textContent = `${inv.owner} 님이 ${inv.name} 님(${inv.phone})을 White Box 비상 연락처로 등록하려 합니다.`;
+  WB.show('invite');
+  return true;
+}
+
+WB.$('send').onclick = async () => {
+  if (!WB.$('consent').checked) return WB.say('send-msg', '먼저 동의에 체크해 주세요.', true);
+  phone = WB.$('phone').value;
+  try { await WB.post('/v1/otp', { phone, purpose: 'contact' }); WB.show('otp-step'); WB.say('send-msg', '인증번호를 보냈습니다.'); }
+  catch (e) { WB.say('send-msg', e.message, true); }
+};
+WB.$('accept').onclick = async () => {
+  try {
+    // One key per phone, even for several people: their earlier wraps keep opening.
+    const existing = await WB.phoneKey('contact');
+    const key = existing ? existing.publicKey : await WB.newPhoneKey('contact');
+    await WB.post('/v1/contacts/accept', { token, phone, otp: WB.$('otp').value, key, consent: 'yes' });
+    history.replaceState(null, '', '/contact');
+    WB.show('invite', false);
+    last = '';
+    render();
+  } catch (e) { WB.say('accept-msg', e.message, true); }
+};
+WB.$('lsend').onclick = async () => {
+  try { await WB.post('/v1/otp', { phone: WB.$('lphone').value, purpose: 'login' }); WB.show('lotp-step'); WB.say('lmsg', '인증번호를 보냈습니다.'); }
+  catch (e) { WB.say('lmsg', e.message, true); }
+};
+WB.$('lgo').onclick = async () => {
+  try { await WB.post('/v1/login', { role: 'contact', phone: WB.$('lphone').value, otp: WB.$('lotp').value }); WB.show('login', false); last = ''; render(); }
+  catch (e) { WB.say('lmsg', e.message, true); }
+};
+
+async function render() {
+  // An open invitation comes first (also for someone who is already a contact of another person).
+  if (location.hash.length > 1 && await showInvite()) return;
+  const me = await WB.get('/v1/contact/me');
+  if (!me) { WB.$('home').innerHTML = ''; WB.show('login'); return; }
+  WB.show('login', false);
+  // Re-draw only when something changed, so a button never moves under the user's finger.
+  const sig = JSON.stringify(me);
+  if (sig === last) return;
+  last = sig;
+  const key = await WB.phoneKey('contact');
+  const myCode = key ? await WB.checkCode(key.publicKey) : '-';
+  const parts = [];
+  if (!me.people.length) parts.push('<div class="card"><p>지금 등록된 곳이 없습니다.</p></div>');
+  for (const p of me.people) {
+    const card = [];
+    if (p.state === 'accepted') {
+      card.push(`<h2>${p.owner} 님의 승인을 기다리는 중</h2><p>${p.owner} 님과 통화해서, 그분 화면의 코드가 아래와 같은지 확인해 주세요.</p><p class="code">${myCode}</p>`);
+    } else {
+      card.push(`<h2>${p.owner} 님의 비상 연락처</h2><p class="msg">평소에는 아무것도 하지 않아도 됩니다.</p>`);
+    }
+    for (const r of p.recoveries) {
+      card.push(`<h2 class="bad">기록 복구 요청</h2>
+        <p>${p.owner} 님이 새 휴대폰으로 기록을 되찾으려 합니다. 반드시 본인과 통화해서, 그분 새 휴대폰 화면의 코드가 아래와 같은지 확인한 뒤 승인하세요.</p>
+        <p class="code">${await WB.checkCode(r.key)}</p><button data-recover="${r.id}" data-contact="${p.contact}">코드가 같아요, 복구 승인</button>`);
+    }
+    for (const dev of p.devices) {
+      const notice = dev.events.filter((e) => e.type === 'notice').at(-1);
+      if (!notice || !dev.wraps.length) continue;
+      let where = '';
+      try {
+        const roots = await WB.unwrapAll(dev.wraps, 'contact');
+        const recs = await WB.get(`/v1/records?device=${dev.id}&stream=${notice.stream}&kind=L&last=1`);
+        const loc = recs && recs.length ? await WB.openRecord(roots, recs[recs.length - 1].entry) : null;
+        if (loc) {
+          const [lat, lon] = loc.value.split(';').map(Number);
+          where = `<p>마지막 위치: <a href="https://maps.google.com/?q=${lat},${lon}" target="_blank" rel="noopener">${lat.toFixed(5)}, ${lon.toFixed(5)}</a> <span class="msg">(${WB.when(loc.time)})</span></p><p class="msg">위치는 서버가 아니라 이 휴대폰에서 풀었습니다.</p>`;
+        }
+      } catch (e) { where = '<p class="bad">이 휴대폰 열쇠로 열리지 않습니다.</p>'; }
+      card.push(`<h2 class="bad">사고 알림</h2><p>${WB.when(notice.atMs)} — 충돌 수준의 사고가 감지된 뒤 차량과 연락이 끊겼습니다. 그때까지의 기록은 봉인되어 있습니다.</p>${where}`);
+    }
+    card.push(`<button class="plain" data-withdraw="${p.contact}" data-owner="${p.owner}">이분의 비상 연락처 등록 해제</button>`);
+    parts.push(`<div class="card">${card.join('')}</div>`);
+  }
+  WB.$('home').innerHTML = parts.join('');
+  document.querySelectorAll('[data-recover]').forEach((b) => b.onclick = () => approveRecovery(me, b.dataset.contact, b.dataset.recover));
+  document.querySelectorAll('[data-withdraw]').forEach((b) => b.onclick = async () => {
+    if (!confirm(`${b.dataset.owner} 님의 비상 연락처 등록을 해제할까요? 앞으로 사고 알림을 받지 않고 기록도 볼 수 없게 됩니다. ${b.dataset.owner} 님께 알려 드립니다.`)) return;
+    await WB.post('/v1/contact/withdraw', { contact: b.dataset.withdraw }).catch((e) => alert(e.message));
+    last = '';
+    render();
+  });
+  WB.$('tech').textContent = `내 열쇠 확인 코드 ${myCode}`;
+}
+
+/** Re-wraps every car key this phone holds for that person, for their new phone. */
+async function approveRecovery(me, contactId, recoveryId) {
+  const p = me.people.find((x) => x.contact === contactId);
+  const r = p.recoveries.find((x) => x.id === recoveryId);
+  try {
+    const pairs = [['recovery', r.id], ['contact', contactId]];
+    for (const dev of p.devices) {
+      for (const w of dev.wraps) pairs.push(['device', dev.id], ['epoch', String(w.epoch)], ['sealed', await WB.seal(r.key, await WB.unwrap(w.sealed, 'contact'))]);
+    }
+    await WB.postPairs('/v1/recover/wrap', pairs);
+    last = '';
+    render();
+  } catch (e) { alert(e.message); }
+}
+
+render();
+setInterval(render, 5000);
+</script>
+</body>
+</html>

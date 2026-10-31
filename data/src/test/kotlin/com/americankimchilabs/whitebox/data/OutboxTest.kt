@@ -10,6 +10,8 @@ import com.americankimchilabs.whitebox.domain.Timestamp
 import com.americankimchilabs.whitebox.domain.Tuning
 import com.americankimchilabs.whitebox.domain.VehicleSignal
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import java.security.KeyPairGenerator
+import java.security.spec.ECGenParameterSpec
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestScope
@@ -29,6 +31,7 @@ class OutboxTest {
     private class FakeChannel : MirrorChannel {
         override val connected = MutableStateFlow(false)
         override val incoming = MutableSharedFlow<String>(extraBufferCapacity = 64)
+        override var serverKey: ByteArray? = null
         val sent = mutableListOf<Frame>()
         override fun send(frame: String): Boolean {
             if (!connected.value) return false
@@ -143,7 +146,8 @@ class OutboxTest {
     fun framesRoundTrip() {
         val record = "7\t${"a".repeat(64)}\tS|SPEED|16.6|1;2|-\t${"b".repeat(64)}"
         for (f in listOf(
-            Frame.Challenge("n0nce"), Frame.Ready("abc"), Frame.Denied("bad signature"),
+            Frame.Challenge("n0nce"), Frame.Ready("abc", byteArrayOf(9, 8)), Frame.Denied("bad signature"),
+            Frame.Event(EscalationLevel.ALERT, "1\tx\ty\tz", "e1.a.b"), Frame.Window("p-1", "e1.a.b"), Frame.WindowAck("p-1"),
             Frame.Event(EscalationLevel.ALERT, record), Frame.Batch(EscalationLevel.NORMAL, listOf(record, record)),
             Frame.Seal("C1|DELTA_V|0|9|ff|true|5|k|s"), Frame.Ack(41), Frame.SealAck("C1:true:5"),
         )) assertEquals(f, MirrorProtocol.decode(MirrorProtocol.encode(f)))
@@ -151,5 +155,84 @@ class OutboxTest {
         assertEquals("live", auth.stream)
         assertTrue(auth.publicKey.contentEquals(byteArrayOf(1, 2)))
         assertEquals(null, MirrorProtocol.decode("EV|NOPE|x"))
+    }
+
+    @Test
+    fun withAnEncryptedChainTheServerGetsOnlyTheCrashSignalsItMayRead() = runTest {
+        val dir = tmp.newFolder()
+        val server = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+        var t = 0L
+        val clock = Clock { Timestamp(t * 1_000_000, 1_700_000_000_000 + t) }
+        val store = FileEventStore(dir, cipher = AesGcmRecordCipher(ByteArray(32) { 3 }))
+        val seals = SealStore(dir)
+        val channel = FakeChannel().apply { serverKey = server.public.encoded }
+        var consent = true
+        val outbox = Outbox(store, seals, channel, dir) { consent }
+        val recorder = Recorder(store, seals, JdkSigner(), clock, outbox::onSeal)
+        outbox.start(backgroundScope, recorder)
+        channel.connected.value = true
+        runCurrent()
+        suspend fun speed(kmh: Float) = recorder.record(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(kmh / 3.6f), clock.now())))
+        recorder.record(ChainEntry.Location(com.americankimchilabs.whitebox.domain.LocationFix(37.5, 127.0, 5f, 1, clock.now())))
+        repeat(20) { t += 100; speed(60f) }
+        recorder.record(ChainEntry.Signal(SignalSample(VehicleSignal.BrakePedal(true), clock.now())))
+        t += 100; speed(60f)
+        t += 100; speed(35f) // crash
+        repeat(115) { t += 100; speed(0f) } // stillness: final seal
+        runCurrent()
+
+        val withCopies = channel.sent.filterIsInstance<Frame.Event>().filter { it.serverCopy != null }
+        assertTrue(withCopies.isNotEmpty())
+        for (f in withCopies) {
+            val plain = String(SealedBox.open(server.private, f.serverCopy!!, SealedBox.INFO_SERVER))
+            assertEquals(EntryCodec.timestamp(MirrorProtocol.Record.parse(f.record)!!.entry), EntryCodec.timestamp(plain))
+        }
+        val window = channel.sent.filterIsInstance<Frame.Window>().single()
+        val text = String(SealedBox.open(server.private, window.sealed, SealedBox.INFO_SERVER))
+        assertTrue("TRIGGER|DELTA_V" in text && "SPEED" in text)
+        assertTrue(text.lines().none { it.startsWith("L|") }) // never the location
+        assertTrue(dir.resolve("mirror-windows").readText().isNotBlank()) // kept until acknowledged
+        channel.incoming.tryEmit(MirrorProtocol.encode(Frame.WindowAck(window.pseudonym)))
+        runCurrent()
+        assertTrue(dir.resolve("mirror-windows").readText().isBlank())
+
+        // The driver withdraws consent: the window sent before is deleted on the server, and nothing more is sent.
+        consent = false
+        channel.sent.clear()
+        outbox.withdrawConsent()
+        assertEquals(listOf(Frame.WindowDelete(window.pseudonym)), channel.sent.filterIsInstance<Frame.WindowDelete>())
+        channel.incoming.tryEmit(MirrorProtocol.encode(Frame.WindowDeleted(window.pseudonym)))
+        runCurrent()
+        assertTrue(dir.resolve("mirror-windows-delete").readText().isBlank())
+        repeat(20) { t += 100; speed(60f) }
+        recorder.record(ChainEntry.Signal(SignalSample(VehicleSignal.BrakePedal(true), clock.now())))
+        t += 100; speed(60f)
+        t += 100; speed(35f) // another crash
+        repeat(115) { t += 100; speed(0f) }
+        runCurrent()
+        assertTrue(channel.sent.none { it is Frame.Window })
+    }
+
+    @Test
+    fun withoutConsentNoWindowIsEverQueued() = runTest {
+        val dir = tmp.newFolder()
+        var t = 0L
+        val clock = Clock { Timestamp(t * 1_000_000, 1_700_000_000_000 + t) }
+        val store = FileEventStore(dir)
+        val seals = SealStore(dir)
+        val channel = FakeChannel().apply { serverKey = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair().public.encoded }
+        val outbox = Outbox(store, seals, channel, dir) // the default: no consent
+        val recorder = Recorder(store, seals, JdkSigner(), clock, outbox::onSeal)
+        outbox.start(backgroundScope, recorder)
+        channel.connected.value = true
+        runCurrent()
+        repeat(20) { t += 100; recorder.record(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(60f / 3.6f), clock.now()))) }
+        recorder.record(ChainEntry.Signal(SignalSample(VehicleSignal.BrakePedal(true), clock.now())))
+        t += 100; recorder.record(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(35f / 3.6f), clock.now())))
+        repeat(115) { t += 100; recorder.record(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(0f), clock.now()))) }
+        runCurrent()
+        assertTrue(recorder.capsules.value.any { it.final })
+        assertTrue(channel.sent.none { it is Frame.Window })
+        assertTrue(!dir.resolve("mirror-windows").exists())
     }
 }
