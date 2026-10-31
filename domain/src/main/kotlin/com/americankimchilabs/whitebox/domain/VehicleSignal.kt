@@ -21,6 +21,12 @@ enum class SignalKind {
     PARKING_BRAKE,
     ROAD_CONTEXT,
 
+    /** Derived from the head unit's accelerometer once its mounting is calibrated (see [RoadGradeEstimator]). */
+    ROAD_GRADE,
+
+    /** Instantaneous EV efficiency as the vehicle reports it (a motor-power proxy where supported). */
+    EV_EFFICIENCY,
+
     /** Reserved: no vehicle API exposes pedal position today; the kind exists so a future source plugs in unchanged. */
     ACCELERATOR_PEDAL,
 
@@ -132,6 +138,16 @@ sealed interface VehicleSignal {
      */
     data class RoadContext(val type: RoadContextType, val value: String) : VehicleSignal {
         override val kind get() = SignalKind.ROAD_CONTEXT
+    }
+
+    /** Road grade in percent along the direction of travel; positive = uphill. One value per second. */
+    data class RoadGrade(val percent: Float) : VehicleSignal {
+        override val kind get() = SignalKind.ROAD_GRADE
+    }
+
+    /** Raw instantaneous efficiency in the vehicle's own unit; recorded, not interpreted, until the unit is known. */
+    data class EvEfficiency(val value: Float) : VehicleSignal {
+        override val kind get() = SignalKind.EV_EFFICIENCY
     }
 
     data class AcceleratorPedal(val percent: Float) : VehicleSignal {

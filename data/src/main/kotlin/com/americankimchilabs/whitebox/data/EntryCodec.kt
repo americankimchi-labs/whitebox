@@ -92,6 +92,8 @@ object EntryCodec {
         is VehicleSignal.Window -> "${label(s.area)};${s.position}"
         is VehicleSignal.ParkingBrake -> s.engaged.toString()
         is VehicleSignal.RoadContext -> "${s.type.name};${label(s.value)}"
+        is VehicleSignal.RoadGrade -> s.percent.toString()
+        is VehicleSignal.EvEfficiency -> s.value.toString()
         is VehicleSignal.AcceleratorPedal -> s.percent.toString()
         is VehicleSignal.BrakePressure -> s.percent.toString()
     }
@@ -119,6 +121,8 @@ object EntryCodec {
         SignalKind.WINDOW -> v.split(";").let { VehicleSignal.Window(it[0], it[1].toInt()) }
         SignalKind.PARKING_BRAKE -> VehicleSignal.ParkingBrake(v.toBooleanStrict())
         SignalKind.ROAD_CONTEXT -> v.split(";").let { VehicleSignal.RoadContext(RoadContextType.valueOf(it[0]), it[1]) }
+        SignalKind.ROAD_GRADE -> VehicleSignal.RoadGrade(v.toFloat())
+        SignalKind.EV_EFFICIENCY -> VehicleSignal.EvEfficiency(v.toFloat())
         SignalKind.ACCELERATOR_PEDAL -> VehicleSignal.AcceleratorPedal(v.toFloat())
         SignalKind.BRAKE_PRESSURE -> VehicleSignal.BrakePressure(v.toFloat())
     }

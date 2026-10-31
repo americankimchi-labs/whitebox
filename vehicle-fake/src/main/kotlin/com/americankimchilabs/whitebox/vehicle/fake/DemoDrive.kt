@@ -2,8 +2,11 @@ package com.americankimchilabs.whitebox.vehicle.fake
 
 import com.americankimchilabs.whitebox.core.Clock
 import com.americankimchilabs.whitebox.core.LocationSource
+import com.americankimchilabs.whitebox.domain.CruiseState
 import com.americankimchilabs.whitebox.domain.GearPosition
+import com.americankimchilabs.whitebox.domain.Lamp
 import com.americankimchilabs.whitebox.domain.LocationFix
+import com.americankimchilabs.whitebox.domain.RoadContextType
 import com.americankimchilabs.whitebox.domain.TurnSignalState
 import com.americankimchilabs.whitebox.domain.VehicleSignal
 import kotlinx.coroutines.delay
@@ -13,8 +16,10 @@ import kotlin.math.cos
 
 /**
  * The demo drive (≈75 s), shared by the replay mode and tools/virtual-console/demo.py so both tell the same story:
- * pull out of Park, lane changes with turn signals, an ordinary brake, then a hard brake (ALERT) that ends in a
- * crash-profile speed drop (TRIGGERED, primary ΔV), stillness → the capsule seals, back to Park.
+ * the driving context at the start (belt, door, lamps, wipers, cruise, speed limit), parking brake off and out of
+ * Park, lane changes with turn signals, an ordinary brake, then a hard brake (ALERT, a near-miss capsule) that ends
+ * in a crash-profile speed drop (TRIGGERED, primary ΔV, the capsule escalates), stillness → the capsule seals,
+ * back to Park.
  *
  * Speed is emitted continuously at 10 Hz like PERF_VEHICLE_SPEED; everything else on change.
  */
@@ -90,7 +95,15 @@ object DemoDrive {
         now(VehicleSignal.BrakePedal(true))
         now(VehicleSignal.TurnSignal(TurnSignalState.OFF))
         now(VehicleSignal.SteeringAngle(0f))
+        now(VehicleSignal.ParkingBrake(true))
+        now(VehicleSignal.SeatBelt("ROW_1_LEFT", buckled = true))
+        now(VehicleSignal.Door("ROW_1_LEFT", open = false))
+        now(VehicleSignal.Light(Lamp.LOW_BEAM, on = true))
+        now(VehicleSignal.Wiper("FRONT_WINDSHIELD", "OFF"))
+        now(VehicleSignal.CruiseControl(CruiseState.ENABLED))
+        now(VehicleSignal.RoadContext(RoadContextType.SPEED_LIMIT, "60"))
         speed(3_000) // parked
+        now(VehicleSignal.ParkingBrake(false))
         now(VehicleSignal.Gear(GearPosition.DRIVE))
         speed(1_000)
         now(VehicleSignal.BrakePedal(false))

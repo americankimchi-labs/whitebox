@@ -3,6 +3,7 @@ package com.americankimchilabs.whitebox.core
 import com.americankimchilabs.whitebox.domain.DriveEvent
 import com.americankimchilabs.whitebox.domain.IncidentCapsule
 import com.americankimchilabs.whitebox.domain.LocationFix
+import com.americankimchilabs.whitebox.domain.MotionWindow
 import com.americankimchilabs.whitebox.domain.SignalKind
 import com.americankimchilabs.whitebox.domain.SignalSample
 import com.americankimchilabs.whitebox.domain.Timestamp
@@ -23,6 +24,14 @@ interface VehicleSignalSource {
     suspend fun supportedKinds(): Set<SignalKind>
 
     fun samples(): Flow<SignalSample>
+}
+
+/**
+ * The head unit's own accelerometer, averaged into short windows (cold flow; collecting starts the sensor).
+ * Empty when the unit has no accelerometer.
+ */
+interface MotionSource {
+    fun windows(): Flow<MotionWindow>
 }
 
 /** Cold flow of location fixes; collecting starts updates. */

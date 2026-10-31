@@ -26,8 +26,9 @@ import kotlin.coroutines.resume
 private const val TAG = "WhiteBox/Pleos"
 
 /**
- * Brake, turn signal, steering angle and airbag from the Pleos Vehicle SDK 2.3.2. Gear is not read here:
- * the SDK's Gear domain is @Deprecated ("use the Google GEAR_SELECTION property"), see [CarPropertySignalSource].
+ * Brake, turn signal, steering angle and airbag from the Pleos Vehicle SDK 2.3.2, plus the driving context
+ * ([PleosContextSignals]). Gear is not read here: the SDK's Gear domain is @Deprecated ("use the Google
+ * GEAR_SELECTION property"), see [CarPropertySignalSource].
  *
  * One [Vehicle] per source, initialized on first use; [close] releases it.
  */
@@ -39,6 +40,7 @@ class PleosSignalSource(
     private val vehicle: Vehicle by lazy {
         Vehicle(context.applicationContext).also { it.initialize() }
     }
+    private val contextSignals by lazy { PleosContextSignals(vehicle) }
 
     override suspend fun supportedKinds(): Set<SignalKind> = buildSet {
         if (probe { ok, fail -> vehicle.getBrake().checkBrakePedalStatusCapabilities({ ok() }, fail) }) {
@@ -51,6 +53,7 @@ class PleosSignalSource(
             add(SignalKind.STEERING_ANGLE)
         }
         if (airbagSeats().isNotEmpty()) add(SignalKind.AIRBAG)
+        addAll(contextSignals.supportedKinds())
     }
 
     override fun samples(): Flow<SignalSample> = callbackFlow {
@@ -96,8 +99,10 @@ class PleosSignalSource(
         turnSignal.registerTurnSignalState(turnListener)
         steering.registerSteeringWheelAngle(steeringListener)
         airbagListeners.forEach { (seat, listener) -> safety.registerSeatAirbagDeployed(seat, listener) }
+        val contextOff = contextSignals.register(::send)
 
         awaitClose {
+            contextOff.forEach { it() }
             brake.unregisterBrakePedalStatus(brakeListener)
             turnSignal.unregisterTurnSignalState(turnListener)
             steering.unregisterSteeringWheelAngle(steeringListener)
@@ -132,5 +137,3 @@ private fun TurnSignalValue.toDomain() = when (this) {
     TurnSignalValue.LEFT -> TurnSignalState.LEFT
     TurnSignalValue.RIGHT -> TurnSignalState.RIGHT
 }
-
-private fun SeatArea.label(): String = values.joinToString("+") { it.name }

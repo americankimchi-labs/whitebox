@@ -29,11 +29,13 @@ import java.io.Closeable
 private const val TAG = "WhiteBox/AAOS"
 
 /**
- * Speed, gear and ignition from AAOS CarPropertyManager:
+ * Speed, gear, ignition and parking brake from AAOS CarPropertyManager:
  * - speed: the Pleos SDK has no speed domain. Needs android.car.permission.CAR_SPEED, a runtime
  *   (dangerous) grant; without it speed is reported unsupported.
  * - gear: the Pleos Gear domain is @Deprecated in favor of GEAR_SELECTION. Needs CAR_POWERTRAIN (normal).
  * - ignition: CAR_POWERTRAIN (normal).
+ * - parking brake (PARKING_BRAKE_ON): CAR_POWERTRAIN (normal); the Pleos SDK exposes it only as a telltale, which
+ *   needs a private permission.
  *
  * The car service can restart under us (seen right after a cold boot). Connecting without a lifecycle listener makes
  * the car library kill this process when that happens, so we connect with one and re-subscribe each time the
@@ -70,6 +72,7 @@ class CarPropertySignalSource(
             if (speedPermitted() && has(VehiclePropertyIds.PERF_VEHICLE_SPEED)) add(SignalKind.SPEED)
             if (has(VehiclePropertyIds.GEAR_SELECTION)) add(SignalKind.GEAR)
             if (has(VehiclePropertyIds.IGNITION_STATE)) add(SignalKind.IGNITION)
+            if (has(VehiclePropertyIds.PARKING_BRAKE_ON)) add(SignalKind.PARKING_BRAKE)
         }
     }
 
@@ -83,6 +86,7 @@ class CarPropertySignalSource(
                     VehiclePropertyIds.PERF_VEHICLE_SPEED -> VehicleSignal.Speed(value.value as Float)
                     VehiclePropertyIds.GEAR_SELECTION -> VehicleSignal.Gear(gearOf(value.value as Int))
                     VehiclePropertyIds.IGNITION_STATE -> VehicleSignal.Ignition(ignitionOf(value.value as Int))
+                    VehiclePropertyIds.PARKING_BRAKE_ON -> VehicleSignal.ParkingBrake(value.value as Boolean)
                     else -> return
                 }
                 trySendBlocking(SignalSample(signal, receivedAt, sourceElapsedNanos = value.timestamp))
@@ -104,8 +108,8 @@ class CarPropertySignalSource(
                     Log.w(TAG, "CAR_SPEED not granted; speed disabled")
                 }
                 p.registerCallback(callback, VehiclePropertyIds.GEAR_SELECTION, CarPropertyManager.SENSOR_RATE_ONCHANGE)
-                if (p.getCarPropertyConfig(VehiclePropertyIds.IGNITION_STATE) != null) {
-                    p.registerCallback(callback, VehiclePropertyIds.IGNITION_STATE, CarPropertyManager.SENSOR_RATE_ONCHANGE)
+                for (id in listOf(VehiclePropertyIds.IGNITION_STATE, VehiclePropertyIds.PARKING_BRAKE_ON)) {
+                    if (p.getCarPropertyConfig(id) != null) p.registerCallback(callback, id, CarPropertyManager.SENSOR_RATE_ONCHANGE)
                 }
             }
         }

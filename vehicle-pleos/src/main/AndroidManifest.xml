@@ -2,16 +2,24 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Exactly what the typed calls need. Never CONTROL_* or PRIVATE_*. -->
-    <!-- Brake, steering angle -->
+    <!-- Brake, steering angle, cruise control, odometer -->
     <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />
-    <!-- Turn signal -->
+    <!-- Turn signal, low/high beam, tail lamps -->
     <uses-permission android:name="pleos.car.permission.CAR_LIGHTS" />
     <!-- Airbag deployed -->
     <uses-permission android:name="pleos.car.permission.CAR_SAFETY" />
+    <!-- Door positions -->
+    <uses-permission android:name="pleos.car.permission.CAR_DOORS" />
+    <!-- Seat belts, seat occupancy -->
+    <uses-permission android:name="pleos.car.permission.CAR_SEATS" />
+    <!-- Wiper state, window positions -->
+    <uses-permission android:name="pleos.car.permission.CAR_WINDOWS" />
+    <!-- EV instantaneous efficiency -->
+    <uses-permission android:name="pleos.car.permission.CAR_ENERGY" />
 
     <!-- AAOS speed: dangerous, granted at runtime during first-run setup while parked. -->
     <uses-permission android:name="android.car.permission.CAR_SPEED" />
-    <!-- AAOS gear (GEAR_SELECTION) and ignition state -->
+    <!-- AAOS gear (GEAR_SELECTION), ignition state, parking brake (PARKING_BRAKE_ON) -->
     <uses-permission android:name="android.car.permission.CAR_POWERTRAIN" />
 
 </manifest>

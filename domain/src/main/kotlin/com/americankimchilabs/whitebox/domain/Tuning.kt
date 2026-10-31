@@ -94,6 +94,21 @@ object Tuning {
     const val BRAKE_RISE_KMH = 12
     const val BRAKE_RISE_STEP_KMH = 1
 
+    /**
+     * Brake held without slowing. On speed alone this is identical to drag braking downhill, so it counts only when
+     * recorded road grades cover the whole hold and never drop below −BRAKE_NO_DECEL_MIN_GRADE_PCT (flat or uphill:
+     * the brake should be slowing the car, so something is pushing it) and no downhill caution area is active.
+     * On the Pleos Connect emulator no grade is ever recorded (its accelerometer does not move with the simulated
+     * drive), so this pattern cannot fire there; BRAKE_SPEED_RISE covers unintended acceleration on speed alone.
+     */
+    const val BRAKE_NO_DECEL_HELD_MS = 3000
+    const val BRAKE_NO_DECEL_MIN_KMH = 40
+    const val BRAKE_NO_DECEL_MAX_DROP_KMH = 1
+    const val BRAKE_NO_DECEL_MIN_GRADE_PCT = 2
+
+    /** A road grade older than this does not count as the current grade. */
+    const val GRADE_STALE_MS = 1500
+
     /** Repeated brake presses while moving. */
     const val BRAKE_PUMP_COUNT = 3
     const val BRAKE_PUMP_WINDOW_MS = 3000

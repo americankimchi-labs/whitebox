@@ -103,8 +103,9 @@ enum class CapsuleTrigger(val severe: Boolean, val unit: MeasureUnit = MeasureUn
     BRAKE_SPEED_RISE(false),
 
     /**
-     * Brake held without slowing down. Indistinguishable from drag braking downhill on speed alone, so it needs a
-     * road-grade or motor-power signal before it may fire; not raised until one is available.
+     * Brake held without slowing down on a road known not to be downhill. On speed alone it is indistinguishable
+     * from drag braking downhill, so it fires only while a road grade is recorded (see Tuning) — on a real vehicle with
+     * a head-unit accelerometer, never on the emulator.
      */
     BRAKE_NO_DECEL(false),
 

@@ -89,6 +89,8 @@ fun contextSignals(): List<VehicleSignal> = listOf(
     VehicleSignal.ParkingBrake(true),
     VehicleSignal.RoadContext(RoadContextType.SPEED_LIMIT, "50"),
     VehicleSignal.RoadContext(RoadContextType.CAUTION_POINT, "SCHOOL_ZONE"),
+    VehicleSignal.RoadGrade(-6.25f),
+    VehicleSignal.EvEfficiency(5.4f),
     VehicleSignal.AcceleratorPedal(42.5f),
     VehicleSignal.BrakePressure(87.5f),
 )

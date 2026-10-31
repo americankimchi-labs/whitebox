@@ -378,6 +378,69 @@ class EscalationEngineTest {
         assertTrue(tr.triggers.isEmpty())
     }
 
+    /** [ms] at a steady [kmh] with the brake as it is, a road grade every second. */
+    private fun Trace.steadyWithGrade(ms: Long, kmh: Float, gradePct: Float) {
+        for (i in 0 until ms / 100) {
+            if (i % 10 == 0L) signal(VehicleSignal.RoadGrade(gradePct))
+            step(kmh)
+        }
+    }
+
+    @Test
+    fun brakeHeldWithoutSlowingOnAFlatRoadIsKept() {
+        val tr = Trace()
+        tr.steadyWithGrade(3_000, 80f, 0.5f)
+        tr.brake(true)
+        tr.steadyWithGrade(3_500, 80f, 0.5f)
+        val trig = tr.triggers.single()
+        assertEquals(CapsuleTrigger.BRAKE_NO_DECEL, trig.trigger)
+        assertEquals(0f, trig.measured, 0.01f)
+    }
+
+    @Test
+    fun brakeHeldWithoutSlowingUphillIsKept() {
+        val tr = Trace()
+        tr.steadyWithGrade(3_000, 60f, 6f)
+        tr.brake(true)
+        tr.steadyWithGrade(3_500, 60f, 6f)
+        assertEquals(CapsuleTrigger.BRAKE_NO_DECEL, tr.triggers.single().trigger)
+    }
+
+    @Test
+    fun dragBrakingDownhillAtSteadySpeedIsNothing() {
+        val tr = Trace()
+        tr.steadyWithGrade(3_000, 60f, -6f)
+        tr.brake(true)
+        tr.steadyWithGrade(6_000, 60f, -6f)
+        assertTrue(tr.triggers.isEmpty())
+    }
+
+    @Test
+    fun aDownhillCautionAreaSuppressesItEvenOnAMisreadGrade() {
+        val tr = Trace()
+        tr.signal(VehicleSignal.RoadContext(RoadContextType.CAUTION_POINT, "DOWNHILL_CAUTION_AREA"))
+        tr.steadyWithGrade(3_000, 60f, 0f)
+        tr.brake(true)
+        tr.steadyWithGrade(4_000, 60f, 0f)
+        assertTrue(tr.triggers.isEmpty())
+        tr.signal(VehicleSignal.RoadContext(RoadContextType.CAUTION_POINT, "NONE"))
+        tr.brake(false)
+        tr.steadyWithGrade(1_000, 60f, 0f)
+        tr.brake(true)
+        tr.steadyWithGrade(3_500, 60f, 0f)
+        assertEquals(CapsuleTrigger.BRAKE_NO_DECEL, tr.triggers.single().trigger)
+    }
+
+    @Test
+    fun gradeThatStopsArrivingMidHoldDoesNotCount() {
+        val tr = Trace()
+        tr.steadyWithGrade(3_000, 80f, 0f)
+        tr.brake(true)
+        tr.steadyWithGrade(1_000, 80f, 0f)
+        tr.ramp(3_000, 80f) // the grade source went quiet
+        assertTrue(tr.triggers.isEmpty())
+    }
+
     @Test
     fun brakeHeldAtSteadySpeedIsNotFlaggedWithoutAGradeSignal() {
         val tr = Trace()

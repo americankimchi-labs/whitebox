@@ -54,6 +54,12 @@ class EscalationEngine {
     private var brakeReleasedNs: Long? = null
     private val brakePresses = ArrayDeque<Long>()
     private var riseFired = false
+    private var noDecelFired = false
+    private var lastGradePct: Float? = null
+    private var lastGradeNs = 0L
+    private var holdMinGradePct: Float? = null
+    private var holdGradeSinceNs: Long? = null
+    private var downhillCaution = false
     private var lurchFired = false
     private var steer: SteerPoint? = null
     private var steerOver = false
@@ -103,6 +109,17 @@ class EscalationEngine {
                     }
                     parkingBrake = s.engaged
                 }
+                is VehicleSignal.RoadGrade -> {
+                    lastGradePct = s.percent
+                    lastGradeNs = nowNs
+                    if (brakeOn) {
+                        holdMinGradePct = minOf(holdMinGradePct ?: s.percent, s.percent)
+                        if (holdGradeSinceNs == null) holdGradeSinceNs = nowNs
+                    }
+                }
+                is VehicleSignal.RoadContext -> if (s.type == RoadContextType.CAUTION_POINT) {
+                    if (s.value == DOWNHILL_CAUTION) downhillCaution = true else if (s.value == "NONE") downhillCaution = false
+                }
                 is VehicleSignal.Door -> {
                     val kmh = currentKmh(nowNs)
                     val danger = lastDangerNs
@@ -124,6 +141,11 @@ class EscalationEngine {
         if (!brakeOn && pressed) {
             brakeOnSinceNs = nowNs
             riseFired = false
+            noDecelFired = false
+            // A grade from just before the press covers the start of the hold.
+            val fresh = lastGradePct?.takeIf { ms(nowNs - lastGradeNs) <= Tuning.GRADE_STALE_MS }
+            holdMinGradePct = fresh
+            holdGradeSinceNs = fresh?.let { nowNs }
             val kmh = currentKmh(nowNs)
             if (kmh != null && kmh >= Tuning.BRAKE_PUMP_MIN_KMH) {
                 brakePresses.addLast(nowNs)
@@ -178,6 +200,7 @@ class EscalationEngine {
         evaluateTriggers(now, out)
         if (level == EscalationLevel.NORMAL) evaluateHardBrake(now, out)
         evaluateBrakeRise(now, out)
+        evaluateNoDecel(now, out)
         evaluateLurch(now, out)
         if (level == EscalationLevel.ALERT) evaluateCalm(now, out)
         evaluateKeepPrompt(now, out)
@@ -238,6 +261,23 @@ class EscalationEngine {
         if (gain < Tuning.BRAKE_RISE_KMH) return
         riseFired = true
         trigger(CapsuleTrigger.BRAKE_SPEED_RISE, now.seq, gain, now.tNs, out)
+    }
+
+    /** Brake held [Tuning.BRAKE_NO_DECEL_HELD_MS] at speed without slowing, on a road known not to be downhill. */
+    private fun evaluateNoDecel(now: SpeedPoint, out: MutableList<EngineOutput>) {
+        if (!brakeOn || noDecelFired || downhillCaution || ms(now.tNs - brakeOnSinceNs) < Tuning.BRAKE_NO_DECEL_HELD_MS) return
+        // Grade must cover the hold from its start up to now, and never be downhill.
+        val since = holdGradeSinceNs ?: return
+        val minGrade = holdMinGradePct ?: return
+        if (ms(since - brakeOnSinceNs) > Tuning.GRADE_STALE_MS || ms(now.tNs - lastGradeNs) > Tuning.GRADE_STALE_MS) return
+        if (minGrade < -Tuning.BRAKE_NO_DECEL_MIN_GRADE_PCT) return
+        val sinceOn = speeds.filter { it.tNs >= brakeOnSinceNs }
+        val first = sinceOn.firstOrNull() ?: return
+        if (ms(now.tNs - first.tNs) < Tuning.BRAKE_NO_DECEL_HELD_MS - SAMPLE_SLACK_MS) return // history broken by a gap
+        if (sinceOn.any { it.kmh < Tuning.BRAKE_NO_DECEL_MIN_KMH }) return
+        if (first.kmh - now.kmh > Tuning.BRAKE_NO_DECEL_MAX_DROP_KMH) return
+        noDecelFired = true
+        trigger(CapsuleTrigger.BRAKE_NO_DECEL, now.seq, now.kmh - first.kmh, now.tNs, out)
     }
 
     /** From standstill (at least [Tuning.LURCH_STILL_MS]) to [Tuning.LURCH_KMH] within [Tuning.LURCH_WINDOW_MS]. */
@@ -349,5 +389,8 @@ class EscalationEngine {
 
         /** Steering samples closer than this are not differenced (rate would be noise). */
         const val MIN_STEER_GAP_MS = 20
+
+        /** The navigation's downhill caution area: a known descent, where a held brake at steady speed is normal. */
+        const val DOWNHILL_CAUTION = "DOWNHILL_CAUTION_AREA"
     }
 }

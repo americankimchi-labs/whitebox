@@ -19,6 +19,7 @@ import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.GearPosition
 import com.americankimchilabs.whitebox.domain.RecorderEvent
 import com.americankimchilabs.whitebox.domain.RecorderPermission
+import com.americankimchilabs.whitebox.domain.SignalSample
 import com.americankimchilabs.whitebox.domain.SessionRecord
 import com.americankimchilabs.whitebox.domain.StartReason
 import com.americankimchilabs.whitebox.domain.VehicleSignal
@@ -27,6 +28,8 @@ import com.americankimchilabs.whitebox.domain.classifyStart
 import com.americankimchilabs.whitebox.platform.AndroidClock
 import com.americankimchilabs.whitebox.platform.LoggingMirror
 import com.americankimchilabs.whitebox.platform.PlatformLocationSource
+import com.americankimchilabs.whitebox.platform.PlatformMotionSource
+import com.americankimchilabs.whitebox.platform.RoadGradeTracker
 import com.americankimchilabs.whitebox.platform.SessionFile
 import com.americankimchilabs.whitebox.platform.bootCount
 import com.americankimchilabs.whitebox.platform.recorderGrants
@@ -39,6 +42,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import java.io.Closeable
@@ -65,6 +69,9 @@ class RecorderService : LifecycleService() {
     private var session: SessionRecord? = null
     private var grants: Set<RecorderPermission>? = null
     private var gear: GearPosition? = null
+
+    /** Road grade from the head unit's accelerometer (live only); its learned mounting survives restarts. */
+    private val grade by lazy { RoadGradeTracker(java.io.File(filesDir, "motion-mount")) }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
@@ -150,7 +157,10 @@ class RecorderService : LifecycleService() {
     private fun sources(m: SourceMode): Pair<Flow<ChainEntry>, Flow<ChainEntry>> = when (m) {
         SourceMode.LIVE -> {
             val vehicle = RealVehicleSignalSource(this, AndroidClock).also { closeSource = it }
-            vehicle.samples().map { ChainEntry.Signal(it) } to
+            val grades = PlatformMotionSource(this).windows().mapNotNull { w ->
+                grade.onWindow(w)?.let { ChainEntry.Signal(SignalSample(VehicleSignal.RoadGrade(it), AndroidClock.now())) }
+            }
+            merge(vehicle.samples().map { ChainEntry.Signal(it) }, grades) to
                 PlatformLocationSource(this, AndroidClock).fixes().map { ChainEntry.Location(it) }
         }
         SourceMode.REPLAY -> ScriptedSignalSource(DemoDrive.signals(), AndroidClock).samples().map { ChainEntry.Signal(it) } to
@@ -162,6 +172,9 @@ class RecorderService : LifecycleService() {
         for (entry in inbox) {
             val event = recorder.record(entry)
             val signal = (entry as? ChainEntry.Signal)?.sample?.signal
+            if (signal is VehicleSignal.Speed && mode == SourceMode.LIVE) {
+                grade.onSpeed(entry.sample.sourceElapsedNanos ?: entry.sample.receivedAt.elapsedNanos, signal.metersPerSecond)
+            }
             if (signal is VehicleSignal.Gear) {
                 val wasParked = gear == GearPosition.PARK
                 gear = signal.position

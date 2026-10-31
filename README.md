@@ -29,7 +29,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 - JDK 17, Android SDK 35가 필요합니다. SDK 위치는 `ANDROID_HOME` 환경변수 또는 `local.properties`의 `sdk.dir`로 지정합니다.
 - Pleos Vehicle SDK는 `https://nexus-playground.pleos.ai/repository/maven-releases/`에서 받으므로 네트워크가 필요합니다.
-- 단위 테스트: `./gradlew test` (39개 — 에스컬레이션 엔진, 해시 체인 내구성·변조 속성 테스트, 데모 주행 엔드투엔드 재생)
+- 단위 테스트: `./gradlew test` (71개 — 에스컬레이션 엔진과 위험 패턴, 도로 경사 추정, 해시 체인 내구성·변조 속성 테스트, 데모 주행 엔드투엔드 재생)
 - 릴리스 빌드는 `local.properties`의 서명 정보를 읽습니다(`app/build.gradle.kts` 주석 참고). 서명 정보가 없으면 서명되지 않은 릴리스가 만들어지고 디버그 빌드에는 영향이 없습니다.
 
 ## 테스트 환경
@@ -83,6 +83,10 @@ tools/tamper-demo/run.sh
 - **설치 직후 재부팅은 70초 이상 기다릴 것**: 설치 직후의 앱은 'stopped' 상태라 부팅 브로드캐스트를 받지 못하고, 첫 실행으로 풀린 상태가 저장되기까지 시간이 걸립니다(7.8초 뒤 재부팅 시 재현, 70초 뒤에는 정상). '강제 종료'한 경우에도 앱을 다시 열 때까지 자동 시작되지 않으며, 그 공백은 다음 기록 시작 시 체인에 남습니다.
 - 공식 가이드에 따르면 실차는 시동을 끄면 완전히 종료되지 않고 저전력 Suspend 모드로 들어갑니다. 이 에뮬레이터 이미지는 시동을 끄면 완전 종료하므로 Suspend·Resume 동작은 에뮬레이터로 검증할 수 없습니다.
 - 시스템 권한 창의 문구는 에뮬레이터 언어 설정을 따릅니다(영어 설정에서는 'Allow all the time' = '항상 허용').
+- **도로 경사는 실차에서만**: 헤드유닛 가속도계로 도로 경사를 계산하지만(장착 방향은 주행 중 속도 변화로 자동 학습, 양산 헤드유닛의 가속도계 탑재 여부는 Pleos 확인 필요), 에뮬레이터의 가속도계는 Virtual Console 주행과 무관한 고정값이라 경사가 기록되지 않습니다. 그래서 내리막 제동과 구분해야 하는 '브레이크를 밟는데 감속 없음' 패턴은 에뮬레이터에서 동작하지 않고, 급발진 시연은 경사와 무관한 '브레이크를 3초 이상 밟은 채 속도 상승'(3초에 12 km/h 이상, 매초 상승)으로 합니다.
+- **내비게이션 도로 정보**: 에뮬레이터의 내비게이션 위치는 콘솔 주행을 따라가지 않아 제한속도가 항상 0이고 주의 구간·단속 카메라 안내가 나오지 않습니다. 앱은 변화를 기록하고, 내리막 주의 구간에서는 감속 없음 패턴을 끄도록 구현되어 있습니다.
+- **EV 순간 효율**: 이 이미지는 지원하지 않아 구독하지 않습니다. 지원 차량에서는 값만 기록하고 해석하지 않습니다(단위 미확인).
+- **바퀴 회전 신호(`WHEEL_TICK`)**는 고정된 자리값만 나와 사용하지 않습니다.
 - 조향각 부호: SDK는 콘솔 각도를 반대 부호로 전달하며, 공식 문서에 부호 규약이 없어 증거 패킷은 좌/우 표기 없이 부호 있는 각도로만 표시합니다.
 
 ## 기록과 무결성
@@ -96,8 +100,11 @@ tools/tamper-demo/run.sh
 
 | 사용 | 권한 |
 |---|---|
-| Vehicle SDK 2.3.2: 브레이크, 방향지시등, 조향각, 에어백 | `pleos.car.permission.CAR_DRIVE`, `CAR_LIGHTS`, `CAR_SAFETY` (normal) |
-| AAOS CarPropertyManager: 속도, 기어 | `android.car.permission.CAR_SPEED` (런타임), `CAR_POWERTRAIN` |
+| Vehicle SDK 2.3.2: 브레이크, 방향지시등, 조향각, 에어백, 크루즈, 주행거리, 조명 | `pleos.car.permission.CAR_DRIVE`, `CAR_LIGHTS`, `CAR_SAFETY` (normal) |
+| Vehicle SDK 2.3.2: 문, 안전벨트·착석, 와이퍼·창문, EV 순간 효율 | `pleos.car.permission.CAR_DOORS`, `CAR_SEATS`, `CAR_WINDOWS`, `CAR_ENERGY` (normal) |
+| NaviHelper 3.0.5: 제한속도, 주의 구간, 단속 카메라 (이벤트 수신만) | 권한 없음 |
+| AAOS CarPropertyManager: 속도, 기어, 시동 상태, 주차 브레이크 | `android.car.permission.CAR_SPEED` (런타임), `CAR_POWERTRAIN` |
+| 플랫폼 가속도계: 도로 경사 | 권한 없음 |
 | 플랫폼 위치 | 위치, 위치 '항상 허용' |
 | 부팅 시 자동 기록 | `RECEIVE_BOOT_COMPLETED`, 포그라운드 서비스(`specialUse`, `location`) |
 

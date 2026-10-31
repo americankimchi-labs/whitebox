@@ -150,7 +150,7 @@ class Labels(private val res: Resources) {
     fun wiper(mode: String) = when {
         mode == "OFF" -> res.getString(R.string.state_off)
         mode == "AUTO" -> res.getString(R.string.wiper_auto)
-        mode.startsWith("CONTINUOUS") || mode.startsWith("INTERMITTENT") || mode == "LOW" || mode == "HIGH" -> res.getString(R.string.wiper_running)
+        mode == "ON" || mode.startsWith("CONTINUOUS") || mode.startsWith("INTERMITTENT") || mode == "LOW" || mode == "HIGH" -> res.getString(R.string.wiper_running)
         else -> mode
     }
 
@@ -195,6 +195,7 @@ class Labels(private val res: Resources) {
             // Not listed: continuous or slow-changing values the packet shows as context instead.
             is VehicleSignal.SteeringAngle, is VehicleSignal.Speed, is VehicleSignal.Ignition, is VehicleSignal.Telltale,
             is VehicleSignal.CruiseTargetSpeed, is VehicleSignal.Odometer, is VehicleSignal.SeatOccupancy, is VehicleSignal.Window,
+            is VehicleSignal.RoadGrade, is VehicleSignal.EvEfficiency,
             is VehicleSignal.AcceleratorPedal, is VehicleSignal.BrakePressure -> null
         }
         is ChainEntry.Location -> null
