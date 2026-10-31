@@ -45,6 +45,7 @@
     <string name="row_gear">기어 %1$s</string>
     <string name="row_airbag">에어백 전개 (%1$s)</string>
     <string name="row_door">%1$s 문 %2$s</string>
+    <string name="row_lid">%1$s %2$s</string>
     <string name="row_seat_belt">%1$s 안전벨트 %2$s</string>
     <string name="row_parking_brake">주차 브레이크 %1$s</string>
     <string name="row_light">%1$s %2$s</string>
@@ -63,6 +64,11 @@
     <string name="area_passenger">조수석</string>
     <string name="area_rear_left">뒷좌석 왼쪽</string>
     <string name="area_rear_right">뒷좌석 오른쪽</string>
+    <string name="area_rear_center">뒷좌석 가운데</string>
+    <string name="area_hood">후드</string>
+    <string name="area_trunk">트렁크</string>
+    <string name="area_front_wiper">앞</string>
+    <string name="area_rear_wiper">뒤</string>
     <string name="lamp_low">하향등</string>
     <string name="lamp_high">상향등</string>
     <string name="lamp_tail">미등</string>
@@ -131,12 +137,6 @@
     <string name="window_no_decel">제동 유지 3초</string>
     <string name="window_lurch">정지 후 1초 이내</string>
 
-    <!-- Incident prompt -->
-    <string name="incident_title">방금 상황을 보관할까요?</string>
-    <string name="incident_body">방금 전후 기록은 이미 봉인된 캡슐로 저장되었습니다. 보관하지 않으면 내 보관함에서만 빠집니다.</string>
-    <string name="incident_keep">보관</string>
-    <string name="incident_drop">아니요</string>
-
     <!-- Evidence packet -->
     <string name="packet_title">증거 패킷</string>
     <string name="packet_back">← 목록</string>
@@ -160,7 +160,44 @@
     <string name="packet_hash">체인 해시</string>
     <string name="packet_key">기기 서명 키</string>
     <string name="packet_qr">QR\n(폰 열람 링크)</string>
-    <string name="packet_trace">사건 전후 속도 (−10초 ~ +3초)</string>
+    <string name="packet_lanes">감지 전후 (−10초 ~ +5초)</string>
+    <string name="packet_no_data">기록 없음</string>
+    <string name="lane_speed">속도</string>
+    <string name="lane_steering">조향</string>
+    <string name="lane_brake">브레이크</string>
+    <string name="lane_turn">방향지시등</string>
+    <string name="lane_gear">기어</string>
+    <string name="lane_cause">감지</string>
+    <string name="lane_left">좌</string>
+    <string name="lane_right">우</string>
+
+    <string name="packet_lines">감지 직전 조작</string>
+    <string name="line_before">%1$s · 감지 %2$.1f초 전</string>
+    <string name="line_held">%1$s · 기록 내내 유지</string>
+    <string name="line_brake_on">브레이크 밟음</string>
+    <string name="line_brake_off">브레이크 뗌</string>
+    <string name="line_turn">방향지시등 %1$s</string>
+    <string name="line_gear">기어 %1$s</string>
+    <string name="line_steering_peak">최대 조향 %1$s</string>
+    <string name="line_high_beam_flash">상향등 번쩍임</string>
+
+    <string name="packet_context">주행 맥락 (감지 시점)</string>
+    <string name="ctx_belts">안전벨트</string>
+    <string name="ctx_occupancy">착석</string>
+    <string name="ctx_doors">문</string>
+    <string name="ctx_windows">창문 위치</string>
+    <string name="ctx_lamps">조명</string>
+    <string name="ctx_wipers">와이퍼</string>
+    <string name="ctx_cruise">크루즈</string>
+    <string name="ctx_parking_brake">주차 브레이크</string>
+    <string name="ctx_speed_limit">제한속도</string>
+    <string name="ctx_road">주의 구간</string>
+    <string name="ctx_all_closed">모두 닫힘</string>
+    <string name="ctx_open">열림: %1$s</string>
+    <string name="ctx_nobody">없음</string>
+    <string name="ctx_unknown">정보 없음</string>
+    <string name="ctx_item">%1$s %2$s</string>
+    <string name="ctx_cruise_target">%1$s · 설정 %2$.0f km/h</string>
 
     <!-- First run -->
     <string name="intro_title">White Box는 운전자의 조작을 기록합니다</string>

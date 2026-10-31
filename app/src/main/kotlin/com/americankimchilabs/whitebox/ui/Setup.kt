@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -100,7 +101,7 @@ private fun Intro(onStart: () -> Unit) {
     Point(R.string.intro_where_title, R.string.intro_where)
     Point(R.string.intro_whose_title, R.string.intro_whose)
     Spacer(Modifier.height(32.dp))
-    Button(onClick = onStart) { Text(stringResource(R.string.intro_start), style = MaterialTheme.typography.titleMedium) }
+    Button(onClick = onStart, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.intro_start), style = MaterialTheme.typography.titleMedium) }
 }
 
 @Composable
@@ -117,8 +118,8 @@ private fun Step(step: SetupStep, index: Int, total: Int, onAllow: () -> Unit, o
     Text(stringResource(step.body), style = MaterialTheme.typography.bodyLarge)
     Spacer(Modifier.height(32.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        Button(onClick = onAllow) { Text(stringResource(R.string.step_allow), style = MaterialTheme.typography.titleMedium) }
-        TextButton(onClick = onSkip) { Text(stringResource(R.string.step_skip), style = MaterialTheme.typography.titleMedium) }
+        Button(onClick = onAllow, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.step_allow), style = MaterialTheme.typography.titleMedium) }
+        TextButton(onClick = onSkip, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.step_skip), style = MaterialTheme.typography.titleMedium) }
     }
 }
 
@@ -136,5 +137,5 @@ private fun Done(steps: List<SetupStep>, context: Context, onDone: () -> Unit) {
         )
     }
     Spacer(Modifier.height(32.dp))
-    Button(onClick = onDone) { Text(stringResource(R.string.done_finish), style = MaterialTheme.typography.titleMedium) }
+    Button(onClick = onDone, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.done_finish), style = MaterialTheme.typography.titleMedium) }
 }

@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -30,12 +30,12 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
@@ -58,7 +58,6 @@ import com.americankimchilabs.whitebox.recorder.ActiveSession
 import com.americankimchilabs.whitebox.recorder.AppGraph
 import com.americankimchilabs.whitebox.recorder.SourceMode
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Latest value of each signal, for the status header. */
@@ -126,7 +125,6 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
 
     val level by recorder.level.collectAsState()
     val capsules by recorder.capsules.collectAsState()
-    val incident by recorder.pendingIncident.collectAsState()
     val parked = live.gear == null || live.gear == GearPosition.PARK
     var open by remember(session) { mutableStateOf<CapsuleSeal?>(null) }
     var tab by remember { mutableIntStateOf(0) }
@@ -134,7 +132,6 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
     var setup by rememberSaveable { mutableStateOf(if (context.recorderGrants().isEmpty()) SetupMode.FIRST_RUN else null) }
     LaunchedEffect(grants) { if (setup == null && grants.isEmpty()) setup = SetupMode.FIRST_RUN }
     var regrantLater by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
 
     // Setup is parked only.
     if (parked && setup == SetupMode.FIRST_RUN) {
@@ -167,8 +164,8 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
             return@Column
         }
         TabRow(selectedTabIndex = tab) {
-            Tab(tab == 0, { tab = 0 }, text = { Text(stringResource(R.string.tab_timeline), style = MaterialTheme.typography.titleMedium) })
-            Tab(tab == 1, { tab = 1 }, text = { Text(stringResource(R.string.tab_capsules, capsules.size), style = MaterialTheme.typography.titleMedium) })
+            Tab(tab == 0, { tab = 0 }, Modifier.ccpFocus(RectangleShape), text = { Text(stringResource(R.string.tab_timeline), style = MaterialTheme.typography.titleMedium) })
+            Tab(tab == 1, { tab = 1 }, Modifier.ccpFocus(RectangleShape), text = { Text(stringResource(R.string.tab_capsules, capsules.size), style = MaterialTheme.typography.titleMedium) })
         }
         Column(Modifier.weight(1f)) {
             when (tab) {
@@ -177,19 +174,9 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(top = 12.dp)) {
-            OutlinedButton(onClick = { onSource(SourceMode.REPLAY) }) { Text(stringResource(R.string.action_replay)) }
-            OutlinedButton(onClick = { onSource(SourceMode.LIVE) }) { Text(stringResource(R.string.action_live)) }
+            OutlinedButton(onClick = { onSource(SourceMode.REPLAY) }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.action_replay)) }
+            OutlinedButton(onClick = { onSource(SourceMode.LIVE) }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.action_live)) }
         }
-    }
-
-    if (incident != null && parked) {
-        AlertDialog(
-            onDismissRequest = {},
-            title = { Text(stringResource(R.string.incident_title), style = MaterialTheme.typography.headlineSmall) },
-            text = { Text(stringResource(R.string.incident_body), style = MaterialTheme.typography.bodyLarge) },
-            confirmButton = { Button({ scope.launch(Dispatchers.IO) { recorder.answerIncident(true) } }) { Text(stringResource(R.string.incident_keep)) } },
-            dismissButton = { TextButton({ scope.launch(Dispatchers.IO) { recorder.answerIncident(false) } }) { Text(stringResource(R.string.incident_drop)) } },
-        )
     }
 }
 
@@ -213,8 +200,8 @@ private fun RegrantBanner(names: String, onAllow: () -> Unit, onLater: () -> Uni
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(stringResource(R.string.regrant_banner, names), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-        Button(onClick = onAllow) { Text(stringResource(R.string.regrant_action)) }
-        TextButton(onClick = onLater) { Text(stringResource(R.string.regrant_later)) }
+        Button(onClick = onAllow, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.regrant_action)) }
+        TextButton(onClick = onLater, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.regrant_later)) }
     }
     Spacer(Modifier.padding(6.dp))
 }
@@ -261,7 +248,7 @@ private fun Timeline(labels: Labels, rows: List<DriveEvent>) {
     // the viewport. Unkeyed, the list anchors by index and the newest row stays in view.
     LazyColumn(Modifier.fillMaxWidth().padding(top = 8.dp)) {
         items(rows) {
-            Row(Modifier.padding(vertical = 6.dp)) {
+            Row(Modifier.fillMaxWidth().ccpRow().padding(vertical = 6.dp)) {
                 Text(labels.time(it.entry.at.wallMillis), color = Color.Gray, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(170.dp))
                 Text("#${it.seq}", color = Color.Gray, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(100.dp))
                 Text(labels.row(it.entry) ?: "", style = MaterialTheme.typography.titleMedium)
@@ -278,7 +265,7 @@ private fun CapsuleList(labels: Labels, capsules: List<CapsuleSeal>, onOpen: (Ca
     }
     LazyColumn(Modifier.fillMaxWidth().padding(top = 8.dp)) {
         items(capsules.reversed(), key = { it.capsule.id }) { s ->
-            Column(Modifier.fillMaxWidth().clickable { onOpen(s) }.padding(vertical = 14.dp)) {
+            Column(Modifier.fillMaxWidth().ccpFocus().clickable { onOpen(s) }.padding(horizontal = 8.dp, vertical = 14.dp)) {
                 Text(labels.trigger(s.capsule.trigger), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 Text(
                     stringResource(

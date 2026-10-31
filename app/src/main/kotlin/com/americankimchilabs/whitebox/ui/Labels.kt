@@ -5,6 +5,8 @@ import com.americankimchilabs.whitebox.R
 import com.americankimchilabs.whitebox.domain.CapsuleTrigger
 import com.americankimchilabs.whitebox.domain.MeasureUnit
 import com.americankimchilabs.whitebox.domain.ChainEntry
+import com.americankimchilabs.whitebox.domain.ControlLine
+import com.americankimchilabs.whitebox.domain.DrivingContext
 import com.americankimchilabs.whitebox.domain.CruiseState
 import com.americankimchilabs.whitebox.domain.EscalationEvent
 import com.americankimchilabs.whitebox.domain.EscalationLevel
@@ -135,6 +137,11 @@ class Labels(private val res: Resources) {
         "ROW_1_RIGHT" -> res.getString(R.string.area_passenger)
         "ROW_2_LEFT" -> res.getString(R.string.area_rear_left)
         "ROW_2_RIGHT" -> res.getString(R.string.area_rear_right)
+        "ROW_2_CENTER" -> res.getString(R.string.area_rear_center)
+        "HOOD" -> res.getString(R.string.area_hood)
+        "REAR" -> res.getString(R.string.area_trunk)
+        "FRONT_WINDSHIELD" -> res.getString(R.string.area_front_wiper)
+        "REAR_WINDSHIELD" -> res.getString(R.string.area_rear_wiper)
         else -> a
     }
 
@@ -175,6 +182,51 @@ class Labels(private val res: Resources) {
         else -> v
     }
 
+    /** One "N s before" line of the evidence packet. */
+    fun controlLine(l: ControlLine): String {
+        val (what, beforeMs) = when (l) {
+            is ControlLine.Brake -> res.getString(if (l.pressed) R.string.line_brake_on else R.string.line_brake_off) to l.beforeMs
+            is ControlLine.Turn -> res.getString(R.string.line_turn, turn(l.state)) to l.beforeMs
+            is ControlLine.Gear -> res.getString(R.string.line_gear, gear(l.position)) to l.beforeMs
+            is ControlLine.SteeringPeak -> res.getString(R.string.line_steering_peak, steering(l.degrees)) to l.beforeMs
+            is ControlLine.HighBeamFlash -> res.getString(R.string.line_high_beam_flash) to l.beforeMs
+        }
+        return if (beforeMs == null) res.getString(R.string.line_held, what) else res.getString(R.string.line_before, what, beforeMs / 1000.0)
+    }
+
+    /** The packet's context rows as (label, value), only for what this car reported. */
+    fun context(c: DrivingContext): List<Pair<String, String>> = buildList {
+        fun items(m: Map<String, String>) = m.entries.joinToString(" · ") { res.getString(R.string.ctx_item, area(it.key), it.value) }
+        if (c.seatBelts.isNotEmpty()) {
+            add(res.getString(R.string.ctx_belts) to items(c.seatBelts.mapValues { res.getString(if (it.value) R.string.belt_on else R.string.belt_off) }))
+        }
+        if (c.occupancy.isNotEmpty()) {
+            val seated = c.occupancy.filterValues { it }.keys.map(::area)
+            add(res.getString(R.string.ctx_occupancy) to (seated.joinToString(" · ").ifEmpty { res.getString(R.string.ctx_nobody) }))
+        }
+        if (c.doors.isNotEmpty()) {
+            val open = c.doors.filterValues { it }.keys.map(::area)
+            add(res.getString(R.string.ctx_doors) to if (open.isEmpty()) res.getString(R.string.ctx_all_closed) else res.getString(R.string.ctx_open, open.joinToString(" · ")))
+        }
+        // Raw positions: the vehicle's range per window is not documented, so no open/closed reading is claimed.
+        if (c.windows.isNotEmpty()) add(res.getString(R.string.ctx_windows) to items(c.windows.mapValues { it.value.toString() }))
+        if (c.lamps.isNotEmpty()) {
+            add(res.getString(R.string.ctx_lamps) to c.lamps.entries.sortedBy { it.key }.joinToString(" · ") {
+                res.getString(R.string.ctx_item, lamp(it.key), res.getString(if (it.value) R.string.state_on else R.string.state_off))
+            })
+        }
+        if (c.wipers.isNotEmpty()) add(res.getString(R.string.ctx_wipers) to items(c.wipers.mapValues { wiper(it.value) }))
+        c.cruise?.let { state ->
+            val target = c.cruiseTargetMps
+            add(res.getString(R.string.ctx_cruise) to if (target != null) res.getString(R.string.ctx_cruise_target, cruise(state), target * 3.6f) else cruise(state))
+        }
+        c.parkingBrake?.let { add(res.getString(R.string.ctx_parking_brake) to res.getString(if (it) R.string.pbrake_on else R.string.pbrake_off)) }
+        if (c.speedLimitKmh != null || c.roadAlerts.isNotEmpty()) {
+            add(res.getString(R.string.ctx_speed_limit) to (c.speedLimitKmh?.let { "$it km/h" } ?: res.getString(R.string.ctx_unknown)))
+        }
+        if (c.roadAlerts.isNotEmpty()) add(res.getString(R.string.ctx_road) to c.roadAlerts.joinToString(" · ") { roadContext(it.second) })
+    }
+
     /** One timeline row, or null for entries the timeline doesn't list (speed, steering, location). */
     fun row(e: ChainEntry): String? = when (e) {
         is ChainEntry.Signal -> when (val s = e.sample.signal) {
@@ -182,7 +234,10 @@ class Labels(private val res: Resources) {
             is VehicleSignal.TurnSignal -> res.getString(R.string.row_turn, turn(s.state))
             is VehicleSignal.Gear -> res.getString(R.string.row_gear, gear(s.position))
             is VehicleSignal.AirbagDeployed -> if (s.deployed) res.getString(R.string.row_airbag, s.seat) else null
-            is VehicleSignal.Door -> res.getString(R.string.row_door, area(s.area), res.getString(if (s.open) R.string.state_open else R.string.state_closed))
+            is VehicleSignal.Door -> res.getString(
+                if (s.area == "HOOD" || s.area == "REAR") R.string.row_lid else R.string.row_door, // hood and trunk are not doors
+                area(s.area), res.getString(if (s.open) R.string.state_open else R.string.state_closed),
+            )
             is VehicleSignal.SeatBelt -> res.getString(R.string.row_seat_belt, area(s.seat), res.getString(if (s.buckled) R.string.belt_on else R.string.belt_off))
             is VehicleSignal.ParkingBrake -> res.getString(R.string.row_parking_brake, res.getString(if (s.engaged) R.string.pbrake_on else R.string.pbrake_off))
             is VehicleSignal.Light -> res.getString(R.string.row_light, lamp(s.lamp), res.getString(if (s.on) R.string.state_on else R.string.state_off))
