@@ -11,6 +11,7 @@ import android.util.Log
 import androidx.core.app.ServiceCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
+import com.americankimchilabs.whitebox.BuildConfig
 import com.americankimchilabs.whitebox.R
 import com.americankimchilabs.whitebox.data.FileEventStore
 import com.americankimchilabs.whitebox.data.Recorder
@@ -23,9 +24,15 @@ import com.americankimchilabs.whitebox.domain.SignalSample
 import com.americankimchilabs.whitebox.domain.SessionRecord
 import com.americankimchilabs.whitebox.domain.StartReason
 import com.americankimchilabs.whitebox.domain.VehicleSignal
+import com.americankimchilabs.whitebox.domain.VoiceLine
 import com.americankimchilabs.whitebox.domain.checkGrants
 import com.americankimchilabs.whitebox.domain.classifyStart
 import com.americankimchilabs.whitebox.platform.AndroidClock
+import com.americankimchilabs.whitebox.platform.FallbackSpeechOutput
+import com.americankimchilabs.whitebox.platform.PlatformAudioBeacon
+import com.americankimchilabs.whitebox.platform.PlatformAudioFocus
+import com.americankimchilabs.whitebox.platform.PlatformConnectivity
+import com.americankimchilabs.whitebox.platform.PlatformSpeechOutput
 import com.americankimchilabs.whitebox.platform.LoggingMirror
 import com.americankimchilabs.whitebox.platform.PlatformLocationSource
 import com.americankimchilabs.whitebox.platform.PlatformMotionSource
@@ -33,9 +40,14 @@ import com.americankimchilabs.whitebox.platform.RoadGradeTracker
 import com.americankimchilabs.whitebox.platform.SessionFile
 import com.americankimchilabs.whitebox.platform.bootCount
 import com.americankimchilabs.whitebox.platform.recorderGrants
+import com.americankimchilabs.whitebox.ui.voiceLineText
 import com.americankimchilabs.whitebox.vehicle.fake.DemoDrive
 import com.americankimchilabs.whitebox.vehicle.fake.ScriptedLocationSource
 import com.americankimchilabs.whitebox.vehicle.fake.ScriptedSignalSource
+import com.americankimchilabs.whitebox.vehicle.pleos.GleoAssistant
+import com.americankimchilabs.whitebox.vehicle.pleos.PleosCredentials
+import com.americankimchilabs.whitebox.vehicle.pleos.PleosPhraseListener
+import com.americankimchilabs.whitebox.vehicle.pleos.PleosSpeechOutput
 import com.americankimchilabs.whitebox.vehicle.pleos.RealVehicleSignalSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -70,6 +82,18 @@ class RecorderService : LifecycleService() {
     private var grants: Set<RecorderPermission>? = null
     private var gear: GearPosition? = null
 
+    private var voiceJob: Job? = null
+
+    /** Speech objects live as long as the service: the car's speech service drops callbacks once a client is gone. */
+    private val credentials by lazy {
+        BuildConfig.PLEOS_CLIENT_ID.takeIf { it.isNotEmpty() }?.let { PleosCredentials(it, BuildConfig.PLEOS_CLIENT_SECRET) }
+    }
+    private val pleosVoice by lazy { PleosSpeechOutput(this, credentials) }
+    private val platformVoice by lazy { PlatformSpeechOutput(this) }
+    private val answerListener by lazy { PleosPhraseListener(this, onDeviceOnly = false, credentials) }
+    private val offlineListener by lazy { PleosPhraseListener(this, onDeviceOnly = true, credentials) }
+    private val beacon by lazy { PlatformAudioBeacon() }
+
     /** Road grade from the head unit's accelerometer (live only); its learned mounting survives restarts. */
     private val grade by lazy { RoadGradeTracker(java.io.File(filesDir, "motion-mount")) }
 
@@ -98,6 +122,7 @@ class RecorderService : LifecycleService() {
 
     override fun onDestroy() {
         stopSession()
+        listOf(pleosVoice, platformVoice, answerListener, offlineListener, beacon).forEach { runCatching { it.close() } }
         super.onDestroy()
     }
 
@@ -138,6 +163,19 @@ class RecorderService : LifecycleService() {
         guardGrants()
 
         jobs += lifecycleScope.launch(Dispatchers.IO) { consume(recorder) }
+        voiceJob = VoiceController(
+            recorder = recorder,
+            send = { inbox.send(it) },
+            clock = AndroidClock,
+            speech = FallbackSpeechOutput(pleosVoice, platformVoice),
+            answers = answerListener,
+            offlineListener = offlineListener,
+            focus = PlatformAudioFocus(this),
+            connectivity = PlatformConnectivity(this),
+            assistant = GleoAssistant,
+            beacon = beacon,
+            text = ::voiceText,
+        ).start(lifecycleScope)
         startSources(next)
         Log.i(TAG, "session $next started: $started")
     }
@@ -201,6 +239,8 @@ class RecorderService : LifecycleService() {
 
     private fun stopSession() {
         if (mode == null) return
+        voiceJob?.cancel()
+        voiceJob = null
         jobs.forEach { it.cancel() }
         jobs.clear()
         sourceJob?.cancel()
@@ -219,6 +259,8 @@ class RecorderService : LifecycleService() {
         Log.i(TAG, "session $mode stopped (${dir.name})")
         mode = null
     }
+
+    private fun voiceText(line: VoiceLine): String = getString(voiceLineText(line))
 
     private fun notification(): Notification {
         val nm = getSystemService(NotificationManager::class.java)

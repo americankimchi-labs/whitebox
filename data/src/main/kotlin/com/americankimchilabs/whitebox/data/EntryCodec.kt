@@ -1,5 +1,7 @@
 package com.americankimchilabs.whitebox.data
 
+import com.americankimchilabs.whitebox.domain.AudioEvent
+import com.americankimchilabs.whitebox.domain.BookmarkSource
 import com.americankimchilabs.whitebox.domain.CapsuleTrigger
 import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.CruiseState
@@ -22,6 +24,7 @@ import com.americankimchilabs.whitebox.domain.TelltaleState
 import com.americankimchilabs.whitebox.domain.Timestamp
 import com.americankimchilabs.whitebox.domain.TurnSignalState
 import com.americankimchilabs.whitebox.domain.VehicleSignal
+import com.americankimchilabs.whitebox.domain.VoiceLine
 
 /**
  * Canonical text form of a [ChainEntry]: what the hash covers is exactly what is stored, byte for byte.
@@ -38,7 +41,13 @@ object EntryCodec {
             is EscalationEvent.LevelChanged -> listOf("LEVEL", v.level, v.causeSeq)
             is EscalationEvent.Triggered -> listOf("TRIGGER", v.trigger, v.causeSeq, v.measured)
             is EscalationEvent.IncidentOffered -> with(v.capsule) { listOf("OFFER", id, trigger, firstSeq, lastSeq) }
-            is EscalationEvent.IncidentAnswered -> listOf("ANSWER", v.capsuleId, v.keep)
+            // An unanswered flag only when false, so entries written before it existed keep their exact form.
+            is EscalationEvent.IncidentAnswered -> listOf("ANSWER", v.capsuleId, v.keep) + if (v.answered) emptyList() else listOf(false)
+        }
+        is ChainEntry.Audio -> listOf("A", ts(e.at)) + when (val v = e.event) {
+            is AudioEvent.Bookmark -> listOf("BOOKMARK", v.source)
+            is AudioEvent.Spoke -> listOf("SPOKE", v.line, v.complete)
+            is AudioEvent.Beacon -> listOf("BEACON", v.chirpId, ts(v.playedAt))
         }
     }.joinToString("|") { clean(it.toString()) }
 
@@ -57,8 +66,17 @@ object EntryCodec {
                     "LEVEL" -> EscalationEvent.LevelChanged(EscalationLevel.valueOf(f[3]), f[4].toLong())
                     "TRIGGER" -> EscalationEvent.Triggered(CapsuleTrigger.valueOf(f[3]), f[4].toLong(), f[5].toFloat())
                     "OFFER" -> EscalationEvent.IncidentOffered(IncidentCapsule(f[3], CapsuleTrigger.valueOf(f[4]), f[5].toLong(), f[6].toLong()))
-                    "ANSWER" -> EscalationEvent.IncidentAnswered(f[3], f[4].toBooleanStrict())
+                    "ANSWER" -> EscalationEvent.IncidentAnswered(f[3], f[4].toBooleanStrict(), f.getOrNull(5)?.toBooleanStrict() ?: true)
                     else -> error("unknown escalation ${f[2]}")
+                },
+                ts(f[1]),
+            )
+            "A" -> ChainEntry.Audio(
+                when (f[2]) {
+                    "BOOKMARK" -> AudioEvent.Bookmark(BookmarkSource.valueOf(f[3]))
+                    "SPOKE" -> AudioEvent.Spoke(VoiceLine.valueOf(f[3]), f[4].toBooleanStrict())
+                    "BEACON" -> AudioEvent.Beacon(f[3].toInt(), ts(f[4]))
+                    else -> error("unknown audio event ${f[2]}")
                 },
                 ts(f[1]),
             )

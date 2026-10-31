@@ -129,8 +129,33 @@ object Tuning {
     const val KEEP_PROMPT_DELAY_S = 5
     const val KEEP_PROMPT_MIN_KMH = 10
 
-    /** How long an answer to the keep question is accepted; no answer by then counts as silence (kept). */
-    const val KEEP_ANSWER_WINDOW_S = 8
+    /**
+     * How long the driver has to answer after the keep question ends: ample time to answer, short enough not to pick
+     * up the cabin's conversation. No answer by then is silence (kept). An interruption restarts it in full.
+     */
+    const val KEEP_ANSWER_WINDOW_S = 10
+
+    /** Waiting for the audio (a long call) longer than this gives the keep question up: silence, kept. */
+    const val KEEP_QUESTION_MAX_S = 120
+
+    /** The keep question is tried this many times when the voice engine fails before giving up (kept). */
+    const val KEEP_MAX_ASKS = 3
+
+    /** Post-crash guidance is spoken when the car is put in P within this long after a crash-level trigger. */
+    const val GUIDANCE_WINDOW_S = 600
+
+    // Dashcam sync chirp: above human hearing (≥ 20 kHz), inside the 48 kHz output path. Dashcams that low-pass their
+    // audio below this will not record it; sync then falls back to GPS time and the recorded spoken lines.
+    const val CHIRP_LOW_HZ = 20_000
+    const val CHIRP_HIGH_HZ = 22_000
+    const val CHIRP_MS = 100
+
+    /** Raised-cosine fade at both ends: an abrupt start would click audibly across the whole spectrum. */
+    const val CHIRP_FADE_MS = 15
+    const val CHIRP_AMPLITUDE = 0.3f
+
+    /** One chirp this often while driving; longer than any plausible GPS-time pre-alignment error, so unambiguous. */
+    const val CHIRP_PERIOD_S = 15
 
     /** A speed sample older than this does not count as the current speed. */
     const val SPEED_STALE_MS = 500

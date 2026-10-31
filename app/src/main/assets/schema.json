@@ -1,0 +1,21 @@
+{
+  "packageName": "com.americankimchilabs.whitebox",
+  "appDescription": "A driving evidence recorder that seals the driver's recent vehicle inputs into tamper-evident capsules.",
+  "invokeWord": "화이트박스",
+  "version": "0.1.0",
+  "actionCalls": [
+    {
+      "type": "function",
+      "function": {
+        "name": "BOOKMARK_MOMENT",
+        "description": "Save the last few minutes of driving as a sealed evidence capsule, because the driver just experienced a dangerous moment.",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        },
+        "component": "service"
+      }
+    }
+  ]
+}

@@ -96,9 +96,21 @@
     <string name="row_trigger_dps">■ %1$s · %2$.0f°/s</string>
     <string name="row_trigger_count">■ %1$s · %2$d회</string>
     <string name="row_trigger_plain">■ %1$s</string>
-    <string name="row_offered">보관 여부 확인 대기 중</string>
+    <string name="row_offered">보관 여부 질문</string>
     <string name="row_answered_keep">✓ 운전자가 보관을 선택</string>
     <string name="row_answered_drop">운전자가 보관하지 않음</string>
+    <string name="row_answered_silent">응답 없음 · 보관</string>
+    <string name="row_bookmark_assistant">음성 북마크 (Gleo)</string>
+    <string name="row_bookmark_offline">음성 북마크 (오프라인 인식)</string>
+    <string name="row_spoke">음성 안내 “%1$s”</string>
+    <string name="row_spoke_cut">음성 안내 “%1$s” (중단됨)</string>
+
+    <!-- Spoken by the car. Keep every line as short as possible: a long synthetic voice is tiring. -->
+    <string name="voice_keep_question">방금 상황 보관할까요?</string>
+    <string name="voice_kept">보관 완료</string>
+    <string name="voice_released">보관 취소</string>
+    <string name="voice_crash_guidance">사고 기록 완료. 과실 인정은 피하고, 현장을 촬영하세요.</string>
+    <string name="voice_bookmarked">보관 완료</string>
 
     <string name="gap_clean">정상 종료 후</string>
     <string name="gap_power">전원 재시작 후</string>

@@ -40,6 +40,10 @@ android {
         versionName = "0.1.0"
 
         buildConfigField("String", "VEHICLE_SDK_VERSION", "\"${libs.versions.vehicleSdk.get()}\"")
+        // Pleos My Project credentials for server speech (local.properties, never committed). Empty until Pleos opens
+        // app registration; the speech SDKs then run on-device only.
+        buildConfigField("String", "PLEOS_CLIENT_ID", "\"${localProps.getProperty("pleos.clientId", "")}\"")
+        buildConfigField("String", "PLEOS_CLIENT_SECRET", "\"${localProps.getProperty("pleos.clientSecret", "")}\"")
     }
 
     signingConfigs {

@@ -18,6 +18,9 @@ sealed interface EngineOutput {
      * "방금 상황을 보관할까요?" by voice. The answer only labels the capsule; silence keeps it.
      */
     data class IncidentPrompt(val capsule: IncidentCapsule) : EngineOutput
+
+    /** Speak [line] (post-crash guidance). */
+    data class Say(val line: VoiceLine) : EngineOutput
 }
 
 /**
@@ -66,6 +69,8 @@ class EscalationEngine {
     private var gear: GearPosition? = null
     private var parkingBrake: Boolean? = null
     private var lastDangerNs: Long? = null
+    private var lastSevereNs: Long? = null
+    private var guided = false
     private var stillSinceNs: Long? = null
     private var calmSinceNs: Long? = null
     private var capsule: OpenCapsule? = null
@@ -89,6 +94,7 @@ class EscalationEngine {
         timeline.addLast(Mark(event.seq, nowNs))
         while (nowNs - timeline.first().tNs > Tuning.CAPSULE_PRE_WINDOW_S * 1_000_000_000L) timeline.removeFirst()
 
+        if (entry is ChainEntry.Audio && entry.event is AudioEvent.Bookmark) trigger(CapsuleTrigger.MANUAL, event.seq, 0f, nowNs, out)
         if (entry is ChainEntry.Signal) {
             when (val s = entry.sample.signal) {
                 is VehicleSignal.BrakePedal -> onBrake(s.pressed, event.seq, nowNs, out)
@@ -97,6 +103,13 @@ class EscalationEngine {
                 is VehicleSignal.SteeringAngle -> onSteering(s.degrees, event.seq, entry.sample, out)
                 is VehicleSignal.Gear -> {
                     val kmh = currentKmh(nowNs)
+                    val severe = lastSevereNs
+                    if (s.position == GearPosition.PARK && gear != GearPosition.PARK && !guided && severe != null &&
+                        ms(nowNs - severe) <= Tuning.GUIDANCE_WINDOW_S * 1_000L
+                    ) {
+                        guided = true // once per crash
+                        out += EngineOutput.Say(VoiceLine.CRASH_GUIDANCE)
+                    }
                     if (s.position == GearPosition.NEUTRAL && gear != GearPosition.NEUTRAL && kmh != null && kmh >= Tuning.NEUTRAL_MIN_SPEED_KMH) {
                         trigger(CapsuleTrigger.SHIFT_TO_NEUTRAL, event.seq, kmh, nowNs, out)
                     }
@@ -335,8 +348,18 @@ class EscalationEngine {
      */
     private fun trigger(trigger: CapsuleTrigger, causeSeq: Long, measured: Float, nowNs: Long, out: MutableList<EngineOutput>) {
         if (trigger != CapsuleTrigger.POST_EVENT_EXIT) lastDangerNs = nowNs
-        val target = if (trigger.severe) EscalationLevel.TRIGGERED else EscalationLevel.ALERT
+        if (trigger.severe) {
+            lastSevereNs = nowNs
+            guided = false
+        }
+        // A bookmark asks for the record, not for burst transmission: it keeps the current level.
+        val target = when {
+            trigger.severe -> EscalationLevel.TRIGGERED
+            trigger == CapsuleTrigger.MANUAL -> level
+            else -> EscalationLevel.ALERT
+        }
         capsule?.let { open ->
+            if (trigger == CapsuleTrigger.MANUAL) open.promptDecided = true
             val escalates = trigger.severe && !open.trigger.severe
             if (!escalates && ms(nowNs - open.lastTriggerNs) < Tuning.TRIGGER_REFRACTORY_MS) return
             open.lastTriggerNs = nowNs
@@ -350,6 +373,7 @@ class EscalationEngine {
         raise(target, causeSeq, out)
         out += EngineOutput.Append(EscalationEvent.Triggered(trigger, causeSeq, measured))
         val open = OpenCapsule("C$causeSeq", trigger, preWindowFirstSeq(), nowNs, nowNs)
+        open.promptDecided = trigger == CapsuleTrigger.MANUAL // the driver asked for it: nothing to ask back
         capsule = open
         stillSinceNs = null
         out += EngineOutput.Seal(open.id, trigger, open.firstSeq, final = false)

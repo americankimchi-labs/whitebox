@@ -10,6 +10,7 @@ import com.americankimchilabs.whitebox.domain.EscalationEvent
 import com.americankimchilabs.whitebox.domain.EscalationLevel
 import com.americankimchilabs.whitebox.domain.IncidentCapsule
 import com.americankimchilabs.whitebox.domain.Tuning
+import com.americankimchilabs.whitebox.domain.VoiceLine
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,11 +51,15 @@ class Recorder(
     private val _incident = MutableStateFlow<IncidentCapsule?>(null)
     private var incidentAskedNs = 0L
     /**
-     * A sealed near-miss capsule whose car drove on: "방금 상황을 보관할까요?" is asked by voice and waits here until
-     * answered or until [Tuning.KEEP_ANSWER_WINDOW_S] passes. Silence keeps the capsule, so an offer is not carried
-     * across a process restart.
+     * A sealed near-miss capsule whose car drove on: the keep question is asked by voice and waits here until the
+     * voice side answers it (an answer or silence). Silence keeps the capsule, so an offer is not carried across a
+     * process restart, and one nobody resolves expires after the longest the question can take.
      */
     val pendingIncident: StateFlow<IncidentCapsule?> = _incident.asStateFlow()
+
+    private val _say = MutableSharedFlow<VoiceLine>(extraBufferCapacity = 8, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    /** Lines the engine asks the car to speak (post-crash guidance). */
+    val say: SharedFlow<VoiceLine> = _say.asSharedFlow()
 
     val eventStore: EventStore get() = store
 
@@ -73,6 +78,7 @@ class Recorder(
                     _incident.value = output.capsule
                     incidentAskedNs = event.entry.at.elapsedNanos
                 }
+                is EngineOutput.Say -> _say.tryEmit(output.line)
             }
         }
         expireIncident(event.entry.at.elapsedNanos)
@@ -81,19 +87,19 @@ class Recorder(
     }
 
     /**
-     * The driver's answer to the keep question. The capsule is already sealed and stays in the chain either way; the
-     * answer is recorded as its label ("아니" releases it from the driver's library).
+     * How the keep question ended for [capsuleId]. The capsule is already sealed and stays in the chain either way; the
+     * answer is recorded as its label ("아니" releases it from the driver's library; silence keeps it, unanswered).
      */
-    suspend fun answerIncident(keep: Boolean) = mutex.withLock {
-        expireIncident(clock.now().elapsedNanos)
-        val capsule = _incident.value ?: return@withLock
-        append(ChainEntry.Escalation(EscalationEvent.IncidentAnswered(capsule.id, keep), clock.now()))
+    suspend fun answerIncident(capsuleId: String, keep: Boolean, answered: Boolean) = mutex.withLock {
+        val capsule = _incident.value?.takeIf { it.id == capsuleId } ?: return@withLock
+        append(ChainEntry.Escalation(EscalationEvent.IncidentAnswered(capsule.id, keep, answered), clock.now()))
         _incident.value = null
     }
 
-    /** The answer window closed without an answer: silence, the capsule stays in the library. */
+    /** Nobody resolved the question in the longest time it can take: silence, the capsule stays in the library. */
     private fun expireIncident(nowNs: Long) {
-        if (_incident.value != null && nowNs - incidentAskedNs > Tuning.KEEP_ANSWER_WINDOW_S * 1_000_000_000L) _incident.value = null
+        val maxNs = (Tuning.KEEP_QUESTION_MAX_S + Tuning.KEEP_ANSWER_WINDOW_S) * 1_000_000_000L
+        if (_incident.value != null && nowNs - incidentAskedNs > maxNs) _incident.value = null
     }
 
         private fun append(entry: ChainEntry) = store.append(entry).also { _events.tryEmit(it) }

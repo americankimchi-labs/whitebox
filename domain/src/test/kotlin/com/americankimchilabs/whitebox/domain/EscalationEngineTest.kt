@@ -510,4 +510,68 @@ class EscalationEngineTest {
         tr.signal(VehicleSignal.Door("ROW_1_LEFT", open = true))
         assertTrue(tr.triggers.isEmpty())
     }
+
+    @Test
+    fun aVoiceBookmarkSealsTheLastMinutesWithoutRaisingTheLevelOrAskingBack() {
+        val tr = Trace()
+        tr.ramp(130_000, 50f)
+        tr.feed(ChainEntry.Audio(AudioEvent.Bookmark(BookmarkSource.ASSISTANT), Timestamp(tr.t * 1_000_000, 1_700_000_000_000 + tr.t)))
+        tr.ramp(40_000, 50f) // drives on past the keep-question delay and the post window
+        assertEquals(listOf(CapsuleTrigger.MANUAL), tr.triggers.map { it.trigger })
+        assertTrue(tr.levels.isEmpty()) // no burst for a bookmark
+        assertEquals(listOf(false, true), tr.seals.map { it.final })
+        assertTrue(tr.seals.all { it.firstSeq == tr.seqAt[10_000] }) // the full pre-window
+        assertTrue(tr.prompts.isEmpty())
+    }
+
+    @Test
+    fun aBookmarkDuringANearMissCancelsTheKeepQuestion() {
+        val tr = Trace()
+        tr.ramp(10_000, 60f)
+        tr.brake(true)
+        tr.ramp(1_000, 60f, 40f) // hard brake
+        tr.brake(false)
+        tr.feed(ChainEntry.Audio(AudioEvent.Bookmark(BookmarkSource.OFFLINE_LISTENER), Timestamp(tr.t * 1_000_000, 1_700_000_000_000 + tr.t)))
+        tr.ramp(10_000, 40f)
+        assertEquals(CapsuleTrigger.HARD_BRAKE, tr.triggers.first().trigger)
+        assertTrue(tr.prompts.isEmpty())
+    }
+
+    @Test
+    fun postCrashGuidanceIsSpokenOnceWhenTheCarIsPutInPark() {
+        val tr = Trace()
+        tr.signal(VehicleSignal.Gear(GearPosition.DRIVE))
+        tr.ramp(5_000, 60f)
+        tr.brake(true)
+        tr.step(60f)
+        tr.step(35f)
+        tr.ramp(2_000, 35f, 0f)
+        tr.ramp(3_000, 0f)
+        assertTrue(tr.out.none { it is EngineOutput.Say })
+        tr.signal(VehicleSignal.Gear(GearPosition.PARK))
+        tr.signal(VehicleSignal.Gear(GearPosition.DRIVE))
+        tr.signal(VehicleSignal.Gear(GearPosition.PARK))
+        assertEquals(listOf(EngineOutput.Say(VoiceLine.CRASH_GUIDANCE)), tr.out.filterIsInstance<EngineOutput.Say>())
+    }
+
+    @Test
+    fun parkingAfterANearMissOrLongAfterACrashSaysNothing() {
+        val nearMiss = Trace()
+        nearMiss.signal(VehicleSignal.Gear(GearPosition.DRIVE))
+        nearMiss.ramp(5_000, 80f)
+        nearMiss.stop(80f, kmhPerSecond = 35f)
+        nearMiss.signal(VehicleSignal.Gear(GearPosition.PARK))
+        assertTrue(nearMiss.out.none { it is EngineOutput.Say })
+
+        val late = Trace()
+        late.signal(VehicleSignal.Gear(GearPosition.DRIVE))
+        late.ramp(5_000, 60f)
+        late.brake(true)
+        late.step(60f)
+        late.step(35f)
+        late.ramp(2_000, 35f, 0f)
+        late.ramp(Tuning.GUIDANCE_WINDOW_S * 1_000L + 1_000, 0f)
+        late.signal(VehicleSignal.Gear(GearPosition.PARK))
+        assertTrue(late.out.none { it is EngineOutput.Say })
+    }
 }

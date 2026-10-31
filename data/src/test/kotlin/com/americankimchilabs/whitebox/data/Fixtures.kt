@@ -1,7 +1,10 @@
 package com.americankimchilabs.whitebox.data
 
 import com.americankimchilabs.whitebox.core.MirrorStore
+import com.americankimchilabs.whitebox.domain.AudioEvent
+import com.americankimchilabs.whitebox.domain.BookmarkSource
 import com.americankimchilabs.whitebox.domain.ChainEntry
+import com.americankimchilabs.whitebox.domain.VoiceLine
 import com.americankimchilabs.whitebox.domain.CruiseState
 import com.americankimchilabs.whitebox.domain.Lamp
 import com.americankimchilabs.whitebox.domain.RoadContextType
@@ -73,6 +76,11 @@ fun everyEntryShape(): List<ChainEntry> = listOf(
         ts(14),
     ),
     ChainEntry.Escalation(com.americankimchilabs.whitebox.domain.EscalationEvent.IncidentAnswered("I7", false), ts(15)),
+    ChainEntry.Escalation(com.americankimchilabs.whitebox.domain.EscalationEvent.IncidentAnswered("I8", true, answered = false), ts(15)),
+    ChainEntry.Audio(AudioEvent.Bookmark(BookmarkSource.ASSISTANT), ts(15)),
+    ChainEntry.Audio(AudioEvent.Bookmark(BookmarkSource.OFFLINE_LISTENER), ts(15)),
+    ChainEntry.Audio(AudioEvent.Spoke(VoiceLine.KEEP_QUESTION, complete = false), ts(15)),
+    ChainEntry.Audio(AudioEvent.Beacon(3, ts(15)), ts(15)),
 ) + contextSignals().mapIndexed { i, s -> ChainEntry.Signal(SignalSample(s, ts(16L + i))) }
 
 /** Every context and reserved signal kind, including labels with separator characters the codec must neutralise. */

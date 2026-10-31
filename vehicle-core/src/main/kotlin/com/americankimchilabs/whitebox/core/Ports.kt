@@ -39,17 +39,60 @@ interface LocationSource {
     fun fixes(): Flow<LocationFix>
 }
 
-/** Voice output and offline speech recognition (it must work in tunnels and underground parking). */
-interface SpeechPort {
-    suspend fun speak(text: String)
+enum class SpeakResult {
+    /** Played to the end. */
+    DONE,
 
-    /** True only if recognition works without a network (tunnels, underground parking). */
-    fun isOfflineRecognitionAvailable(): Boolean
+    /** Started but stopped before the end (stop(), or the engine cut it off). */
+    CUT_OFF,
+
+    /** No voice engine (not bound, failed to initialise); a fallback may take over. */
+    UNAVAILABLE,
 }
 
-/** Plays the acoustic sync chirp and reports when it actually started playing. */
+/** Spoken output in Korean. One line at a time; a second call waits for the first. */
+interface SpeechOutput {
+    suspend fun speak(text: String): SpeakResult
+
+    /** Stops the line being spoken (its [speak] returns [SpeakResult.CUT_OFF]). */
+    fun stop()
+}
+
+/**
+ * Speech recognition from the car's own microphone. [utterances] is cold: collecting opens the microphone and emits
+ * the text of each finished utterance; cancelling closes it. Only one collection at a time.
+ */
+interface PhraseListener {
+    fun utterances(): Flow<String>
+}
+
+/**
+ * The car's audio for our voice lines. [hold] is cold: collecting asks for transient focus that lets other audio
+ * duck, accepting a delayed grant; it emits true when held and false when another app (a call, the car assistant)
+ * takes it for now. Cancelling gives it back.
+ */
+interface AudioFocusPort {
+    fun hold(): Flow<Boolean>
+}
+
+/** Whether the car has a working internet connection (the car assistant needs one). Emits on change. */
+interface ConnectivityPort {
+    fun online(): Flow<Boolean>
+}
+
+/**
+ * Voice commands from the car assistant. Each bookmark request must be answered with [BookmarkRequest.respond]
+ * within a few seconds (the assistant gives up and tells the driver after 7 s).
+ */
+interface AssistantCommands {
+    fun bookmarks(): Flow<BookmarkRequest>
+}
+
+class BookmarkRequest(val respond: (saved: Boolean) -> Unit)
+
+/** Plays the acoustic sync chirp and reports when its first frame actually played (null if it could not play). */
 interface AudioBeaconPort {
-    suspend fun emitChirp(chirpId: Int): Timestamp
+    suspend fun emitChirp(chirpId: Int): Timestamp?
 }
 
 /**

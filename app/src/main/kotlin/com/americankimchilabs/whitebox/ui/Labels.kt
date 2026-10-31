@@ -4,6 +4,8 @@ import android.content.res.Resources
 import com.americankimchilabs.whitebox.R
 import com.americankimchilabs.whitebox.domain.CapsuleTrigger
 import com.americankimchilabs.whitebox.domain.MeasureUnit
+import com.americankimchilabs.whitebox.domain.AudioEvent
+import com.americankimchilabs.whitebox.domain.BookmarkSource
 import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.ControlLine
 import com.americankimchilabs.whitebox.domain.DrivingContext
@@ -18,6 +20,7 @@ import com.americankimchilabs.whitebox.domain.RecorderPermission
 import com.americankimchilabs.whitebox.domain.RoadContextType
 import com.americankimchilabs.whitebox.domain.TurnSignalState
 import com.americankimchilabs.whitebox.domain.VehicleSignal
+import com.americankimchilabs.whitebox.domain.VoiceLine
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -265,9 +268,31 @@ class Labels(private val res: Resources) {
             is EscalationEvent.LevelChanged -> res.getString(R.string.row_level, level(x.level))
             is EscalationEvent.Triggered -> triggerRow(x)
             is EscalationEvent.IncidentOffered -> res.getString(R.string.row_offered)
-            is EscalationEvent.IncidentAnswered -> res.getString(if (x.keep) R.string.row_answered_keep else R.string.row_answered_drop)
+            is EscalationEvent.IncidentAnswered -> res.getString(
+                when {
+                    !x.answered -> R.string.row_answered_silent
+                    x.keep -> R.string.row_answered_keep
+                    else -> R.string.row_answered_drop
+                },
+            )
+        }
+        is ChainEntry.Audio -> when (val a = e.event) {
+            is AudioEvent.Bookmark -> res.getString(
+                if (a.source == BookmarkSource.ASSISTANT) R.string.row_bookmark_assistant else R.string.row_bookmark_offline,
+            )
+            is AudioEvent.Spoke -> res.getString(if (a.complete) R.string.row_spoke else R.string.row_spoke_cut, res.getString(voiceLineText(a.line)))
+            is AudioEvent.Beacon -> null // every few seconds while driving; the packet's sync data, not a timeline row
         }
     }
+}
+
+/** The words of each line the car speaks (also what the timeline quotes). */
+fun voiceLineText(line: VoiceLine): Int = when (line) {
+    VoiceLine.KEEP_QUESTION -> R.string.voice_keep_question
+    VoiceLine.KEPT -> R.string.voice_kept
+    VoiceLine.RELEASED -> R.string.voice_released
+    VoiceLine.CRASH_GUIDANCE -> R.string.voice_crash_guidance
+    VoiceLine.BOOKMARKED -> R.string.voice_bookmarked
 }
 
 /**

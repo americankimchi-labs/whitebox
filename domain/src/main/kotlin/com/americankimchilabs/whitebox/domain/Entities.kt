@@ -17,7 +17,8 @@ data class DriveEvent(
 
 /**
  * What a chain entry holds: a vehicle or location reading, the recorder's own state (gap honesty, [RecorderEvent]),
- * or a decision of the escalation engine ([EscalationEvent]), so the evidence states why a capsule exists.
+ * a decision of the escalation engine ([EscalationEvent]), so the evidence states why a capsule exists, or what the car
+said and heard ([AudioEvent]).
  */
 sealed interface ChainEntry {
     val at: Timestamp
@@ -33,6 +34,8 @@ sealed interface ChainEntry {
     data class Recorder(val event: RecorderEvent, override val at: Timestamp) : ChainEntry
 
     data class Escalation(val event: EscalationEvent, override val at: Timestamp) : ChainEntry
+
+    data class Audio(val event: AudioEvent, override val at: Timestamp) : ChainEntry
 }
 
 enum class EscalationLevel { NORMAL, ALERT, TRIGGERED }
@@ -55,9 +58,10 @@ sealed interface EscalationEvent {
 
     /**
      * The driver's answer. The capsule stays sealed in the chain either way; [keep] = false releases it from the
-     * driver's library (no slot), and the answer becomes the capsule's label.
+     * driver's library (no slot), and the answer becomes the capsule's label. [answered] is false for silence (no
+     * answer in the window, or the question could not be asked): kept, and labelled as unanswered.
      */
-    data class IncidentAnswered(val capsuleId: String, val keep: Boolean) : EscalationEvent
+    data class IncidentAnswered(val capsuleId: String, val keep: Boolean, val answered: Boolean = true) : EscalationEvent
 }
 
 /**

@@ -29,7 +29,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 - JDK 17, Android SDK 35가 필요합니다. SDK 위치는 `ANDROID_HOME` 환경변수 또는 `local.properties`의 `sdk.dir`로 지정합니다.
 - Pleos Vehicle SDK는 `https://nexus-playground.pleos.ai/repository/maven-releases/`에서 받으므로 네트워크가 필요합니다.
-- 단위 테스트: `./gradlew test` (76개 — 에스컬레이션 엔진과 위험 패턴, 도로 경사 추정, 증거 패킷 타임라인, 해시 체인 내구성·변조 속성 테스트, 데모 주행 엔드투엔드 재생)
+- 단위 테스트: `./gradlew test` (89개 — 에스컬레이션 엔진과 위험 패턴, 음성 보관 확인·인식 문구·동기화 신호, 도로 경사 추정, 증거 패킷 타임라인, 해시 체인 내구성·변조 속성 테스트, 데모 주행 엔드투엔드 재생)
 - 릴리스 빌드는 `local.properties`의 서명 정보를 읽습니다(`app/build.gradle.kts` 주석 참고). 서명 정보가 없으면 서명되지 않은 릴리스가 만들어지고 디버그 빌드에는 영향이 없습니다.
 
 ## 테스트 환경
@@ -74,7 +74,18 @@ python3 tools/virtual-console/patterns.py              # 전체 (약 5분)
 python3 tools/virtual-console/patterns.py evasive lurch # 일부만
 ```
 
-### C. 변조 검증
+### C. 음성
+
+에뮬레이터 마이크는 호스트(Mac) 마이크입니다: `adb emu avd hostmicon`. 앱은 마이크 권한이 필요 없습니다(녹음은 차량 음성 서비스 안에서 이루어짐).
+
+- **보관 확인**: 위험 패턴 뒤 5초가 지나도 계속 주행 중이면(`patterns.py evasive`) 차량이 "방금 상황 보관할까요?"라고 묻습니다. 질문이 끝난 뒤 **10초** 동안 답을 듣습니다. "아니"·"취소"는 보관함에서 내리고("보관 취소"), "응"·"보관해" 또는 무응답은 보관합니다("보관 완료"). 답은 캡슐의 라벨로 체인에 남고, 운전자가 한 말 자체는 기록하지 않습니다.
+- **끼어들기**: 전화나 Gleo 등 다른 앱이 오디오를 가져가면 질문·듣기를 멈추고, 끝난 뒤 질문은 다시 하고 듣기는 10초를 새로 줍니다. 에뮬레이터에서는 `adb emu gsm call 5551234` / `adb emu gsm cancel 5551234`로 확인할 수 있습니다.
+- **음성 북마크(통신 가능 시)**: "글레오" → "화이트박스에서 방금 상황 저장해 줘". Gleo Interface(`assets/schema.json`의 `BOOKMARK_MOMENT`)로 직전 120초가 캡슐로 봉인되고 Gleo가 결과를 말합니다.
+- **음성 북마크(통신 불가 시)**: Gleo는 통신 없이는 동작하지 않으므로, 그때만 White Box가 Pleos SpeechToText 온디바이스 인식으로 "방금 저장해"를 직접 듣습니다(`adb shell cmd connectivity airplane-mode enable`로 확인). 통신이 돌아오면 마이크를 닫습니다.
+- **사고 직후 안내**: 충돌 수준 감지 뒤 기어를 P로 바꾸면 "사고 기록 완료. 과실 인정은 피하고, 현장을 촬영하세요."라고 한 번 안내합니다(`demo.py` 끝부분).
+- **블랙박스 동기화 신호**: P가 아닐 때 15초마다 사람이 들을 수 없는 20–22 kHz 신호를 내보내고, 실제 재생 시각(첫 프레임)을 체인에 남깁니다.
+
+### D. 변조 검증
 
 ```bash
 tools/tamper-demo/run.sh
@@ -95,6 +106,9 @@ tools/tamper-demo/run.sh
 - **EV 순간 효율**: 이 이미지는 지원하지 않아 구독하지 않습니다. 지원 차량에서는 값만 기록하고 해석하지 않습니다(단위 미확인).
 - **CCP(로터리) 입력**: 에뮬레이터의 로터리 서비스는 주입한 회전 입력을 앱 화면으로 전달하지 못합니다(기본 주행 화면에서도 포커스 이동 실패). 앱은 모든 버튼·목록·증거 패킷 블록이 포커스를 받고 포커스 테두리를 표시하도록 구현했으며, 방향키 입력으로 포커스 이동·선택·뒤로가기를 확인했습니다. 실제 CCP 하드웨어 동작은 실차에서 확인이 필요합니다.
 - **바퀴 회전 신호(`WHEEL_TICK`)**는 고정된 자리값만 나와 사용하지 않습니다.
+- **Gleo 연동 승인**: 에뮬레이터에서는 승인 전 스키마로도 Gleo 호출이 동작합니다. 실차에서는 Pleos가 스키마를 승인해야 활성화됩니다. Gleo는 앱이 보낸 결과 문구를 자기 말로 바꿔 말합니다.
+- **음성 인식 정확도**: 에뮬레이터에서는 Mac 합성 음성(Yuna)을 스피커로 재생해 확인했습니다. 실제 목소리와 차량 실내 소음에서의 정확도는 실차 확인이 필요합니다. 인식은 Pleos 하이브리드 모드로, 앱 등록이 열리면 서버 인식이 코드 변경 없이 켜지고 지금은 온디바이스로 동작합니다.
+- **동기화 신호 대역**: 20–22 kHz는 사람이 듣지 못하는 대역입니다. 시판 블랙박스 중 그 대역을 녹음하지 않는 기종은 GPS 시각과 기록된 음성 안내 시각으로 맞춥니다.
 - **주행 중 주차 브레이크**: 콘솔의 주차 브레이크는 경고등만 켤 뿐 `PARKING_BRAKE_ON` 속성은 계속 false라(확인함) 이 패턴은 에뮬레이터에서 시연할 수 없습니다. 감지 코드는 실차용으로 남아 있습니다.
 - 조향각 부호: SDK는 콘솔 각도를 반대 부호로 전달하며, 공식 문서에 부호 규약이 없어 증거 패킷은 좌/우 표기 없이 부호 있는 각도로만 표시합니다.
 
@@ -113,6 +127,11 @@ tools/tamper-demo/run.sh
 | Vehicle SDK 2.3.2: 문, 안전벨트·착석, 와이퍼·창문, EV 순간 효율 | `pleos.car.permission.CAR_DOORS`, `CAR_SEATS`, `CAR_WINDOWS`, `CAR_ENERGY` (normal) |
 | NaviHelper 3.0.5: 제한속도, 주의 구간, 단속 카메라 (이벤트 수신만) | 권한 없음 |
 | AAOS CarPropertyManager: 속도, 기어, 시동 상태, 주차 브레이크 | `android.car.permission.CAR_SPEED` (런타임), `CAR_POWERTRAIN` |
+| TextToSpeech 3.3.1 (하이브리드): 보관 확인 질문, 결과, 사고 직후 안내 | `pleos.car.permission.TTS_SERVICE` |
+| SpeechToText 3.3.1: 보관 확인 답(하이브리드), 통신 불가 시 음성 북마크(온디바이스) | `pleos.car.permission.STT_SERVICE` |
+| Gleo Interface: 음성 북마크 `BOOKMARK_MOMENT` | 수신기는 Gleo 전용 권한 `ai.umos.gleo.permission.APP_ACTION`으로 보호 |
+| 플랫폼 오디오: 음성 안내 오디오 포커스, 동기화 신호 재생 | 권한 없음 |
+| 플랫폼 네트워크 상태: 통신 불가 감지 | `ACCESS_NETWORK_STATE` (normal) |
 | 플랫폼 가속도계: 도로 경사 | 권한 없음 |
 | 플랫폼 위치 | 위치, 위치 '항상 허용' |
 | 부팅 시 자동 기록 | `RECEIVE_BOOT_COMPLETED`, 포그라운드 서비스(`specialUse`, `location`) |

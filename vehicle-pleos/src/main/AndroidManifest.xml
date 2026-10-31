@@ -22,4 +22,22 @@
     <!-- AAOS gear (GEAR_SELECTION), ignition state, parking brake (PARKING_BRAKE_ON) -->
     <uses-permission android:name="android.car.permission.CAR_POWERTRAIN" />
 
+    <!-- Pleos speech: the keep question, post-crash guidance, the offline voice bookmark -->
+    <uses-permission android:name="pleos.car.permission.STT_SERVICE" />
+    <uses-permission android:name="pleos.car.permission.TTS_SERVICE" />
+
+    <application>
+        <!-- Gleo Interface: only the car assistant (holder of its signature permission) can send our function. -->
+        <receiver
+            android:name="com.americankimchilabs.whitebox.vehicle.pleos.GleoActionReceiver"
+            android:exported="true"
+            android:permission="ai.umos.gleo.permission.APP_ACTION">
+            <intent-filter>
+                <action android:name="BOOKMARK_MOMENT" />
+                <!-- What the car assistant actually sends (package-qualified, unlike the interface guide's example). -->
+                <action android:name="com.americankimchilabs.whitebox.BOOKMARK_MOMENT" />
+            </intent-filter>
+        </receiver>
+    </application>
+
 </manifest>

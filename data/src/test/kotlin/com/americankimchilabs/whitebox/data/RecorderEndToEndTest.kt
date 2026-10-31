@@ -135,7 +135,7 @@ class RecorderEndToEndTest {
         assertEquals(CapsuleTrigger.HARD_BRAKE, asked.trigger)
         assertTrue(recorder.capsules.value.any { it.capsule.id == asked.id }) // sealed before asking
 
-        recorder.answerIncident(keep = false)
+        recorder.answerIncident(asked.id, keep = false, answered = true)
         assertNull(recorder.pendingIncident.value)
         val events = store.read(0, store.head()!!.lastSeq).mapNotNull { (it.entry as? ChainEntry.Escalation)?.event }
         assertEquals(EscalationEvent.IncidentAnswered(asked.id, false), events.last())
@@ -154,12 +154,14 @@ class RecorderEndToEndTest {
             add(ScriptStep(0, VehicleSignal.BrakePedal(true)))
             for (v in listOf(57f, 54f, 51f, 48f, 45f)) add(ScriptStep(100, VehicleSignal.Speed(v / 3.6f)))
             add(ScriptStep(0, VehicleSignal.BrakePedal(false)))
-            repeat(60 + Tuning.KEEP_ANSWER_WINDOW_S * 10 + 5) { add(ScriptStep(100, VehicleSignal.Speed(45f / 3.6f))) }
+            repeat(60 + (Tuning.KEEP_QUESTION_MAX_S + Tuning.KEEP_ANSWER_WINDOW_S) * 10 + 5) { add(ScriptStep(100, VehicleSignal.Speed(45f / 3.6f))) }
         }
         replay(recorder, untilHardBrake() + brakeThenDriveOn, withLocations = false)
 
+        val asked = store.read(0, store.head()!!.lastSeq)
+            .firstNotNullOf { ((it.entry as? ChainEntry.Escalation)?.event as? EscalationEvent.IncidentOffered)?.capsule }
         assertNull(recorder.pendingIncident.value)
-        recorder.answerIncident(keep = false) // too late: nothing is recorded
+        recorder.answerIncident(asked.id, keep = false, answered = true) // too late: nothing is recorded
         val events = store.read(0, store.head()!!.lastSeq).mapNotNull { (it.entry as? ChainEntry.Escalation)?.event }
         assertTrue(events.any { it is EscalationEvent.IncidentOffered })
         assertTrue(events.none { it is EscalationEvent.IncidentAnswered })
