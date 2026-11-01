@@ -43,6 +43,8 @@ class HandoverController(
     private val channel: MirrorChannel? = null,
     /** How long a trip may pause before it is final; shorter only for a demonstration. */
     val graceMs: Long = com.americankimchilabs.whitebox.domain.Tuning.HANDOVER_GRACE_MS,
+    /** Whether the owner's plan includes handover mode (it can always be ended or finish a trip under way). */
+    private val allowed: () -> Boolean = { true },
 ) {
     private val stateFile = File(dir, "handover")
     /** Phone commands already carried out (a resend after a lost acknowledgement must not repeat them). */
@@ -84,11 +86,19 @@ class HandoverController(
         }
     }
 
-    /** Turned on from the car screen (parked). */
-    suspend fun armOnCar() = mutex.withLock {
+    /** Turned on from the car screen (parked); false if the owner's plan does not include it. */
+    suspend fun armOnCar(): Boolean = mutex.withLock {
+        if (!allowed()) return@withLock false
         val now = clock.now().wallMillis
         apply(mode.arm(HandoverSource.CAR, now, now))
+        true
     }
+
+    fun allowed() = allowed.invoke()
+
+    /** A trip under way keeps its records on the car (from its start) until its report is sealed for good. */
+    fun holding(): List<LongRange> =
+        mode.state.startSeq?.takeIf { mode.phase == HandoverPhase.ACTIVE || mode.phase == HandoverPhase.ENDING }?.let { listOf(it..Long.MAX_VALUE) } ?: emptyList()
 
     /** Turned off on the car screen: only before the trip started (the hired driver cannot stop it). */
     suspend fun cancelOnCar(): Boolean = mutex.withLock {
@@ -102,7 +112,8 @@ class HandoverController(
     private suspend fun command(c: Frame.HandoverCommand) = mutex.withLock {
         if (c.commandId !in done()) {
             val now = clock.now().wallMillis
-            apply(if (c.arm) mode.arm(HandoverSource.PHONE, c.requestedAtWall, now) else mode.end(HandoverSource.PHONE, now))
+            // The server only sends an arm the plan includes; a car that knows otherwise does not arm.
+            if (!c.arm) apply(mode.end(HandoverSource.PHONE, now)) else if (allowed()) apply(mode.arm(HandoverSource.PHONE, c.requestedAtWall, now))
             doneFile.appendText(c.commandId + "\n")
         }
         channel?.send(MirrorProtocol.encode(Frame.HandoverAck(c.commandId)))

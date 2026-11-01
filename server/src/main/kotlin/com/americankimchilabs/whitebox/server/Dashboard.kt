@@ -1,6 +1,7 @@
 package com.americankimchilabs.whitebox.server
 
 import com.americankimchilabs.whitebox.domain.EscalationLevel
+import com.americankimchilabs.whitebox.domain.Tier
 import com.americankimchilabs.whitebox.domain.Tuning
 import java.time.Instant
 import java.time.ZoneId
@@ -11,7 +12,7 @@ private val clock = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.syst
 private fun time(ms: Long) = clock.format(Instant.ofEpochMilli(ms))
 
 private val TRIGGER = mapOf(
-    "AIRBAG" to "에어백 전개", "DELTA_V" to "충격 감지", "SHORT_DELTA_V" to "짧은 충격 감지", "BRAKED_SPIKE" to "제동 중 충격",
+    "AIRBAG" to "에어백 전개", "TEST_AIRBAG" to "시험용 에어백 신호", "DELTA_V" to "충격 감지", "SHORT_DELTA_V" to "짧은 충격 감지", "BRAKED_SPIKE" to "제동 중 충격",
     "REAR_SHOVE" to "후방 충격 (정차·제동 중)", "MANUAL" to "음성으로 보관", "HARD_BRAKE" to "급제동", "EVASIVE_STEER" to "급핸들 (회피)",
     "BRAKE_SWERVE" to "급제동 + 급핸들", "SHIFT_TO_NEUTRAL" to "주행 중 중립(N) 변속", "BRAKE_SPEED_RISE" to "브레이크를 밟는데 속도 상승",
     "BRAKE_NO_DECEL" to "브레이크를 밟는데 감속 없음", "BRAKE_PUMPING" to "브레이크 반복 조작", "PARKING_BRAKE_MOVING" to "주행 중 주차 브레이크",
@@ -44,6 +45,9 @@ main{max-width:1100px}.grid{display:grid;grid-template-columns:repeat(auto-fit,m
 <div id="live">${dashboardCards(service, sms)}</div>
 </main>
 <script>
+async function setPlan(device, tier) {
+  await fetch('/dashboard/plan', { method: 'POST', body: new URLSearchParams({ device, tier }) });
+}
 // Refresh the cards in place; any "자세히" the reader opened stays open.
 setInterval(async () => {
   try {
@@ -80,13 +84,31 @@ fun dashboardCards(service: MirrorService, sms: DemoSmsSender? = null): String {
         val kind = if (s.stream.stream == "replay") "데모 차량" else "실제 차량"
         val moments = capsules.take(5).joinToString("") { c ->
             val name = if (c.trigger == "SERVER_SEAL") "사고 뒤 신호 끊김 (서버 봉인)" else TRIGGER[c.trigger] ?: c.trigger
-            val tag = if (c.severe) "<span class='badge bad'>큰 사고</span>" else "<span class='badge warn'>위험 순간</span>"
+            val tag = when {
+                c.severe -> "<span class='badge bad'>큰 사고</span>"
+                c.trigger == "HANDOVER" -> "<span class='badge'>대리 운전</span>"
+                runCatching { com.americankimchilabs.whitebox.domain.CapsuleTrigger.valueOf(c.trigger).crash }.getOrDefault(false) -> "<span class='badge bad'>충돌</span>"
+                else -> "<span class='badge warn'>위험 순간</span>"
+            }
             "<div class='row'><span>${esc(name)}<br><span class='sub'>${time(c.sealedAtMs)}${if (c.escrowed) " · 비상 연락처 열람 가능" else ""}</span></span>$tag</div>"
         }.ifEmpty { "<p class='msg'>보관된 기록이 없습니다.</p>" }
         val history = s.events.asReversed().joinToString("") { (at, text) -> "<li><span class='t'>${time(at)}</span> ${esc(text)}</li>" }
         val seals = s.seals.takeLast(4).joinToString("<br>") { l -> l.split("|").let { f -> esc("${f[0]} ${f[1]} #${f[2]}–#${f[3]} ${if (f[5] == "true") "최종" else "임시"}") } }
         val attested = s.attested.takeLast(3).joinToString("<br>") { l -> l.substringBefore("|sig=").split("|").let { f -> esc("${time(f.last().toLong())} #${f[2]}–#${f[3]} 빠진 기록 ${f[6]}건") } }
         val key = esc("${s.stream.deviceId}-${s.stream.stream}")
+        val owner = service.identity?.ownerOf(s.stream.deviceId)
+        val plans = service.plans
+        val planRow = when {
+            plans == null || s.stream.stream == "replay" -> ""
+            owner == null -> "<p class='msg'>요금제: ${TIER[plans.defaultTier.name]} (기본값) · 휴대폰을 연결하면 차주별로 바꿀 수 있습니다.</p>"
+            else -> {
+                val current = plans.tier(owner.id)
+                val buttons = Tier.entries.joinToString(" ") { t ->
+                    "<button class='${if (t == current) "" else "secondary"}' onclick=\"setPlan('${esc(s.stream.deviceId)}','${t.name}')\">${TIER[t.name]}</button>"
+                }
+                "<p>요금제 (관리자 전환, 결제 없음): $buttons</p>"
+            }
+        }
         """
 <section class="card">
   <h2><span class="badge $cls">$badge</span> $kind</h2>
@@ -95,10 +117,11 @@ fun dashboardCards(service: MirrorService, sms: DemoSmsSender? = null): String {
     <div class="stat"><b>${s.records}건</b><span>받은 기록</span></div>
     <div class="stat"><b>${capsules.size}건</b><span>보관 기록</span></div>
   </div>
+  $planRow
   <h3>보관 기록</h3>$moments
   <details data-key="$key"><summary>자세히</summary><div class="tech">
     기기 ${esc(s.stream.deviceId)} · 스트림 ${esc(s.stream.stream)} · 단계 ${s.level ?: "-"}<br>
-    #0부터 빠짐없이 #${s.contiguousHead}까지 · 최고 #${s.highestSeq} · 변조 의심으로 거부 ${s.conflicts}건<br>
+    #0부터 #${s.contiguousHead}까지 빠짐없이 받았거나 보관 기간이 지나 정리됨 · 최고 #${s.highestSeq} · 변조 의심으로 거부 ${s.conflicts}건<br>
     차량 봉인 (차량 키 서명 확인됨):<br>${seals.ifEmpty { "없음" }}<br>
     서버 봉인 (데드맨 스위치):<br>${attested.ifEmpty { "없음" }}<br>
     마지막 서버 서명: ${esc(s.lastAnchor?.substringBefore("|sig=") ?: "없음")}
@@ -108,5 +131,7 @@ fun dashboardCards(service: MirrorService, sms: DemoSmsSender? = null): String {
     }.ifEmpty { "<div class='card'><p class='msg'>아직 연결된 차량이 없습니다. 다른 터미널에서 <code>./gradlew :server:demoCar</code>를 실행하거나 에뮬레이터 앱을 이 서버로 연결하세요.</p></div>" }
     return "$smsPanel<div class='grid cars'>$cards</div>"
 }
+
+private val TIER = mapOf("FREE" to "무료", "PLUS" to "플러스", "PRO" to "프로")
 
 private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

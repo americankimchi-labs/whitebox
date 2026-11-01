@@ -9,7 +9,7 @@
 <body><main>
 <p><a href="/me">← 내 차</a></p>
 <h1>주행 기록</h1>
-<p class="msg">이 휴대폰 안에서만 열어 보여 줍니다. 평소 주행은 회원님만 볼 수 있습니다.</p>
+<p class="msg">이 휴대폰 안에서만 열어 보여 줍니다. 평소 주행은 회원님만 볼 수 있습니다. <span id="window"></span></p>
 <div id="list"><div class="card"><p class="msg">불러오는 중…</p></div></div>
 </main>
 <script src="/codec.js"></script>
@@ -51,13 +51,14 @@ async function detail(drive, el) {
     <text x="8" y="17" fill="var(--muted,#5f6368)">최고 ${Math.max(...pts.map((p) => p.v)).toFixed(0)} km/h</text>
     <text x="4" y="${h - 2}" fill="var(--muted,#5f6368)">${WB.clock(t0)}</text><text x="${w - 50}" y="${h - 2}" fill="var(--muted,#5f6368)">${WB.clock(t1)}</text></svg>
     <p class="msg">속도로 계산한 거리 약 ${km.toFixed(1)} km${drive.odometer.length < 2 ? '' : ' (주행거리계와 다를 수 있음)'}</p>
-    ${capsules.filter((c) => drive.capsules.includes(c.id)).map((c) => `<a class="row" href="/capsule#d=${d}&s=${s}&id=${encodeURIComponent(c.id)}"><span>${esc(WBPacket.TRIGGER[c.trigger] || c.trigger)}<br><span class="sub">${WB.when(c.sealedAtMs)}</span></span><span class="badge ${c.severe ? 'bad' : 'warn'}">${c.severe ? '큰 사고' : '위험 순간'}</span></a>`).join('')}`;
+    ${capsules.filter((c) => drive.capsules.includes(c.id)).map((c) => `<a class="row" href="/capsule#d=${d}&s=${s}&id=${encodeURIComponent(c.id)}"><span>${esc(WBPacket.TRIGGER[c.trigger] || c.trigger)}<br><span class="sub">${WB.when(c.sealedAtMs)}</span></span><span class="badge ${c.crash ? 'bad' : 'warn'}">${c.severe ? '큰 사고' : c.crash ? '충돌' : '위험 순간'}</span></a>`).join('')}`;
 }
 
 async function load() {
   const me = await WB.get('/v1/me');
   if (!me) { location.href = '/me'; return; }
   ring = await WB.ownerKeys(me, d);
+  if (me.plan) WB.$('window').textContent = `최근 ${me.plan.historyDays}일의 주행을 보관합니다 (${WB.TIER[me.plan.tier]} 요금제). 보관 기록은 따로 남습니다.`;
   if (ring.isEmpty()) { WB.$('list').innerHTML = '<div class="card"><p>이 휴대폰에는 기록을 여는 열쇠가 없습니다. 차 화면의 <b>휴대폰</b> 탭에서 QR을 다시 찍어 주세요.</p></div>'; return; }
   const drives = (await WB.get(`/v1/drives?device=${d}&stream=${s}`)) || [];
   capsules = (await WB.get(`/v1/capsules?device=${d}&stream=${s}`)) || [];

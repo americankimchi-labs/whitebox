@@ -122,6 +122,13 @@ fun HandoverSheet(session: ActiveSession, onClose: () -> Unit) {
         Text(stringResource(R.string.handover_title), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         listOf(R.string.handover_what, R.string.handover_rules, R.string.handover_end, R.string.handover_destination)
             .forEach { Text("• " + stringResource(it), style = MaterialTheme.typography.bodyLarge) }
+        if (!handover.allowed()) {
+            // Not in the owner's plan: said plainly, with where to change it; no sales button on the car.
+            Text(stringResource(R.string.handover_plan_needed), style = MaterialTheme.typography.titleMedium, color = HandoverColor)
+            Text(stringResource(R.string.handover_plan_phone), style = MaterialTheme.typography.bodyLarge, color = Color.Gray)
+            OutlinedButton(onClick = onClose, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.handover_close)) }
+            return@Column
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Button(onClick = { scope.launch(Dispatchers.IO) { handover.armOnCar() }; onClose() }, modifier = Modifier.ccpFocus(CircleShape)) {
                 Text(stringResource(R.string.handover_turn_on), style = MaterialTheme.typography.titleMedium)

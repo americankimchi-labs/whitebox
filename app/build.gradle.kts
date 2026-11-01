@@ -94,7 +94,8 @@ android {
 dependencies {
     implementation(project(":vehicle-core"))
     implementation(project(":data"))
-    implementation(project(":vehicle-fake"))
+    // The scripted demo drive is for test builds only: the release records only what the car reports.
+    debugImplementation(project(":vehicle-fake"))
     implementation(project(":vehicle-pleos"))
 
     implementation(libs.kotlinx.coroutines.android)

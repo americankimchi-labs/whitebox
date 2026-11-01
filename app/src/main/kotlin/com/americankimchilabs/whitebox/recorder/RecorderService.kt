@@ -18,6 +18,7 @@ import com.americankimchilabs.whitebox.data.RecordCipher
 import com.americankimchilabs.whitebox.data.CapsuleShares
 import com.americankimchilabs.whitebox.data.ClaimClient
 import com.americankimchilabs.whitebox.data.HandoverController
+import com.americankimchilabs.whitebox.data.LibraryController
 import com.americankimchilabs.whitebox.data.FileEventStore
 import com.americankimchilabs.whitebox.data.MirrorProtocol
 import com.americankimchilabs.whitebox.data.Outbox
@@ -30,6 +31,8 @@ import com.americankimchilabs.whitebox.domain.RecorderPermission
 import com.americankimchilabs.whitebox.domain.SignalSample
 import com.americankimchilabs.whitebox.domain.SessionRecord
 import com.americankimchilabs.whitebox.domain.StartReason
+import com.americankimchilabs.whitebox.domain.Tier
+import com.americankimchilabs.whitebox.domain.Entitlements
 import com.americankimchilabs.whitebox.domain.VehicleSignal
 import com.americankimchilabs.whitebox.domain.VoiceLine
 import com.americankimchilabs.whitebox.domain.checkGrants
@@ -50,9 +53,6 @@ import com.americankimchilabs.whitebox.platform.SessionFile
 import com.americankimchilabs.whitebox.platform.bootCount
 import com.americankimchilabs.whitebox.platform.recorderGrants
 import com.americankimchilabs.whitebox.ui.voiceLineText
-import com.americankimchilabs.whitebox.vehicle.fake.DemoDrive
-import com.americankimchilabs.whitebox.vehicle.fake.ScriptedLocationSource
-import com.americankimchilabs.whitebox.vehicle.fake.ScriptedSignalSource
 import com.americankimchilabs.whitebox.vehicle.pleos.GleoAssistant
 import com.americankimchilabs.whitebox.vehicle.pleos.PleosCredentials
 import com.americankimchilabs.whitebox.vehicle.pleos.PleosPhraseListener
@@ -64,6 +64,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
@@ -131,10 +132,16 @@ class RecorderService : LifecycleService() {
             intent.getBooleanExtra(EXTRA_BOOT, false) -> StartReason.BOOT
             else -> StartReason.APP_OPENED
         }
-        val requested = intent?.getStringExtra(EXTRA_SOURCE)?.let(SourceMode::valueOf) ?: mode ?: SourceMode.LIVE
+        // A release build has no scripted drive: it records only the car.
+        val requested = (intent?.getStringExtra(EXTRA_SOURCE)?.let(SourceMode::valueOf) ?: mode ?: SourceMode.LIVE)
+            .takeIf { it == SourceMode.LIVE || TestBuild.REPLAY } ?: SourceMode.LIVE
         val mirrorChanged = intent?.getStringExtra(EXTRA_MIRROR)?.let { m ->
             val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
             (prefs.getString(PREF_MIRROR, MIRROR_DEFAULT) != m).also { if (it) prefs.edit().putString(PREF_MIRROR, m).apply() }
+        } ?: false
+        val tierChanged = TestBuild.tier(intent)?.name?.let { t ->
+            val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+            (prefs.getString(PREF_TIER, null) != t).also { if (it) prefs.edit().putString(PREF_TIER, t).apply() }
         } ?: false
         if (!promote()) {
             // Not allowed to be foreground (a sticky restart after a boot start has no exemption). Stop cleanly
@@ -143,11 +150,12 @@ class RecorderService : LifecycleService() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (mode != requested || mirrorChanged || intent?.getBooleanExtra(EXTRA_RESTART_REPLAY, false) == true) {
+        if (mode != requested || mirrorChanged || tierChanged || intent?.getBooleanExtra(EXTRA_RESTART_REPLAY, false) == true) {
             startSession(requested, reason)
         } else {
             guardGrants()
         }
+        TestBuild.airbag(intent, AndroidClock)?.let { inbox.trySend(it) }
         return START_STICKY
     }
 
@@ -187,16 +195,27 @@ class RecorderService : LifecycleService() {
         val channel = url.takeIf { it.isNotEmpty() }?.let { WebSocketMirrorChannel(it, stream, AppGraph.signer) }
         if (channel == null) Log.i(TAG, "no mirror configured; recording locally only") else Log.i(TAG, "mirror: $url")
         val outbox = channel?.let { Outbox(store, seals, it, dir, consent = { DataConsent.agreed(this) }, minuteKey = ::minuteKey) }
+        // A built-in camera's clips would be attached here (CarClips with HttpClipUpload, Plus and Pro): no head unit
+        // gives apps camera access today, so there is no CameraClipSource to give it.
         val recorder = Recorder(store, seals, AppGraph.signer, AndroidClock) { outbox?.onSeal(it) }
         mirrorChannel = channel
         // The phone connection belongs to the car, not to one chain: one state for both sources.
         val claim = channel?.let { ClaimClient(it, keyRing, java.io.File(filesDir, "identity").apply { mkdirs() }) }
         val shares = channel?.let { CapsuleShares(store, it, dir, MirrorProtocol.deviceId(AppGraph.signer.publicKey), stream, ::minuteKey) }
-        val handover = HandoverController(recorder, store, dir, AndroidClock, channel)
+        var handoverRef: HandoverController? = null
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val library = LibraryController(
+            recorder, store, dir, AndroidClock, channel,
+            acked = { outbox?.acked ?: -1 },
+            holding = { handoverRef?.holding() ?: emptyList() },
+            defaultTier = TestBuild.tier(prefs.getString(PREF_TIER, null)) ?: Entitlements.DEFAULT,
+        )
+        val handover = HandoverController(recorder, store, dir, AndroidClock, channel, allowed = { library.entitlements.handover })
+        handoverRef = handover
         mode = next
         inbox = Channel(Channel.UNLIMITED)
         sessionFile = SessionFile(java.io.File(dir, "session"))
-        AppGraph.publish(ActiveSession(next, recorder, store, claim, webBase(url), outbox, shares, handover))
+        AppGraph.publish(ActiveSession(next, recorder, store, claim, webBase(url), outbox, shares, handover, library))
 
         val boot = bootCount()
         val started = classifyStart(sessionFile!!.read(), if (next == SourceMode.REPLAY) StartReason.APP_OPENED else reason, boot, AndroidClock.now())
@@ -210,6 +229,9 @@ class RecorderService : LifecycleService() {
         claim?.let { jobs += it.start(lifecycleScope + Dispatchers.IO) }
         shares?.let { jobs += it.start(lifecycleScope + Dispatchers.IO) }
         jobs += handover.start(lifecycleScope + Dispatchers.IO)
+        jobs += library.start(lifecycleScope + Dispatchers.IO)
+        // A plan given at launch (testing a car without the cloud); with the cloud, the owner's account decides.
+        if (channel == null) TestBuild.tier(prefs.getString(PREF_TIER, null))?.let { t -> lifecycleScope.launch(Dispatchers.IO) { library.overridePlan(t) } }
         outbox?.let { jobs += it.start(lifecycleScope + Dispatchers.IO, recorder) }
         // Consent withdrawn while this chain was not active: its earlier windows are deleted too.
         if (DataConsent.state(this).value == false) outbox?.withdrawConsent()
@@ -227,6 +249,7 @@ class RecorderService : LifecycleService() {
             text = ::voiceText,
             handoverLines = handover.say,
             handoverPhase = handover.phase,
+            libraryNotices = library.notices,
         ).start(lifecycleScope)
         startSources(next)
         Log.i(TAG, "session $next started: $started")
@@ -253,8 +276,7 @@ class RecorderService : LifecycleService() {
             merge(vehicle.samples().map { ChainEntry.Signal(it) }, grades) to
                 PlatformLocationSource(this, AndroidClock).fixes().map { ChainEntry.Location(it) }
         }
-        SourceMode.REPLAY -> ScriptedSignalSource(DemoDrive.signals(), AndroidClock).samples().map { ChainEntry.Signal(it) } to
-            ScriptedLocationSource(DemoDrive.locations(), AndroidClock).fixes().map { ChainEntry.Location(it) }
+        SourceMode.REPLAY -> TestBuild.replay(AndroidClock) ?: (emptyFlow<ChainEntry>() to emptyFlow())
     }
 
     private suspend fun consume(recorder: Recorder) {
@@ -332,18 +354,21 @@ class RecorderService : LifecycleService() {
         const val EXTRA_RESTART_REPLAY = "restart_replay"
         const val EXTRA_MIRROR = "mirror"
 
+
         /** The mirror on the emulator's host computer (`./gradlew :server:run`); the only address allowed without TLS. */
         const val MIRROR_LOCAL = "local"
         const val MIRROR_DEFAULT = "default"
         private const val LOCAL_MIRROR_URL = "ws://10.0.2.2:8080/v1/stream"
         private const val PREFS = "recorder"
         private const val PREF_MIRROR = "mirror"
+        private const val PREF_TIER = "tier"
 
-        fun start(context: Context, source: SourceMode? = null, restartReplay: Boolean = false, mirror: String? = null) {
+        fun start(context: Context, source: SourceMode? = null, restartReplay: Boolean = false, mirror: String? = null, extras: android.os.Bundle? = null) {
             context.startForegroundService(
                 Intent(context, RecorderService::class.java)
                     .apply { source?.let { putExtra(EXTRA_SOURCE, it.name) } }
                     .apply { mirror?.let { putExtra(EXTRA_MIRROR, it) } }
+                    .apply { extras?.let(::putExtras) }
                     .putExtra(EXTRA_RESTART_REPLAY, restartReplay),
             )
         }

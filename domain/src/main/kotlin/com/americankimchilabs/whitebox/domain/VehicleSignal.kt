@@ -92,8 +92,8 @@ sealed interface VehicleSignal {
         override val kind get() = SignalKind.IGNITION
     }
 
-    /** [seat] is an SDK-neutral label such as "ROW_1_LEFT". */
-    data class AirbagDeployed(val seat: String, val deployed: Boolean) : VehicleSignal {
+    /** [seat] is an SDK-neutral label such as "ROW_1_LEFT". [test]: injected on a test build, never from a vehicle. */
+    data class AirbagDeployed(val seat: String, val deployed: Boolean, val test: Boolean = false) : VehicleSignal {
         override val kind get() = SignalKind.AIRBAG
     }
 

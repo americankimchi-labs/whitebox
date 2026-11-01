@@ -82,9 +82,9 @@ class WebRoutesTest {
             fun ts() = Timestamp(t * 1_000_000, 1_700_000_000_000 + t)
             fun drive(from: Long) {
                 repeat(20) { t += 100; chain.append(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(15f), ts()))) }
-                chain.append(ChainEntry.Escalation(EscalationEvent.Triggered(CapsuleTrigger.DELTA_V, from + 10, -20f), ts()))
+                chain.append(ChainEntry.Escalation(EscalationEvent.Triggered(CapsuleTrigger.AIRBAG, from + 10, 0f), ts()))
                 val last = chain.head()!!.lastSeq
-                SealStore.line(CapsuleSeal.create(IncidentCapsule("C$from", CapsuleTrigger.DELTA_V, from, last), chain.hashAt(last), true, 1_700_000_000_000 + t, car))
+                SealStore.line(CapsuleSeal.create(IncidentCapsule("C$from", CapsuleTrigger.AIRBAG, from, last), chain.hashAt(last), true, 1_700_000_000_000 + t, car))
                     .let { store.appendLog(stream, "seals", it) }
             }
             val sellerId = (claim(seller) as Identity.ClaimResult.Claimed).ownerId

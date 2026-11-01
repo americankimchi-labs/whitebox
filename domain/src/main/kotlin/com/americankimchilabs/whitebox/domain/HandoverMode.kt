@@ -157,7 +157,7 @@ class HandoverMode(
                         CapsuleTrigger.EVASIVE_STEER, CapsuleTrigger.BRAKE_SWERVE ->
                             out += observed(HandoverEventKind.SHARP_STEER, t.measured, null, VoiceLine.HANDOVER_DRIVE_SAFELY, entry.at.elapsedNanos)
                         // A crash: recorded for the report; the car's own post-crash guidance does the talking.
-                        else -> if (t.trigger.severe) out += HandoverOutput.Append(HandoverEvent.Observed(HandoverEventKind.CRASH, t.measured, null))
+                        else -> if (t.trigger.crash) out += HandoverOutput.Append(HandoverEvent.Observed(HandoverEventKind.CRASH, t.measured, null))
                     }
                 }
             }

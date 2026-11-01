@@ -165,12 +165,14 @@
 
   /**
    * The editor-style view in [el]: video on top, lanes below. [timeline] is WBPacket.build over the whole capsule;
-   * [causeWall] its detection instant (wall ms); [beacons] the car's sweep times (wall ms).
+   * [causeWall] its detection instant (wall ms); [beacons] the car's sweep times (wall ms). [onSynced] hears each
+   * picked file once it is placed ({file, offsetMs: its first frame from the detection, how}); [pickNote] replaces the
+   * line under the button. Returns {open(blob, name, offsetMs)} for a clip saved earlier.
    */
-  function mount(el, { timeline, causeWall, beacons, Packet }) {
+  function mount(el, { timeline, causeWall, beacons, Packet, onSynced = null, pickNote = null }) {
     el.innerHTML = `
       <div class="sync-pick"><label class="button-like">블랙박스 영상 선택<input type="file" accept="video/*" hidden></label>
-        <p class="msg">영상은 이 휴대폰 안에서만 열리고, 어디에도 올라가지 않습니다.</p></div>
+        <p class="msg sync-note"></p></div>
       <div class="sync-stage" hidden>
         <video playsinline controls preload="metadata" style="width:100%;border-radius:8px;background:#000"></video>
         <div class="sync-lanes" style="position:relative;touch-action:none"><div class="sync-svg"></div>
@@ -180,6 +182,7 @@
           <button class="plain" data-nudge="-1000">−1초</button><button class="plain" data-nudge="-100">−0.1초</button>
           <button class="plain" data-nudge="100">+0.1초</button><button class="plain" data-nudge="1000">+1초</button></div>
       </div>`;
+    el.querySelector('.sync-note').textContent = pickNote || '영상은 이 휴대폰 안에서만 열리고, 어디에도 올라가지 않습니다.';
     const input = el.querySelector('input'), stage = el.querySelector('.sync-stage'), video = el.querySelector('video');
     const lanes = el.querySelector('.sync-lanes'), head = el.querySelector('.sync-head'), status = el.querySelector('.sync-status');
     el.querySelector('.sync-svg').innerHTML = Packet.svg(timeline);
@@ -222,9 +225,24 @@
         : a.how === 'clock' ? `${guess.source === 'name' ? '파일 이름' : '영상 정보'}의 시각으로 맞췄습니다 (오차 약 1초). 아래 버튼으로 다듬을 수 있습니다.`
         : '영상에서 시각을 찾지 못했습니다. 영상을 사고 순간에 멈추고 아래 버튼으로 맞춰 주세요.';
       stage.dataset.startWall = startWall ?? '';
-      // Open at the moment of detection (the metadata may have loaded while the sound was being searched).
-      const toCause = () => { const t = (causeWall - startWall) / 1000; if (t > 0 && t < video.duration) video.currentTime = t; place(); };
-      if (startWall != null) { if (video.readyState >= 1) toCause(); else video.addEventListener('loadedmetadata', toCause, { once: true }); }
+      toCause();
+      if (onSynced) onSynced({ file, offsetMs: startWall == null ? null : startWall - causeWall, how: a.how, current: () => (startWall == null ? null : startWall - causeWall) });
+    };
+    // Open at the moment of detection (the metadata may have loaded while the sound was being searched).
+    function toCause() {
+      if (startWall == null) return;
+      const go = () => { const t = (causeWall - startWall) / 1000; if (t > 0 && t < video.duration) video.currentTime = t; place(); };
+      if (video.readyState >= 1) go(); else video.addEventListener('loadedmetadata', go, { once: true });
+    }
+    return {
+      /** A clip saved earlier, already placed: no search, the stored position. */
+      open(blob, name, offsetMs) {
+        stage.hidden = false;
+        video.src = URL.createObjectURL(blob);
+        startWall = causeWall + offsetMs;
+        status.textContent = `저장된 영상입니다 (${name}). 저장할 때 맞춘 위치 그대로 보여 줍니다.`;
+        toCause();
+      },
     };
   }
 

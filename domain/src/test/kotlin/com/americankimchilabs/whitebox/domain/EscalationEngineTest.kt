@@ -49,7 +49,7 @@ class EscalationEngineTest {
         )
 
         val triggers get() = out.filterIsInstance<Append>().map { it.event }.filterIsInstance<EscalationEvent.Triggered>()
-        val severe get() = triggers.filter { it.trigger.severe }
+        val crashes get() = triggers.filter { it.trigger.crash }
         val levels get() = out.filterIsInstance<Append>().map { it.event }.filterIsInstance<EscalationEvent.LevelChanged>().map { it.level }
         val seals get() = out.filterIsInstance<Seal>()
         val prompts get() = out.filterIsInstance<IncidentPrompt>()
@@ -84,7 +84,7 @@ class EscalationEngineTest {
         val tr = Trace()
         tr.ramp(5_000, 100f)
         tr.stop(100f, kmhPerSecond = 42f)
-        assertTrue(tr.severe.isEmpty())
+        assertTrue(tr.crashes.isEmpty())
         assertEquals(listOf(CapsuleTrigger.HARD_BRAKE), tr.triggers.map { it.trigger })
     }
 
@@ -97,13 +97,40 @@ class EscalationEngineTest {
         tr.step(35f) // 25 km/h in 100 ms
         tr.ramp(2_000, 35f, 0f)
         tr.ramp(11_000, 0f)
-        val trig = tr.severe.single()
+        val trig = tr.crashes.single()
         assertEquals(CapsuleTrigger.DELTA_V, trig.trigger)
         assertEquals(-25f, trig.measured, 0.01f)
         assertEquals(listOf(false, true), tr.seals.map { it.final })
         assertTrue(tr.seals.all { it.firstSeq == tr.seqAt[10_100] })
         assertEquals(EscalationLevel.NORMAL, tr.engine.level)
         assertTrue(tr.prompts.isEmpty()) // the capsule subsumes the incident
+    }
+
+    @Test
+    fun anAirbagAfterTheCrashLevelDropTakesTheCapsuleOver() {
+        val tr = Trace()
+        tr.ramp(130_000, 60f)
+        tr.brake(true)
+        tr.step(60f)
+        tr.step(35f) // the crash-level drop first (충돌) …
+        tr.t += 40
+        tr.signal(VehicleSignal.AirbagDeployed("ROW_1_LEFT", true)) // … then the airbag ECU reports
+        tr.ramp(2_000, 35f, 0f)
+        tr.ramp(11_000, 0f)
+        assertEquals(listOf(CapsuleTrigger.DELTA_V, CapsuleTrigger.AIRBAG), tr.crashes.map { it.trigger })
+        assertFalse(CapsuleTrigger.DELTA_V.severe)
+        assertTrue(tr.seals.last().let { it.final && it.trigger == CapsuleTrigger.AIRBAG }) // one capsule, now a 큰 사고
+        assertEquals(1, tr.seals.map { it.capsuleId }.distinct().size)
+    }
+
+    @Test
+    fun aTestAirbagIsATestEverywhere() {
+        val tr = Trace()
+        tr.ramp(3_000, 0f)
+        tr.signal(VehicleSignal.AirbagDeployed("ROW_1_LEFT", true, test = true))
+        assertEquals(listOf(CapsuleTrigger.TEST_AIRBAG), tr.triggers.map { it.trigger })
+        assertTrue(CapsuleTrigger.TEST_AIRBAG.severe && CapsuleTrigger.TEST_AIRBAG.crash)
+        assertEquals(EscalationLevel.TRIGGERED, tr.engine.level)
     }
 
     @Test
@@ -124,7 +151,7 @@ class EscalationEngineTest {
         tr.step(40f)
         tr.step(31f) // 9 km/h in 100 ms
         tr.step(31f)
-        assertEquals(listOf(CapsuleTrigger.BRAKED_SPIKE), tr.severe.map { it.trigger })
+        assertEquals(listOf(CapsuleTrigger.BRAKED_SPIKE), tr.crashes.map { it.trigger })
     }
 
     @Test
@@ -135,7 +162,7 @@ class EscalationEngineTest {
         tr.step(40f)
         tr.step(31f)
         tr.step(38f)
-        assertTrue(tr.severe.isEmpty())
+        assertTrue(tr.crashes.isEmpty())
     }
 
     @Test

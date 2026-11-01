@@ -18,7 +18,8 @@ data class DriveEvent(
 /**
  * What a chain entry holds: a vehicle or location reading, the recorder's own state (gap honesty, [RecorderEvent]),
  * a decision of the escalation engine ([EscalationEvent]), so the evidence states why a capsule exists, what the car
- * said and heard ([AudioEvent]), or the course of a handover trip ([HandoverEvent]).
+ * said and heard ([AudioEvent]), the course of a handover trip ([HandoverEvent]), or the driver's library and plan
+ * ([LibraryEvent]).
  */
 sealed interface ChainEntry {
     val at: Timestamp
@@ -38,6 +39,8 @@ sealed interface ChainEntry {
     data class Audio(val event: AudioEvent, override val at: Timestamp) : ChainEntry
 
     data class Handover(val event: HandoverEvent, override val at: Timestamp) : ChainEntry
+
+    data class Library(val event: LibraryEvent, override val at: Timestamp) : ChainEntry
 }
 
 enum class EscalationLevel { NORMAL, ALERT, TRIGGERED }
@@ -69,9 +72,20 @@ sealed interface EscalationEvent {
 /**
  * Why a capsule exists. Telltales are unreadable without PRIVATE_CAR_SAFETY, so there is no
  * telltale trigger.
+ *
+ * [crash]: a crash-level event, answered as a crash (sealed at once, burst and priority upload, the server's seal if
+ * the car goes silent, no keep question). [severe]: an airbag crash (큰 사고) — kept ten years free, never counts
+ * against the library, and the only kind an emergency contact can open. A crash-level speed change without an
+ * airbag (충돌) is a crash but not severe.
  */
-enum class CapsuleTrigger(val severe: Boolean, val unit: MeasureUnit = MeasureUnit.DELTA_KMH) {
+enum class CapsuleTrigger(val crash: Boolean, val unit: MeasureUnit = MeasureUnit.DELTA_KMH) {
     AIRBAG(true, MeasureUnit.NONE),
+
+    /**
+     * An airbag signal injected on a test build (the emulator has no airbag property). Recorded as a test everywhere,
+     * so it can never pass for a real deployment; a release build has no way to make one.
+     */
+    TEST_AIRBAG(true, MeasureUnit.NONE),
 
     /** Primary: ΔV over the sliding 300 ms window. */
     DELTA_V(true),
@@ -129,6 +143,9 @@ enum class CapsuleTrigger(val severe: Boolean, val unit: MeasureUnit = MeasureUn
 
     /** A whole handover trip (대리 운전), sealed as its report when it ends. */
     HANDOVER(false, MeasureUnit.NONE),
+    ;
+
+    val severe: Boolean get() = this == AIRBAG || this == TEST_AIRBAG
 }
 
 /** What [EscalationEvent.Triggered.measured] holds: a speed change, the speed at the moment, a steering rate, a count. */

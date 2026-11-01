@@ -111,3 +111,20 @@ interface MirrorChannel {
     /** Queues one frame; false when not connected (the outbox keeps the data and sends it later). */
     fun send(frame: String): Boolean
 }
+
+/**
+ * Video from a camera built into the car, around a moment. No head unit gives apps camera access today, so there is
+ * no adapter yet; with one, the car attaches each capsule's clip by itself (Plus and Pro) instead of the owner
+ * picking a dashcam file on the phone.
+ */
+interface CameraClipSource {
+    /** The clip covering [fromWall]..[toWall] (wall ms) as a file, its first frame's wall time; null if none. */
+    suspend fun clip(fromWall: Long, toWall: Long): CameraClip?
+}
+
+class CameraClip(val file: java.io.File, val firstFrameWall: Long, val name: String)
+
+/** Sends one encrypted clip to the cloud, with the device signature that proves which car sent it. */
+interface ClipUpload {
+    suspend fun upload(capsuleId: String, clipId: String, offsetMs: Double, name: String, encrypted: java.io.File, signature: ByteArray): Boolean
+}

@@ -14,6 +14,7 @@ import com.americankimchilabs.whitebox.domain.AudioEvent
 import com.americankimchilabs.whitebox.domain.BookmarkSource
 import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.GearPosition
+import com.americankimchilabs.whitebox.domain.LibraryItem
 import com.americankimchilabs.whitebox.domain.IncidentCapsule
 import com.americankimchilabs.whitebox.domain.KeepQuestion
 import com.americankimchilabs.whitebox.domain.KeepQuestion.Action
@@ -36,6 +37,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -87,6 +89,8 @@ class VoiceController(
     /** Handover mode: its lines to the hired driver, and its phase (the keep question is not theirs to answer). */
     private val handoverLines: Flow<VoiceLine> = emptyFlow(),
     private val handoverPhase: StateFlow<HandoverPhase> = MutableStateFlow(HandoverPhase.OFF),
+    /** Kept moments that left a full library: the driver is told once parked (never while driving). */
+    private val libraryNotices: Flow<LibraryItem> = emptyFlow(),
 ) {
     private val voice = Mutex()
     private val busy = MutableStateFlow(false)
@@ -100,6 +104,20 @@ class VoiceController(
         resilient("assistant") { assistant.bookmarks().collect { request -> request.respond(bookmark(BookmarkSource.ASSISTANT)) } }
         resilient("offline listener") { offlineBookmarks() }
         resilient("chirp") { chirps() }
+        resilient("library notice") { libraryNotices() }
+    }
+
+    private suspend fun libraryNotices() = coroutineScope {
+        val parked = MutableStateFlow(false)
+        launch {
+            recorder.events.mapNotNull { ((it.entry as? ChainEntry.Signal)?.sample?.signal as? VehicleSignal.Gear)?.position }
+                .collect { parked.value = it == GearPosition.PARK }
+        }
+        // Several while driving: one line once parked.
+        libraryNotices.conflate().collect {
+            parked.first { p -> p }
+            lines.send(VoiceLine.LIBRARY_FULL)
+        }
     }
 
     /** Voice is never allowed to stop recording: a failing part is logged and restarted on its own. */

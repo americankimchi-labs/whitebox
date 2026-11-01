@@ -12,6 +12,10 @@ import com.americankimchilabs.whitebox.domain.EscalationEngine
 import com.americankimchilabs.whitebox.domain.EscalationEvent
 import com.americankimchilabs.whitebox.domain.EscalationLevel
 import com.americankimchilabs.whitebox.domain.Tuning
+import com.americankimchilabs.whitebox.domain.CapsuleTrigger
+import com.americankimchilabs.whitebox.domain.LibraryItem
+import com.americankimchilabs.whitebox.domain.LibraryStatus
+import com.americankimchilabs.whitebox.domain.Retention
 import java.security.KeyFactory
 import java.security.SecureRandom
 import java.security.Signature
@@ -37,6 +41,7 @@ const val SHARES = "shares"
 
 private val HANDOVER_PHASE = mapOf("OFF" to "꺼짐", "ARMED" to "대기 중", "ACTIVE" to "운행 중", "ENDING" to "마무리 중")
 private const val EVENTS_KEPT = 30
+private const val RETAIN_EVERY_MS = 3_600_000L
 
 class MirrorService(
     private val store: StreamStore,
@@ -45,7 +50,12 @@ class MirrorService(
     val identity: Identity? = null,
     private val clock: () -> Long = System::currentTimeMillis,
     private val deadMan: DeadMan = DeadMan(),
+    /** Plans and extensions; without it everything is kept and no car is told a plan. */
+    val plans: Plans? = null,
+    /** Saved dashcam clips (encrypted by the phone). */
+    val clips: ClipStore? = null,
 ) {
+    private var lastRetainMs = 0L
     private val random = SecureRandom()
     private val events = HashMap<StreamId, ArrayDeque<Pair<Long, String>>>()
     private val lastLevel = HashMap<StreamId, EscalationLevel>()
@@ -118,6 +128,19 @@ class MirrorService(
                     identity?.handoverAcked(s.deviceId, f.commandId)
                     emptyList()
                 }
+                is Frame.LibraryAck -> {
+                    plans?.acked(s.deviceId, f.commandId)
+                    emptyList()
+                }
+                is Frame.Checkpoint -> {
+                    // The car removed records it could not send in time; noted as its own statement, then carry on.
+                    val head = store.contiguousHead(s)
+                    if (f.seq > head) {
+                        store.declareGap(s, head + 1, f.seq, "car", now)
+                        note(s, now, "차가 오래 연결되지 않아 클라우드에 올리지 못한 기록을 정리함 (#${head + 1}–#${f.seq})")
+                    }
+                    listOf(MirrorProtocol.encode(Frame.Ack(store.contiguousHead(s))))
+                }
                 is Frame.HandoverStatus -> {
                     identity?.setHandoverStatus(s.deviceId, MirrorProtocol.encode(f))
                     if (lastHandover.put(s, f.phase) != f.phase) note(s, now, "대리 운전 모드: ${HANDOVER_PHASE[f.phase] ?: f.phase}")
@@ -175,7 +198,7 @@ class MirrorService(
                     if (store.appendLog(s, "seals", f.sealLine, unique = true)) {
                         note(s, now, "차 봉인 수신: ${seal.capsule.id} ${seal.capsule.trigger} (#${seal.capsule.firstSeq}–#${seal.capsule.lastSeq}, ${if (seal.final) "최종" else "임시"})")
                     }
-                    if (seal.capsule.trigger.severe) deadMan.onFrame(s, EscalationLevel.TRIGGERED, true, now)
+                    if (seal.capsule.trigger.crash) deadMan.onFrame(s, EscalationLevel.TRIGGERED, true, now)
                     listOf(MirrorProtocol.encode(Frame.SealAck(MirrorProtocol.sealKey(seal))))
                 }
                 else -> emptyList()
@@ -200,12 +223,13 @@ class MirrorService(
             note(id, clock(), "차 연결 (기기 키 확인)")
             synchronized(live) { live[id] = this }
             // Where the car should resume: authoritative, even if lower than what the car believes was acknowledged.
+            plans?.tellPlan(id.deviceId, identity?.ownerOf(id.deviceId)?.id)
             return listOf(MirrorProtocol.encode(Frame.Ready(id.deviceId, key.publicKey)), MirrorProtocol.encode(Frame.Ack(store.contiguousHead(id)))) +
                 listOfNotNull(
                     identity?.transferFrame(id.deviceId),
                     identity?.handoverFrame(id.deviceId),
                     identity?.pendingClaim(id.deviceId),
-                )
+                ) + (plans?.pending(id.deviceId) ?: emptyList())
         }
     }
 
@@ -230,6 +254,12 @@ class MirrorService(
 
     /** A takeover went through: the car gives its new owner the key epoch it started at the request. */
     fun transferred(t: Identity.Transfer) = claimed(t.deviceId, Frame.Claimed(t.toOwnerId, t.phoneKey, t.mac, t.masked))
+
+    /** A plan or an extension changed for [deviceId]: tell the car now if it is connected (else on reconnect, until it acks). */
+    fun libraryChanged(deviceId: String) {
+        val frames = plans?.pending(deviceId) ?: return
+        synchronized(live) { live.filterKeys { it.deviceId == deviceId }.values.toList() }.forEach { s -> frames.forEach { s.pushes.trySend(it) } }
+    }
 
     /** The owner turned handover mode on or off: tell the car now if it is connected (else on reconnect, until it acks). */
     fun handoverChanged(deviceId: String) {
@@ -257,6 +287,10 @@ class MirrorService(
     fun tick() {
         val now = clock()
         identity?.dueTransfers()?.forEach { transferred(it) }
+        if (plans != null && now - lastRetainMs >= RETAIN_EVERY_MS) {
+            lastRetainMs = now
+            store.streams().forEach { runCatching { retain(it) } }
+        }
         for (action in deadMan.tick(now)) when (action) {
             is DeadMan.Action.Attest -> attest(action.stream, action.episodeStartMs, now)
             is DeadMan.Action.ConsiderNotice -> {
@@ -293,6 +327,7 @@ class MirrorService(
     data class CapsuleInfo(
         val id: String,
         val trigger: String,
+        /** A 큰 사고: an airbag crash, or the server's seal of a crash whose car went silent. */
         val severe: Boolean,
         val firstSeq: Long,
         val lastSeq: Long,
@@ -301,20 +336,29 @@ class MirrorService(
         val seals: List<String>,
         /** The server's signed seal line when the car went silent (no car seal). */
         val attestation: String?,
-        /** The car handed over the minute keys (severe capsules): the family can open it. */
+        /** The car handed over the minute keys (airbag crashes): the family can open it. */
         val escrowed: Boolean,
         /** The driver's answer to "보관할까요?": "kept", "released", "unanswered", or null if not asked. */
         val answer: String?,
         /** Key epochs of the encrypted records inside it (whose time it is). */
         val epochs: Set<Int>,
-    )
+        /** When it was first sealed (the event; a handover report: the end of the trip). */
+        val eventMs: Long = sealedAtMs,
+        /** It left a full library on the car. */
+        val left: Boolean = false,
+        /** An extension the car recorded (the server's own record of a purchase is in [Plans]). */
+        val carExtendedUntil: Long? = null,
+    ) {
+        /** The driver answered "아니". */
+        val released: Boolean get() = answer == "released"
+    }
 
     /**
      * Every capsule of [stream], newest first. Scans the stream's records for the answers and epochs; at the scale of
      * one car that is a few MB, and a cloud store keeps these per batch instead.
      */
     fun capsules(stream: StreamId): List<CapsuleInfo> {
-        val version = listOf(store.highestSeq(stream), store.log(stream, "seals").size, store.log(stream, SEVERE_SILENT).size, store.log(stream, ESCROW).size)
+        val version = listOf(store.highestSeq(stream), store.count(stream), store.log(stream, "seals").size, store.log(stream, SEVERE_SILENT).size, store.log(stream, ESCROW).size)
         synchronized(capsuleCache) { capsuleCache[stream]?.let { (v, c) -> if (v == version) return c } }
         return scanCapsules(stream).also { synchronized(capsuleCache) { capsuleCache[stream] = version to it } }
     }
@@ -326,6 +370,8 @@ class MirrorService(
     private fun scanCapsules(stream: StreamId): List<CapsuleInfo> {
         val escrowed = store.log(stream, ESCROW).map { it.substringBefore('|') }.toSet()
         val answers = HashMap<String, String>()
+        val left = HashSet<String>()
+        val extended = HashMap<String, Long>()
         val epochBySeq = java.util.TreeMap<Long, Int>()
         for ((seq, entry) in recordsBetween(stream, 0, store.highestSeq(stream))) {
             val f = entry.split("|")
@@ -336,6 +382,9 @@ class MirrorService(
                     else -> "released"
                 }
             }
+            if (f[0] == "K" && f.getOrNull(2) == "LEFT") left += f[3]
+            if (f[0] == "K" && f.getOrNull(2) == "RETURNED") left -= f[3]
+            if (f[0] == "K" && f.getOrNull(2) == "EXTENDED") extended.merge(f[3], f[4].toLong(), ::maxOf)
             recordEpoch(entry)?.let { epochBySeq[seq] = it }
         }
         fun epochs(from: Long, to: Long) = epochBySeq.subMap(from, true, to, true).values.toSet()
@@ -347,6 +396,7 @@ class MirrorService(
                 CapsuleInfo(
                     id, c.trigger.name, c.trigger.severe, c.firstSeq, c.lastSeq, latest.final, latest.sealedAtWallMillis,
                     seals.map { it.second }, null, id in escrowed, answers[id], epochs(c.firstSeq, c.lastSeq),
+                    eventMs = seals.minOf { it.first.sealedAtWallMillis }, left = id in left, carExtendedUntil = extended[id],
                 )
             }
         val attested = store.log(stream, "attested")
@@ -360,6 +410,55 @@ class MirrorService(
             CapsuleInfo("server-$atMs", "SERVER_SEAL", true, from, to, true, atMs, emptyList(), full, false, null, epochs(from, to))
         }
         return (fromCar + fromServer).sortedByDescending { it.sealedAtMs }
+    }
+
+    /** Where a capsule stands in its owner's library now (with the server's own record of extensions). */
+    fun library(stream: StreamId, c: CapsuleInfo): LibraryItem {
+        val extendedUntil = listOfNotNull(c.carExtendedUntil, plans?.extendedUntil(stream.deviceId, c.id)).maxOrNull()
+        // The server's own seal of a crash whose car went silent counts as a 큰 사고 (ten years, the family can open
+        // it): the car may never have lived to report its airbag.
+        val trigger = runCatching { CapsuleTrigger.valueOf(c.trigger) }.getOrNull() ?: CapsuleTrigger.DELTA_V
+        return LibraryItem(c.id, trigger, c.eventMs, released = c.released, left = c.left, extendedUntil = extendedUntil, severe = c.severe)
+    }
+
+    /** Until when a capsule's saved clip is kept (one that left the library: with its records, 30 days from the event). */
+    fun clipUntil(stream: StreamId, c: CapsuleInfo): Long = library(stream, c).let { item ->
+        if (item.left && !item.severe) item.recordsUntil else Retention.clipUntil(c.eventMs, item.extendedUntil)
+    }
+
+    /**
+     * Applies the owner's history window to [stream]: records older than it go, except those of capsules still kept
+     * (in the library, extended, airbag crashes, or held after leaving a full library until an upgrade may bring them
+     * back). Returns how many records were removed.
+     */
+    fun retain(stream: StreamId): Int {
+        val plans = plans ?: return 0
+        val now = clock()
+        val days = plans.historyDays(identity?.ownerOf(stream.deviceId)?.id)
+        val cutoff = now - days * Retention.DAY_MS
+        var through = -1L
+        for (line in store.records(stream, 0, store.highestSeq(stream))) {
+            val r = Record.parse(line) ?: continue
+            val wall = runCatching { EntryCodec.timestamp(r.entry).wallMillis }.getOrNull() ?: continue
+            if (wall >= cutoff) break
+            through = r.seq
+        }
+        val all = capsules(stream)
+        // Clips: 30 days from the event (a crash's too) unless extended.
+        clips?.let { store ->
+            for (clip in store.all().filter { it.device == stream.deviceId && it.stream == stream.stream }) {
+                val c = all.firstOrNull { it.id == clip.capsuleId }
+                if (c == null || now >= clipUntil(stream, c)) {
+                    store.remove(clip.id, "expired", now)
+                    note(stream, now, "보관 기간이 지난 블랙박스 영상 삭제 (${clip.capsuleId})")
+                }
+            }
+        }
+        if (through < 0) return 0
+        val keep = all.filter { library(stream, it).let { i -> i.visible(now) || i.status(now) == LibraryStatus.LEFT } }.map { it.firstSeq..it.lastSeq }
+        val n = store.remove(stream, through, keep, "${days}일 지난 주행 기록", now)
+        if (n > 0) note(stream, now, "${days}일이 지난 주행 기록 ${n}건 삭제 (보관 중인 기록은 그대로)")
+        return n
     }
 
     /** The minute keys the car handed over for a severe capsule, opened: (epoch, minute, base64 key). */
@@ -413,7 +512,7 @@ class MirrorService(
      * not listed). Newest first.
      */
     fun drives(stream: StreamId, mine: (Int) -> Boolean): List<Drive> {
-        val version = listOf(store.highestSeq(stream), store.log(stream, "seals").size)
+        val version = listOf(store.highestSeq(stream), store.count(stream), store.log(stream, "seals").size)
         val all = synchronized(driveCache) { driveCache[stream]?.takeIf { it.first == version }?.second }
             ?: scanDrives(stream).also { synchronized(driveCache) { driveCache[stream] = version to it } }
         return all.filter { (_, epochs) -> epochs.any(mine) }.map { it.first }
@@ -547,7 +646,7 @@ class MirrorService(
     /** A crash-level trigger recorded by the car. */
     private fun severe(r: Record): Boolean {
         val e = runCatching { EntryCodec.decode(r.entry) }.getOrNull() as? ChainEntry.Escalation ?: return false
-        return (e.event as? EscalationEvent.Triggered)?.trigger?.severe == true
+        return (e.event as? EscalationEvent.Triggered)?.trigger?.crash == true
     }
 
     /**
@@ -568,7 +667,7 @@ class MirrorService(
             .mapNotNull { r -> runCatching { DriveEvent(r.seq, EntryCodec.decode(copies[r.seq] ?: r.entry)) }.getOrNull() }
             .any { event ->
                 engine.onEvent(event).any { o ->
-                    o is EngineOutput.Append && (o.event as? EscalationEvent.Triggered)?.trigger?.severe == true
+                    o is EngineOutput.Append && (o.event as? EscalationEvent.Triggered)?.trigger?.crash == true
                 }
             }
     }

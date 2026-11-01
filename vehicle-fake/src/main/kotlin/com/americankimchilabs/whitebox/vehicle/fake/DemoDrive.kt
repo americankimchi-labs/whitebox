@@ -18,8 +18,9 @@ import kotlin.math.cos
  * The demo drive (≈75 s), shared by the replay mode and tools/virtual-console/demo.py so both tell the same story:
  * the driving context at the start (belt, door, lamps, wipers, cruise, speed limit), parking brake off and out of
  * Park, lane changes with turn signals, an ordinary brake, then a hard brake (ALERT, a near-miss capsule) that ends
- * in a crash-profile speed drop (TRIGGERED, primary ΔV, the capsule escalates), stillness → the capsule seals,
- * back to Park.
+ * in a crash-profile speed drop (TRIGGERED, primary ΔV, the capsule escalates) with the airbags firing (the capsule
+ * becomes a 큰 사고), stillness → the capsule seals, back to Park. Everything here is made up: it runs in test builds,
+ * the tests and the demo car on the server, never in the release app.
  *
  * Speed is emitted continuously at 10 Hz like PERF_VEHICLE_SPEED; everything else on change.
  */
@@ -137,6 +138,9 @@ object DemoDrive {
         speed(500, to = 50f)
         speed(300)
         speed(100, to = 25f) // impact: −25 km/h in one 100 ms sample → TRIGGERED, primary ΔV
+        // A frontal hit this hard fires the airbags; their ECU reports a few tens of ms later, turning the crash
+        // capsule into a 큰 사고. Made up like the rest of this drive: it exists only in test builds and the demo car.
+        timed += (t + 40) to VehicleSignal.AirbagDeployed("ROW_1_LEFT", true)
         speed(2_000, to = 0f)
         speed(12_000) // stillness → final seal
         now(VehicleSignal.Gear(GearPosition.PARK))

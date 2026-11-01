@@ -1,6 +1,7 @@
 package com.americankimchilabs.whitebox.tamper
 
 import com.americankimchilabs.whitebox.data.CapsuleCheck
+import com.americankimchilabs.whitebox.data.EvidenceFile
 import com.americankimchilabs.whitebox.data.FileEventStore
 import com.americankimchilabs.whitebox.data.SealStore
 import com.americankimchilabs.whitebox.data.verifyCapsule
@@ -17,10 +18,13 @@ import java.security.MessageDigest
  *
  *   ./gradlew -q :tamper-demo:run [--args=<chain dir>]      (default: docs/artifacts/live-run2-demo)
  *
+ * Given an evidence file downloaded on the owner's phone (`whitebox-<id>.txt`), it checks that file instead.
  * Works on copies; the input directory is never written.
  */
 fun main(args: Array<String>) {
-    val source = File(args.firstOrNull()?.takeIf { it.isNotBlank() } ?: "docs/artifacts/live-run2-demo")
+    val arg = args.firstOrNull()?.takeIf { it.isNotBlank() }
+    if (arg != null && File(arg).isFile) return checkEvidence(File(arg))
+    val source = File(arg ?: "docs/artifacts/live-run2-demo")
     require(File(source, "chain.log").exists() && File(source, "seals.log").exists()) { "no chain.log + seals.log in $source" }
     val work = Files.createTempDirectory("whitebox-tamper").toFile()
 
@@ -54,6 +58,22 @@ fun main(args: Array<String>) {
     report("해시 재계산 위조 / re-hashed forgery", verifyCapsule(seal, FileEventStore(forged)))
 
     work.deleteRecursively()
+}
+
+/** An evidence file from the phone: every check, then what the records say once opened with the keys inside. */
+private fun checkEvidence(file: File) {
+    val r = EvidenceFile.verify(file.readText())
+    println("White Box 증거 파일 검증 / evidence file check")
+    println("  파일: ${file.path}  ·  캡슐 ${r.capsuleId} ${r.trigger}  #${r.firstSeq}–#${r.lastSeq}")
+    println("  체인: ${if (r.chainOk) "[PASS] 기록 ${r.recordsChecked}건 해시·연결 일치" else "[FAIL] ${r.chainProblem}"}")
+    println("  차량 봉인: ${if (r.seals > 0 && r.sealsValid == r.seals) "[PASS]" else "[FAIL]"} ${r.sealsValid}/${r.seals}건 서명 유효, 헤드 일치")
+    println("  서버 서명: ${if (r.anchorsValid == r.anchors) "[PASS]" else "[FAIL]"} ${r.anchorsValid}/${r.anchors}건")
+    println("  열린 기록: ${r.opened}건 (파일 안의 열쇠로)")
+    println(if (r.ok) "  결과: 원본 그대로입니다 / original, unaltered" else "  결과: 원본과 다릅니다 / NOT the original")
+    r.entries.filter { (_, e) -> e is ChainEntry.Signal && (e.sample.signal is VehicleSignal.Speed || e.sample.signal is VehicleSignal.BrakePedal) }.takeLast(8).forEach { (seq, e) ->
+        val s = (e as ChainEntry.Signal).sample.signal
+        println("    #$seq ${if (s is VehicleSignal.Speed) "속도 %.1f km/h".format(s.metersPerSecond * 3.6f) else "브레이크 ${if ((s as VehicleSignal.BrakePedal).pressed) "밟음" else "뗌"}"}")
+    }
 }
 
 private fun report(label: String, check: CapsuleCheck) {

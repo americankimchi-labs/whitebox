@@ -20,8 +20,23 @@ data class PutResult(
 interface StreamStore {
     fun put(stream: StreamId, records: List<Record>, receivedAtMs: Long): PutResult
 
-    /** Highest seq such that every record from the stream's first held seq up to it is held; -1 if none. */
+    /**
+     * Highest seq such that every record from the stream's start up to it is held or accounted for (removed on
+     * purpose, or declared lost by the car); -1 if none.
+     */
     fun contiguousHead(stream: StreamId): Long
+
+    /**
+     * Removes held records at or before [throughSeq] that lie outside [keep] (the retention window has passed them);
+     * they stay accounted for. Returns how many were removed.
+     */
+    fun remove(stream: StreamId, throughSeq: Long, keep: List<LongRange>, reason: String, atMs: Long): Int
+
+    /** Records [fromSeq]..[toSeq] will never arrive (the car removed them before they were sent): accounted for. */
+    fun declareGap(stream: StreamId, fromSeq: Long, toSeq: Long, reason: String, atMs: Long)
+
+    /** Ranges accounted for without being held: (from, to, reason). */
+    fun removed(stream: StreamId): List<Triple<Long, Long, String>>
 
     fun highestSeq(stream: StreamId): Long
 
@@ -60,9 +75,10 @@ interface StreamStore {
  */
 class FileStreamStore(private val root: File) : StreamStore {
 
-    private class Index(dir: File) {
+    private class Index(val dir: File) {
         val file = File(dir.apply { mkdirs() }, "records.log")
-        val out = FileOutputStream(file, true)
+        var out = FileOutputStream(file, true)
+        val removed = TreeMap<Long, Long>()
         val hashes = TreeMap<Long, String>()
         val lines = HashMap<Long, String>()
         var conflicts = 0
@@ -91,6 +107,10 @@ class FileStreamStore(private val root: File) : StreamStore {
                     idx.hashes[r.seq] = r.hash
                     idx.lines[r.seq] = r.line
                 }
+            }
+            idx.dir.resolve("removed.log").takeIf { it.exists() }?.readLines()?.forEach { l ->
+                val f = l.split("|")
+                if (f.size >= 2) idx.removed.merge(f[0].toLong(), f[1].toLong(), ::maxOf)
             }
         }
     }
@@ -130,13 +150,52 @@ class FileStreamStore(private val root: File) : StreamStore {
     @Synchronized
     override fun contiguousHead(stream: StreamId): Long {
         val idx = existing(stream) ?: return -1
-        val first = idx.hashes.firstKeyOrNull() ?: return -1
-        var seq = if (idx.contiguousFrom == first) idx.contiguous else first
-        while (idx.hashes.containsKey(seq + 1)) seq++
+        val first = listOfNotNull(idx.hashes.firstKeyOrNull(), idx.removed.firstKeyOrNull()).minOrNull() ?: return -1
+        var seq = if (idx.contiguousFrom == first) idx.contiguous else first - 1
+        while (true) {
+            val next = seq + 1
+            if (idx.hashes.containsKey(next)) { seq = next; continue }
+            val r = idx.removed.floorEntry(next)
+            if (r != null && r.value >= next) { seq = r.value; continue }
+            break
+        }
         idx.contiguousFrom = first
         idx.contiguous = seq
         return seq
     }
+
+    @Synchronized
+    override fun remove(stream: StreamId, throughSeq: Long, keep: List<LongRange>, reason: String, atMs: Long): Int {
+        val idx = existing(stream) ?: return 0
+        val first = idx.hashes.firstKeyOrNull() ?: return 0
+        if (first > throughSeq) return 0
+        val gone = idx.hashes.headMap(throughSeq, true).keys.filter { seq -> keep.none { seq in it } }
+        if (gone.isEmpty()) return 0
+        gone.forEach { idx.hashes.remove(it); idx.lines.remove(it) }
+        // Rewrite the log without them (written aside, then swapped in, so a crash leaves one whole file).
+        val tmp = idx.dir.resolve("records.log.tmp")
+        idx.out.close()
+        tmp.bufferedWriter().use { w ->
+            idx.file.forEachLine { l -> Record.parse(l.substringAfter('\t'))?.takeIf { idx.hashes[it.seq] == it.hash }?.let { w.write(l); w.write("\n") } }
+        }
+        tmp.renameTo(idx.file)
+        idx.out = FileOutputStream(idx.file, true)
+        declareGap(stream, first, throughSeq, reason, atMs)
+        return gone.size
+    }
+
+    @Synchronized
+    override fun declareGap(stream: StreamId, fromSeq: Long, toSeq: Long, reason: String, atMs: Long) {
+        val idx = load(stream)
+        if (toSeq < fromSeq) return
+        idx.removed.merge(fromSeq, toSeq, ::maxOf)
+        idx.contiguousFrom = -1
+        appendLog(stream, "removed", "$fromSeq|$toSeq|$reason|$atMs")
+    }
+
+    @Synchronized
+    override fun removed(stream: StreamId): List<Triple<Long, Long, String>> =
+        log(stream, "removed").mapNotNull { l -> l.split("|").takeIf { it.size >= 3 }?.let { Triple(it[0].toLong(), it[1].toLong(), it[2]) } }
 
     @Synchronized
     override fun highestSeq(stream: StreamId) = existing(stream)?.hashes?.lastKeyOrNull() ?: -1

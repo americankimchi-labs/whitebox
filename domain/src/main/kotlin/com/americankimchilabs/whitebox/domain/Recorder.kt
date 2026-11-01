@@ -20,6 +20,12 @@ sealed interface RecorderEvent {
     data class PermissionDegraded(val permission: RecorderPermission) : RecorderEvent
 
     data class PermissionRestored(val permission: RecorderPermission) : RecorderEvent
+
+    /**
+     * Records up to [throughSeq] (made until [throughWall]) were removed from this car. Normally they are already in
+     * the cloud ([unsent] false); [unsent] true means they never reached it and are lost — said here, not hidden.
+     */
+    data class Pruned(val throughSeq: Long, val throughWall: Long, val unsent: Boolean) : RecorderEvent
 }
 
 enum class StartReason {

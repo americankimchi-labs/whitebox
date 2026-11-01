@@ -15,6 +15,7 @@ import com.americankimchilabs.whitebox.recorder.RecorderService
 import com.americankimchilabs.whitebox.recorder.RecorderService.Companion.MIRROR_DEFAULT
 import com.americankimchilabs.whitebox.recorder.RecorderService.Companion.MIRROR_LOCAL
 import com.americankimchilabs.whitebox.recorder.SourceMode
+import com.americankimchilabs.whitebox.recorder.TestBuild
 import com.americankimchilabs.whitebox.ui.WhiteBoxApp
 import com.americankimchilabs.whitebox.ui.WhiteBoxTheme
 
@@ -23,7 +24,9 @@ import com.americankimchilabs.whitebox.ui.WhiteBoxTheme
  *
  *   adb shell am start --user 10 -n com.americankimchilabs.whitebox/.MainActivity --es source REPLAY
  *
- * `source` = LIVE (car) or REPLAY (scripted demo drive, restarted from the top each time).
+ * `source` = LIVE (car) or REPLAY (scripted demo drive, restarted from the top each time; test builds only — a
+ * release build records only the car). Test builds also take `--es tier FREE|PLUS|PRO` (the plan of a car without
+ * the cloud) and `--ez test_airbag true` (a test airbag signal, recorded as a test).
  *
  * `mirror` = `local` sends the mirror to a server on the emulator's host computer (ws://10.0.2.2:8080, started with
  * `./gradlew :server:run`), `default` returns to the build's own mirror. Only these two fixed values exist, so no
@@ -66,6 +69,7 @@ class MainActivity : ComponentActivity() {
     private fun startFrom(intent: Intent) {
         val source = intent.getStringExtra(RecorderService.EXTRA_SOURCE)?.let(SourceMode::valueOf)
         val mirror = intent.getStringExtra(RecorderService.EXTRA_MIRROR)?.takeIf { it == MIRROR_LOCAL || it == MIRROR_DEFAULT }
-        RecorderService.start(this, source, restartReplay = source == SourceMode.REPLAY, mirror = mirror)
+        // Test builds pass their test-only extras on to the recorder (consumed once); a release build has none.
+        RecorderService.start(this, source, restartReplay = source == SourceMode.REPLAY, mirror = mirror, extras = TestBuild.take(intent))
     }
 }

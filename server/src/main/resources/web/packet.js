@@ -123,7 +123,7 @@
   // ---- words (the car's own) ----
 
   const TRIGGER = {
-    AIRBAG: '에어백 전개', DELTA_V: '충격 감지', SHORT_DELTA_V: '짧은 충격 감지', BRAKED_SPIKE: '제동 중 충격',
+    AIRBAG: '에어백 전개', TEST_AIRBAG: '시험용 에어백 신호', DELTA_V: '충격 감지', SHORT_DELTA_V: '짧은 충격 감지', BRAKED_SPIKE: '제동 중 충격',
     REAR_SHOVE: '후방 충격 (정차·제동 중)', ALERT_RESOLVED: '급제동 후 정차', MANUAL: '음성으로 보관', HARD_BRAKE: '급제동',
     EVASIVE_STEER: '급핸들 (회피)', BRAKE_SWERVE: '급제동 + 급핸들', SHIFT_TO_NEUTRAL: '주행 중 중립(N) 변속', BRAKE_SPEED_RISE: '브레이크를 밟는데 속도 상승',
     BRAKE_NO_DECEL: '브레이크를 밟는데 감속 없음', BRAKE_PUMPING: '브레이크 반복 조작', PARKING_BRAKE_MOVING: '주행 중 주차 브레이크', LURCH: '정차 중 급출발',

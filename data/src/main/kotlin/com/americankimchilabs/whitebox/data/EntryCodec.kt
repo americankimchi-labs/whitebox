@@ -18,6 +18,7 @@ import com.americankimchilabs.whitebox.domain.GapCause
 import com.americankimchilabs.whitebox.domain.GearPosition
 import com.americankimchilabs.whitebox.domain.IgnitionState
 import com.americankimchilabs.whitebox.domain.IncidentCapsule
+import com.americankimchilabs.whitebox.domain.LibraryEvent
 import com.americankimchilabs.whitebox.domain.LocationFix
 import com.americankimchilabs.whitebox.domain.RecorderEvent
 import com.americankimchilabs.whitebox.domain.RecorderPermission
@@ -25,6 +26,7 @@ import com.americankimchilabs.whitebox.domain.SignalKind
 import com.americankimchilabs.whitebox.domain.SignalSample
 import com.americankimchilabs.whitebox.domain.StartReason
 import com.americankimchilabs.whitebox.domain.TelltaleState
+import com.americankimchilabs.whitebox.domain.Tier
 import com.americankimchilabs.whitebox.domain.Timestamp
 import com.americankimchilabs.whitebox.domain.TurnSignalState
 import com.americankimchilabs.whitebox.domain.VehicleSignal
@@ -38,7 +40,7 @@ import com.americankimchilabs.whitebox.domain.VoiceLine
  * With a [RecordCipher], what a record says is encrypted and what it is stays readable: a signal's value
  * (`S|KIND|v1.…|time|source time`) and a location fix as a whole (`L|v1.…|time`), each bound to its record's type and
  * time. Recorder, escalation, audio and handover records are not personal and stay plain, so the server can run the dead-man
- * switch on them. Records written without a cipher (older chains, tests) decode as before.
+ * switch on them; so do library records (plan, a capsule leaving, an extension). Records written without a cipher (older chains, tests) decode as before.
  */
 object EntryCodec {
 
@@ -73,6 +75,12 @@ object EntryCodec {
             is HandoverEvent.Ending -> listOf("ENDING", v.reason)
             HandoverEvent.Resumed -> listOf("RESUMED")
             is HandoverEvent.Ended -> listOf("ENDED", v.reason, v.capsuleId)
+        }
+        is ChainEntry.Library -> listOf("K", ts(e.at)) + when (val v = e.event) {
+            is LibraryEvent.PlanChanged -> listOf("PLAN", v.tier, v.previous ?: "-")
+            is LibraryEvent.Left -> listOf("LEFT", v.capsuleId)
+            is LibraryEvent.Returned -> listOf("RETURNED", v.capsuleId)
+            is LibraryEvent.Extended -> listOf("EXTENDED", v.capsuleId, v.untilWall)
         }
     }.joinToString("|") { clean(it.toString()) }
 
@@ -123,6 +131,16 @@ object EntryCodec {
                 },
                 ts(f[1]),
             )
+            "K" -> ChainEntry.Library(
+                when (f[2]) {
+                    "PLAN" -> LibraryEvent.PlanChanged(Tier.valueOf(f[3]), f[4].takeIf { it != "-" }?.let(Tier::valueOf))
+                    "LEFT" -> LibraryEvent.Left(f[3])
+                    "RETURNED" -> LibraryEvent.Returned(f[3])
+                    "EXTENDED" -> LibraryEvent.Extended(f[3], f[4].toLong())
+                    else -> error("unknown library event ${f[2]}")
+                },
+                ts(f[1]),
+            )
             else -> error("unknown entry type ${f[0]}")
         }
     }
@@ -158,7 +176,8 @@ object EntryCodec {
         is VehicleSignal.Gear -> s.position.name
         is VehicleSignal.Speed -> s.metersPerSecond.toString()
         is VehicleSignal.Ignition -> s.state.name
-        is VehicleSignal.AirbagDeployed -> "${clean(s.seat).replace(';', '_')};${s.deployed}"
+        // A test-build airbag carries ";test", so it can never read as a real deployment.
+        is VehicleSignal.AirbagDeployed -> "${clean(s.seat).replace(';', '_')};${s.deployed}" + if (s.test) ";test" else ""
         is VehicleSignal.Telltale -> "${label(s.name)};${s.state.name}"
         is VehicleSignal.CruiseControl -> s.state.name
         is VehicleSignal.CruiseTargetSpeed -> s.metersPerSecond.toString()
@@ -187,7 +206,7 @@ object EntryCodec {
         SignalKind.GEAR -> VehicleSignal.Gear(GearPosition.valueOf(v))
         SignalKind.SPEED -> VehicleSignal.Speed(v.toFloat())
         SignalKind.IGNITION -> VehicleSignal.Ignition(IgnitionState.valueOf(v))
-        SignalKind.AIRBAG -> v.split(";").let { VehicleSignal.AirbagDeployed(it[0], it[1].toBooleanStrict()) }
+        SignalKind.AIRBAG -> v.split(";").let { VehicleSignal.AirbagDeployed(it[0], it[1].toBooleanStrict(), it.getOrNull(2) == "test") }
         SignalKind.TELLTALE -> v.split(";").let { VehicleSignal.Telltale(it[0], TelltaleState.valueOf(it[1])) }
         SignalKind.CRUISE_CONTROL -> VehicleSignal.CruiseControl(CruiseState.valueOf(v))
         SignalKind.CRUISE_TARGET_SPEED -> VehicleSignal.CruiseTargetSpeed(v.toFloat())
@@ -214,6 +233,7 @@ object EntryCodec {
         RecorderEvent.RecordingStopped -> listOf("STOPPED")
         is RecorderEvent.PermissionDegraded -> listOf("DEGRADED", e.permission)
         is RecorderEvent.PermissionRestored -> listOf("RESTORED", e.permission)
+        is RecorderEvent.Pruned -> listOf("PRUNED", e.throughSeq, e.throughWall, e.unsent)
     }
 
     private fun recorder(f: List<String>): RecorderEvent = when (f[0]) {
@@ -225,6 +245,7 @@ object EntryCodec {
         "STOPPED" -> RecorderEvent.RecordingStopped
         "DEGRADED" -> RecorderEvent.PermissionDegraded(RecorderPermission.valueOf(f[1]))
         "RESTORED" -> RecorderEvent.PermissionRestored(RecorderPermission.valueOf(f[1]))
+        "PRUNED" -> RecorderEvent.Pruned(f[1].toLong(), f[2].toLong(), f[3].toBooleanStrict())
         else -> error("unknown recorder event ${f[0]}")
     }
 }

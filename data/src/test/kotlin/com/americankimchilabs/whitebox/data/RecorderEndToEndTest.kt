@@ -45,7 +45,7 @@ class RecorderEndToEndTest {
     }
 
     @Test
-    fun demoDriveSealsOneVerifiedDeltaVCapsule() = runTest {
+    fun demoDriveSealsOneVerifiedAirbagCapsule() = runTest {
         val dir = tmp.newFolder()
         val mirrored = mutableListOf<CapsuleSeal>()
         val store = FileEventStore(dir)
@@ -54,13 +54,14 @@ class RecorderEndToEndTest {
         replay(recorder, DemoDrive.signals())
 
         val seal = recorder.capsules.value.single()
-        assertEquals(CapsuleTrigger.DELTA_V, seal.capsule.trigger)
+        assertEquals(CapsuleTrigger.AIRBAG, seal.capsule.trigger) // the crash, then its airbags: one 큰 사고
         assertTrue(seal.final)
         assertEquals(0L, seal.capsule.firstSeq) // the 120 s pre-window reaches back to the start of the drive
         assertEquals(CapsuleCheck.Verified, verifyCapsule(seal, store))
         assertEquals(EscalationLevel.NORMAL, recorder.level.value)
-        // Local seal first, then the mirror is told: provisional at the hard brake, re-sealed at impact, final at stillness.
-        assertEquals(List(3) { seal.capsule.id }, mirrored.map { it.capsule.id })
+        // Local seal first, then the mirror is told: provisional at the hard brake, re-sealed at impact and when the
+        // airbags report, final at stillness.
+        assertEquals(List(4) { seal.capsule.id }, mirrored.map { it.capsule.id })
 
         val inCapsule = store.read(seal.capsule.firstSeq, seal.capsule.lastSeq).map { it.entry }
         val escalations = inCapsule.filterIsInstance<ChainEntry.Escalation>().map { it.event }
@@ -69,8 +70,8 @@ class RecorderEndToEndTest {
             escalations.filterIsInstance<EscalationEvent.LevelChanged>().map { it.level },
         )
         val triggers = escalations.filterIsInstance<EscalationEvent.Triggered>()
-        assertEquals(listOf(CapsuleTrigger.HARD_BRAKE, CapsuleTrigger.DELTA_V), triggers.map { it.trigger })
-        val trigger = triggers.last()
+        assertEquals(listOf(CapsuleTrigger.HARD_BRAKE, CapsuleTrigger.DELTA_V, CapsuleTrigger.AIRBAG), triggers.map { it.trigger })
+        val trigger = triggers.single { it.trigger == CapsuleTrigger.DELTA_V }
         assertEquals(-25f, trigger.measured, 0.1f)
         val triggerAtMs = store.read(trigger.causeSeq, trigger.causeSeq).single().entry.at.elapsedNanos / 1_000_000
         assertEquals(DemoDrive.IMPACT_AT_MS, triggerAtMs)

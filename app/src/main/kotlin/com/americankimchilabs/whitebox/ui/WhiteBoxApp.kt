@@ -3,8 +3,14 @@ package com.americankimchilabs.whitebox.ui
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.americankimchilabs.whitebox.domain.CapsuleTrigger
 import com.americankimchilabs.whitebox.domain.HandoverPhase
+import com.americankimchilabs.whitebox.domain.Entitlements
+import com.americankimchilabs.whitebox.domain.LibraryItem
+import com.americankimchilabs.whitebox.domain.LibraryStatus
+import com.americankimchilabs.whitebox.domain.Retention
+import com.americankimchilabs.whitebox.domain.Tier
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -61,6 +67,7 @@ import com.americankimchilabs.whitebox.recorder.ActiveSession
 import com.americankimchilabs.whitebox.platform.DataConsent
 import com.americankimchilabs.whitebox.recorder.AppGraph
 import com.americankimchilabs.whitebox.recorder.SourceMode
+import com.americankimchilabs.whitebox.recorder.TestBuild
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -128,7 +135,16 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
     val missing by AppGraph.missingGrants.collectAsState()
 
     val level by recorder.level.collectAsState()
-    val capsules by recorder.capsules.collectAsState()
+    val allCapsules by recorder.capsules.collectAsState()
+    val libraryItems by (session.library?.items ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList<LibraryItem>()) }).collectAsState()
+    val tier by (session.library?.tier ?: remember { kotlinx.coroutines.flow.MutableStateFlow(Entitlements.DEFAULT) }).collectAsState()
+    val leftNotice by (session.library?.notices ?: remember { kotlinx.coroutines.flow.MutableSharedFlow<LibraryItem>() }).collectAsState(initial = null)
+    // The library shows what is kept: crash records, kept moments and extended ones (a seal the library has not seen yet too).
+    val capsules = remember(allCapsules, libraryItems) {
+        val byId = libraryItems.associateBy { it.id }
+        val now = System.currentTimeMillis()
+        allCapsules.filter { byId[it.capsule.id]?.visible(now) ?: true }
+    }
     val parked = live.gear == null || live.gear == GearPosition.PARK
     var open by remember(session) { mutableStateOf<CapsuleSeal?>(null) }
     var tab by remember { mutableIntStateOf(0) }
@@ -196,15 +212,16 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
         Column(Modifier.weight(1f)) {
             when (tab) {
                 0 -> Timeline(labels, rows)
-                1 -> CapsuleList(labels, capsules, onOpen = { open = it })
+                1 -> CapsuleList(labels, capsules, libraryItems, tier, leftNotice.takeIf { parked }, onOpen = { open = it })
                 else -> PhoneTab(session.claim, session.webBase, consent == true, handoverOn = handoverPhase != HandoverPhase.OFF, onConsent = { agree ->
                     DataConsent.set(context, agree)
                     if (!agree) session.outbox?.withdrawConsent()
                 })
             }
         }
-        // Switching the source would stop the real recording: never while a hired driver has the car.
-        if (handoverPhase == HandoverPhase.OFF) Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(top = 12.dp)) {
+        // Switching the source would stop the real recording: never while a hired driver has the car. A release build
+        // has no scripted drive, so no switch either.
+        if (TestBuild.REPLAY && handoverPhase == HandoverPhase.OFF) Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(top = 12.dp)) {
             OutlinedButton(onClick = { onSource(SourceMode.REPLAY) }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.action_replay)) }
             OutlinedButton(onClick = { onSource(SourceMode.LIVE) }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.action_live)) }
         }
@@ -288,26 +305,80 @@ private fun Timeline(labels: Labels, rows: List<DriveEvent>) {
     }
 }
 
+/**
+ * The library: the plan and how many slots are used, a notice when a moment had to leave (parked only), and each kept
+ * item with how long it stays.
+ */
 @Composable
-private fun CapsuleList(labels: Labels, capsules: List<CapsuleSeal>, onOpen: (CapsuleSeal) -> Unit) {
-    if (capsules.isEmpty()) {
-        Text(stringResource(R.string.no_capsules), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(16.dp))
-        return
-    }
-    LazyColumn(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-        items(capsules.reversed(), key = { it.capsule.id }) { s ->
-            Column(Modifier.fillMaxWidth().ccpFocus().clickable { onOpen(s) }.padding(horizontal = 8.dp, vertical = 14.dp)) {
-                Text(labels.trigger(s.capsule.trigger), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+private fun CapsuleList(
+    labels: Labels,
+    capsules: List<CapsuleSeal>,
+    items: List<LibraryItem>,
+    tier: Tier,
+    leftNotice: LibraryItem?,
+    onOpen: (CapsuleSeal) -> Unit,
+) {
+    val now = System.currentTimeMillis()
+    val byId = items.associateBy { it.id }
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Text(
+            stringResource(R.string.library_header, labels.plan(tier), items.count { it.usesSlot(now) }, Entitlements(tier).librarySlots),
+            style = MaterialTheme.typography.bodyLarge, color = Color.Gray, modifier = Modifier.padding(horizontal = 8.dp),
+        )
+        leftNotice?.let { n ->
+            Column(Modifier.fillMaxWidth().padding(8.dp).background(Color(0x14E65100), RoundedCornerShape(8.dp)).padding(12.dp)) {
+                // An older unpaid one, or the new moment itself when every slot is paid: held for an upgrade either way.
+                Text(stringResource(R.string.library_left_notice, labels.trigger(n.trigger), labels.dateTime(n.eventWall)), style = MaterialTheme.typography.bodyLarge)
                 Text(
                     stringResource(
-                        R.string.capsule_meta,
-                        labels.dateTime(s.sealedAtWallMillis), s.capsule.firstSeq, s.capsule.lastSeq,
-                        stringResource(if (s.final) R.string.capsule_final else R.string.capsule_provisional),
+                        when (tier) {
+                            Tier.FREE -> R.string.library_left_phone_free
+                            Tier.PLUS -> R.string.library_left_phone_plus
+                            Tier.PRO -> R.string.library_left_phone_pro
+                        },
                     ),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodyMedium, color = Color.Gray,
                 )
             }
         }
+        if (capsules.isEmpty()) {
+            Text(stringResource(R.string.no_capsules), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(16.dp))
+            return@Column
+        }
+        LazyColumn(Modifier.fillMaxWidth()) {
+            items(capsules.reversed(), key = { it.capsule.id }) { s ->
+                Column(Modifier.fillMaxWidth().ccpFocus().clickable { onOpen(s) }.padding(horizontal = 8.dp, vertical = 14.dp)) {
+                    Text(labels.trigger(s.capsule.trigger), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        stringResource(
+                            R.string.capsule_meta,
+                            labels.dateTime(s.sealedAtWallMillis), s.capsule.firstSeq, s.capsule.lastSeq,
+                            stringResource(if (s.final) R.string.capsule_final else R.string.capsule_provisional),
+                        ),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Color.Gray,
+                    )
+                    byId[s.capsule.id]?.let { item -> Text(keptFor(labels, item, now), style = MaterialTheme.typography.bodyLarge, color = if (item.status(now) == LibraryStatus.KEPT && Retention.warn(item.recordsUntil, now)) Color(0xFFE65100) else Color.Gray) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun keptFor(labels: Labels, item: LibraryItem, now: Long): String {
+    val kept = when (item.status(now)) {
+        LibraryStatus.SEVERE -> return stringResource(R.string.library_severe)
+        LibraryStatus.EXTENDED -> stringResource(R.string.library_extended, labels.date(item.recordsUntil))
+        else -> {
+            val days = ((item.recordsUntil - now + Retention.DAY_MS - 1) / Retention.DAY_MS).toInt().coerceAtLeast(0)
+            stringResource(if (Retention.warn(item.recordsUntil, now)) R.string.library_days_left_soon else R.string.library_days_left, days)
+        }
+    }
+    // 큰 사고 / 충돌 / 위험 순간: a handover report is named by its title alone.
+    return when {
+        item.trigger == CapsuleTrigger.HANDOVER -> kept
+        item.trigger.crash -> stringResource(R.string.library_kind_crash, kept)
+        else -> stringResource(R.string.library_kind_moment, kept)
     }
 }

@@ -116,6 +116,22 @@ object MirrorProtocol {
 
         /** Where handover mode stands on the car, for the owner's phone: sent on every change and on connecting. */
         data class HandoverStatus(val phase: String, val requestedAtWall: Long, val sinceWall: Long, val tripId: String) : Frame
+
+        /** The owner's plan ([previous] before a change at [changedAtWall]; "-" the first time); resent until acknowledged. */
+        data class Plan(val commandId: String, val tier: String, val previous: String, val changedAtWall: Long) : Frame
+
+        /** The owner extended a capsule (records and clip) until [untilWall]; resent until acknowledged. */
+        data class Extend(val commandId: String, val capsuleId: String, val untilWall: Long) : Frame
+
+        /** A plan or extension command recorded on the car. */
+        data class LibraryAck(val commandId: String) : Frame
+
+        /**
+         * Records up to [seq] were removed from the car before they reached the cloud (offline too long); [hash] is
+         * the last one's, which the next record links to. Said on the authenticated channel, so the server can note
+         * the gap as the car's own statement and carry on.
+         */
+        data class Checkpoint(val seq: Long, val hash: String) : Frame
     }
 
     private val b64e = Base64.getEncoder()
@@ -149,6 +165,10 @@ object MirrorProtocol {
         is Frame.HandoverCommand -> "HANDOVERCMD|${f.commandId}|${if (f.arm) "ARM" else "END"}|${f.requestedAtWall}"
         is Frame.HandoverAck -> "HANDOVERACK|${f.commandId}"
         is Frame.HandoverStatus -> "HANDOVER|${f.phase}|${f.requestedAtWall}|${f.sinceWall}|${f.tripId}"
+        is Frame.Plan -> "PLAN|${f.commandId}|${f.tier}|${f.previous}|${f.changedAtWall}"
+        is Frame.Extend -> "EXTEND|${f.commandId}|${f.capsuleId}|${f.untilWall}"
+        is Frame.LibraryAck -> "LIBRARYACK|${f.commandId}"
+        is Frame.Checkpoint -> "CHECKPOINT|${f.seq}|${f.hash}"
     }
 
     /** Null for anything malformed: a bad frame is dropped, never allowed to break the channel. */
@@ -189,6 +209,10 @@ object MirrorProtocol {
             "HANDOVERCMD" -> rest.split("|").let { Frame.HandoverCommand(it[0], it[1] == "ARM", it[2].toLong()) }
             "HANDOVERACK" -> Frame.HandoverAck(rest)
             "HANDOVER" -> rest.split("|").let { Frame.HandoverStatus(it[0], it[1].toLong(), it[2].toLong(), it[3]) }
+            "PLAN" -> rest.split("|").let { Frame.Plan(it[0], it[1], it[2], it[3].toLong()) }
+            "EXTEND" -> rest.split("|").let { Frame.Extend(it[0], it[1], it[2].toLong()) }
+            "LIBRARYACK" -> Frame.LibraryAck(rest)
+            "CHECKPOINT" -> rest.split("|").let { Frame.Checkpoint(it[0].toLong(), it[1]) }
             else -> null
         }
     }.getOrNull()

@@ -190,4 +190,10 @@ object Tuning {
 
     /** A speed sample older than this does not count as the current speed. */
     const val SPEED_STALE_MS = 500
+
+    /**
+     * An unchanged speed is written at most this often in normal driving (it is reported about every 100 ms even
+     * standing still). Changes, the last unchanged value before one, and alerts are always written in full.
+     */
+    const val SPEED_HEARTBEAT_MS = 1_000L
 }

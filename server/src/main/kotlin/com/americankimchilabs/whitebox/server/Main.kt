@@ -8,6 +8,8 @@ import io.ktor.server.netty.Netty
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
+import io.ktor.server.routing.post
+import io.ktor.server.request.receiveParameters
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.DefaultWebSocketServerSession
 import io.ktor.server.websocket.WebSockets
@@ -19,10 +21,13 @@ import io.ktor.websocket.readText
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import com.americankimchilabs.whitebox.domain.Entitlements
+import com.americankimchilabs.whitebox.domain.Tier
 import java.io.File
 
 /**
- * `PORT` (default 8080, as Cloud Run sets it) and `WHITEBOX_DATA` (default ./server-data) configure the server.
+ * `PORT` (default 8080, as Cloud Run sets it), `WHITEBOX_DATA` (default ./server-data) and `WHITEBOX_DEFAULT_TIER`
+ * (FREE, PLUS or PRO: the plan of an owner with none on record; default PRO) configure the server.
  *
  *     ./gradlew :server:run          # the emulator reaches it at ws://10.0.2.2:8080/v1/stream
  */
@@ -32,7 +37,10 @@ fun main() {
     val key = ServerKey(dir)
     val sms = DemoSmsSender()
     val identity = Identity(dir, key, sms)
-    val service = MirrorService(FileStreamStore(dir), key, identity)
+    // The plan of an owner with none on record; the contest build shows everything (Pro).
+    val defaultTier = System.getenv("WHITEBOX_DEFAULT_TIER")?.let { t -> Tier.entries.firstOrNull { it.name == t.uppercase() } } ?: Entitlements.DEFAULT
+    val plans = Plans(dir, defaultTier, DemoPayment())
+    val service = MirrorService(FileStreamStore(dir), key, identity, plans = plans, clips = ClipStore(dir))
     println("White Box mirror on :$port, data in ${dir.absolutePath}")
     embeddedServer(Netty, port = port, host = "0.0.0.0") { whiteBox(service, sms) }.start(wait = true)
 }
@@ -64,6 +72,17 @@ fun Application.whiteBox(service: MirrorService, sms: DemoSmsSender? = null, tic
         }
         get("/") { call.respondText(dashboard(service, sms), ContentType.Text.Html) }
         get("/dashboard/cards") { call.respondText(dashboardCards(service, sms), ContentType.Text.Html) }
+        // The admin switch: an owner's plan without payment (the dashboard is for whoever runs the server).
+        post("/dashboard/plan") {
+            val p = call.receiveParameters()
+            val device = p["device"].orEmpty()
+            val owner = service.identity?.ownerOf(device)
+            val tier = Tier.entries.firstOrNull { it.name == p["tier"] }
+            if (owner == null || tier == null || service.plans == null) return@post call.respondText("no", status = io.ktor.http.HttpStatusCode.BadRequest)
+            service.plans.setTier(owner.id, tier, service.identity.devicesOf(owner.id), "admin")
+            service.identity.devicesOf(owner.id).forEach(service::libraryChanged)
+            call.respondText("ok")
+        }
         service.identity?.let { phoneRoutes(service, it) }
         get("/health") { call.respondText("ok") }
         get("/v1/server-key") { call.respondBytes(service.serverPublicKey(), ContentType.Application.OctetStream) }

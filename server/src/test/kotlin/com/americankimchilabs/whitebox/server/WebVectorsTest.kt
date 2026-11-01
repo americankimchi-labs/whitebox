@@ -25,6 +25,8 @@ import com.americankimchilabs.whitebox.domain.GapCause
 import com.americankimchilabs.whitebox.domain.GearPosition
 import com.americankimchilabs.whitebox.domain.HandoverEndReason
 import com.americankimchilabs.whitebox.domain.HandoverEvent
+import com.americankimchilabs.whitebox.domain.LibraryEvent
+import com.americankimchilabs.whitebox.domain.Tier
 import com.americankimchilabs.whitebox.domain.HandoverEventKind
 import com.americankimchilabs.whitebox.domain.HandoverSource
 import com.americankimchilabs.whitebox.domain.IncidentCapsule
@@ -99,6 +101,14 @@ class WebVectorsTest {
         ChainEntry.Handover(HandoverEvent.Ending(HandoverEndReason.IGNITION_OFF), ts(17)),
         ChainEntry.Handover(HandoverEvent.Resumed, ts(17)),
         ChainEntry.Handover(HandoverEvent.Ended(HandoverEndReason.ARRIVED, "H7"), ts(17)),
+        ChainEntry.Library(LibraryEvent.PlanChanged(Tier.FREE, Tier.PRO), ts(18)),
+        ChainEntry.Library(LibraryEvent.PlanChanged(Tier.PRO, null), ts(18)),
+        ChainEntry.Library(LibraryEvent.Left("C3"), ts(18)),
+        ChainEntry.Library(LibraryEvent.Returned("C3"), ts(18)),
+        ChainEntry.Library(LibraryEvent.Extended("C4", 1_800_000_000_000), ts(18)),
+        ChainEntry.Recorder(RecorderEvent.Pruned(120, 1_700_000_000_001, unsent = true), ts(18)),
+        ChainEntry.Signal(SignalSample(VehicleSignal.AirbagDeployed("ROW_1_LEFT", true, test = true), ts(18))),
+        ChainEntry.Escalation(EscalationEvent.Triggered(CapsuleTrigger.TEST_AIRBAG, 40, 0f), ts(18)),
         ChainEntry.Handover(HandoverEvent.Cancelled(HandoverSource.CAR, HandoverEndReason.EXPIRED), ts(17)),
     ) + listOf(
         VehicleSignal.CruiseControl(CruiseState.ACTIVATED),
@@ -190,6 +200,14 @@ class WebVectorsTest {
                 "anchor" to "$anchorText|sig=${server.sign(anchorText)}",
                 "serverKey" to b64.encodeToString(server.publicKey),
             ),
+            "clip" to run {
+                // A clip as the car encrypts it (built-in camera): the phone must open it with the same derivation.
+                val plain = java.io.File.createTempFile("clip", ".bin").apply { writeBytes(ByteArray(5_000) { (it % 253).toByte() }); deleteOnExit() }
+                val sealed = java.io.File.createTempFile("clip", ".enc").apply { deleteOnExit() }
+                val minuteKey = ByteArray(32) { 9 }
+                com.americankimchilabs.whitebox.data.ClipFormat.encrypt(com.americankimchilabs.whitebox.data.ClipFormat.key(minuteKey, "carClip0001xyz"), plain, sealed)
+                obj("minuteKey" to b64.encodeToString(minuteKey), "clipId" to "carClip0001xyz", "sealed" to b64.encodeToString(sealed.readBytes()), "plain" to b64.encodeToString(plain.readBytes()))
+            },
             "chirp" to obj("sampleRate" to 48_000, "length" to Chirp.samples(48_000).size, "head" to Chirp.samples(48_000).take(400).map { it.toDouble() }),
         )
         val out = File("build/web-vectors").apply { mkdirs() }.resolve("vectors.json")
@@ -211,6 +229,7 @@ class WebVectorsTest {
             RecorderEvent.RecordingStopped -> obj("type" to "R", "event" to "STOPPED", "at" to at(e.at))
             is RecorderEvent.PermissionDegraded -> obj("type" to "R", "event" to "DEGRADED", "permission" to r.permission.name, "at" to at(e.at))
             is RecorderEvent.PermissionRestored -> obj("type" to "R", "event" to "RESTORED", "permission" to r.permission.name, "at" to at(e.at))
+            is RecorderEvent.Pruned -> obj("type" to "R", "event" to "PRUNED", "throughSeq" to r.throughSeq, "throughWall" to r.throughWall, "unsent" to r.unsent, "at" to at(e.at))
         }
         is ChainEntry.Escalation -> when (val v = e.event) {
             is EscalationEvent.LevelChanged -> obj("type" to "E", "event" to "LEVEL", "level" to v.level.name, "causeSeq" to v.causeSeq, "at" to at(e.at))
@@ -232,6 +251,12 @@ class WebVectorsTest {
             HandoverEvent.Resumed -> obj("type" to "H", "event" to "RESUMED", "at" to at(e.at))
             is HandoverEvent.Ended -> obj("type" to "H", "event" to "ENDED", "reason" to h.reason.name, "capsuleId" to h.capsuleId, "at" to at(e.at))
         }
+        is ChainEntry.Library -> when (val k = e.event) {
+            is LibraryEvent.PlanChanged -> obj("type" to "K", "event" to "PLAN", "tier" to k.tier.name, "previous" to k.previous?.name, "at" to at(e.at))
+            is LibraryEvent.Left -> obj("type" to "K", "event" to "LEFT", "capsuleId" to k.capsuleId, "at" to at(e.at))
+            is LibraryEvent.Returned -> obj("type" to "K", "event" to "RETURNED", "capsuleId" to k.capsuleId, "at" to at(e.at))
+            is LibraryEvent.Extended -> obj("type" to "K", "event" to "EXTENDED", "capsuleId" to k.capsuleId, "untilWall" to k.untilWall, "at" to at(e.at))
+        }
     }
 
     private fun signalJson(s: VehicleSignal): Any = when (s) {
@@ -241,7 +266,7 @@ class WebVectorsTest {
         is VehicleSignal.Gear -> s.position.name
         is VehicleSignal.Speed -> s.metersPerSecond
         is VehicleSignal.Ignition -> s.state.name
-        is VehicleSignal.AirbagDeployed -> obj("seat" to s.seat, "deployed" to s.deployed)
+        is VehicleSignal.AirbagDeployed -> obj("seat" to s.seat, "deployed" to s.deployed, "test" to s.test)
         is VehicleSignal.Telltale -> obj("name" to s.name, "state" to s.state.name)
         is VehicleSignal.CruiseControl -> s.state.name
         is VehicleSignal.CruiseTargetSpeed -> s.metersPerSecond

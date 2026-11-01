@@ -3,6 +3,8 @@ package com.americankimchilabs.whitebox.ui
 import android.content.res.Resources
 import com.americankimchilabs.whitebox.R
 import com.americankimchilabs.whitebox.domain.CapsuleTrigger
+import com.americankimchilabs.whitebox.domain.LibraryEvent
+import com.americankimchilabs.whitebox.domain.Tier
 import com.americankimchilabs.whitebox.domain.MeasureUnit
 import com.americankimchilabs.whitebox.domain.AudioEvent
 import com.americankimchilabs.whitebox.domain.BookmarkSource
@@ -34,9 +36,11 @@ import kotlin.math.roundToInt
 class Labels(private val res: Resources) {
     private val clock = SimpleDateFormat("HH:mm:ss.S", Locale.KOREA)
     private val date = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.KOREA)
+    private val day = SimpleDateFormat("yyyy년 M월 d일", Locale.KOREA)
 
     fun time(wallMillis: Long): String = clock.format(Date(wallMillis))
     fun dateTime(wallMillis: Long): String = date.format(Date(wallMillis))
+    fun date(wallMillis: Long): String = day.format(Date(wallMillis))
     val none: String get() = res.getString(R.string.none)
 
     fun gear(g: GearPosition?) = when (g) {
@@ -80,6 +84,7 @@ class Labels(private val res: Resources) {
     fun trigger(t: CapsuleTrigger) = res.getString(
         when (t) {
             CapsuleTrigger.AIRBAG -> R.string.trigger_airbag
+            CapsuleTrigger.TEST_AIRBAG -> R.string.trigger_test_airbag
             CapsuleTrigger.DELTA_V -> R.string.trigger_delta_v
             CapsuleTrigger.SHORT_DELTA_V -> R.string.trigger_short_delta_v
             CapsuleTrigger.BRAKED_SPIKE -> R.string.trigger_braked_spike
@@ -241,7 +246,7 @@ class Labels(private val res: Resources) {
             is VehicleSignal.BrakePedal -> res.getString(R.string.row_brake, brake(s.pressed))
             is VehicleSignal.TurnSignal -> res.getString(R.string.row_turn, turn(s.state))
             is VehicleSignal.Gear -> res.getString(R.string.row_gear, gear(s.position))
-            is VehicleSignal.AirbagDeployed -> if (s.deployed) res.getString(R.string.row_airbag, s.seat) else null
+            is VehicleSignal.AirbagDeployed -> if (s.deployed) res.getString(if (s.test) R.string.row_airbag_test else R.string.row_airbag, s.seat) else null
             is VehicleSignal.Door -> res.getString(
                 if (s.area == "HOOD" || s.area == "REAR") R.string.row_lid else R.string.row_door, // hood and trunk are not doors
                 area(s.area), res.getString(if (s.open) R.string.state_open else R.string.state_closed),
@@ -274,6 +279,7 @@ class Labels(private val res: Resources) {
             RecorderEvent.RecordingStopped -> res.getString(R.string.row_stopped)
             is RecorderEvent.PermissionDegraded -> res.getString(R.string.row_degraded, permission(r.permission))
             is RecorderEvent.PermissionRestored -> res.getString(R.string.row_restored, permission(r.permission))
+            is RecorderEvent.Pruned -> res.getString(if (r.unsent) R.string.row_pruned_unsent else R.string.row_pruned, dateTime(r.throughWall))
         }
         is ChainEntry.Escalation -> when (val x = e.event) {
             is EscalationEvent.LevelChanged -> res.getString(R.string.row_level, level(x.level))
@@ -295,7 +301,21 @@ class Labels(private val res: Resources) {
             is AudioEvent.Beacon -> null // every few seconds while driving; the packet's sync data, not a timeline row
         }
         is ChainEntry.Handover -> handoverRow(e.event)
+        is ChainEntry.Library -> when (val k = e.event) {
+            is LibraryEvent.PlanChanged -> res.getString(R.string.row_plan, plan(k.tier))
+            is LibraryEvent.Left -> res.getString(R.string.row_library_left)
+            is LibraryEvent.Returned -> res.getString(R.string.row_library_returned)
+            is LibraryEvent.Extended -> res.getString(R.string.row_extended, date(k.untilWall))
+        }
     }
+
+    fun plan(t: Tier): String = res.getString(
+        when (t) {
+            Tier.FREE -> R.string.plan_free
+            Tier.PLUS -> R.string.plan_plus
+            Tier.PRO -> R.string.plan_pro
+        },
+    )
 
     fun handoverRow(h: HandoverEvent): String = when (h) {
         is HandoverEvent.Armed -> res.getString(R.string.row_handover_armed, source(h.by))
@@ -346,6 +366,7 @@ fun voiceLineText(line: VoiceLine): Int = when (line) {
     VoiceLine.HANDOVER_SLOW_DOWN -> R.string.voice_handover_slow_down
     VoiceLine.HANDOVER_DRIVE_SAFELY -> R.string.voice_handover_drive_safely
     VoiceLine.HANDOVER_CHECK_ROUTE -> R.string.voice_handover_check_route
+    VoiceLine.LIBRARY_FULL -> R.string.voice_library_full
 }
 
 /**

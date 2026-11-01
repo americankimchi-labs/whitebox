@@ -44,6 +44,7 @@
     <string name="row_turn">방향지시등 %1$s</string>
     <string name="row_gear">기어 %1$s</string>
     <string name="row_airbag">에어백 전개 (%1$s)</string>
+    <string name="row_airbag_test">시험용 에어백 신호 (%1$s)</string>
     <string name="row_door">%1$s 문 %2$s</string>
     <string name="row_lid">%1$s %2$s</string>
     <string name="row_seat_belt">%1$s 안전벨트 %2$s</string>
@@ -119,7 +120,7 @@
     <string name="consent_stopped">참여를 그만두었습니다. 보냈던 자료는 서버에서 지웁니다.</string>
     <string name="tab_phone">휴대폰</string>
     <string name="phone_intro">휴대폰으로 내 기록 보기</string>
-    <string name="phone_intro_hint">연결하면 차 밖에서도 위험했던 순간과 주행 기록, 사고 때의 증거 요약을 볼 수 있습니다. 평소 주행과 위치는 내 휴대폰만 열 수 있고, 비상 연락처에 저장된 분은 큰 사고 기록만 볼 수 있습니다.</string>
+    <string name="phone_intro_hint">연결하면 차 밖에서도 위험했던 순간과 주행 기록, 사고 때의 증거 요약을 볼 수 있습니다. 평소 주행과 위치는 내 휴대폰만 열 수 있고, 비상 연락처에 저장된 분은 에어백이 터진 큰 사고 기록만 볼 수 있습니다.</string>
     <string name="phone_connect">휴대폰 연결</string>
     <string name="phone_connect_other">다른 휴대폰 연결</string>
     <string name="phone_scan">휴대폰 카메라로 QR을 찍어 주세요</string>
@@ -201,6 +202,29 @@
     <string name="handover_report_events">기록된 운전 %1$d건</string>
     <string name="handover_report_none">급제동, 급가속, 과속 등이 없었습니다.</string>
     <string name="handover_report_qr">휴대폰 카메라로 찍으면 이 리포트가 열립니다. 대리운전 업체에 보여 주세요.</string>
+    <string name="voice_library_full">보관함이 가득 차 기록 하나가 빠졌습니다.</string>
+    <string name="plan_free">무료</string>
+    <string name="plan_plus">플러스</string>
+    <string name="plan_pro">프로</string>
+    <string name="row_plan">요금제: %1$s</string>
+    <string name="row_library_left">보관함이 가득 차 오래된 기록이 빠짐</string>
+    <string name="row_library_returned">보관함에 자리가 생겨 빠졌던 기록이 돌아옴</string>
+    <string name="row_extended">기록 연장 · %1$s까지</string>
+    <string name="row_pruned">%1$s까지의 기록을 차에서 정리 (클라우드에 있음)</string>
+    <string name="row_pruned_unsent">%1$s까지의 기록을 차에서 정리 · 오래 연결되지 않아 클라우드에 올리지 못함</string>
+    <string name="library_header">%1$s 요금제 · 보관 %2$d/%3$d개 · 에어백이 터진 큰 사고는 10년 무료</string>
+    <string name="library_days_left">%1$d일 뒤 삭제</string>
+    <string name="library_days_left_soon">%1$d일 뒤 삭제 · 휴대폰에서 연장할 수 있습니다</string>
+    <string name="library_severe">큰 사고 기록 · 10년 무료 보관</string>
+    <string name="library_kind_crash">충돌 기록 · %1$s</string>
+    <string name="library_kind_moment">위험 순간 · %1$s</string>
+    <string name="library_extended">%1$s까지 보관 (연장)</string>
+    <string name="library_left_notice">보관함이 가득 차 %1$s 기록(%2$s)이 보관함에서 빠졌습니다.</string>
+    <string name="library_left_phone_free">사고 시점부터 30일 안에 휴대폰에서 플러스나 프로로 업그레이드하면 다시 돌아옵니다.</string>
+    <string name="library_left_phone_plus">사고 시점부터 30일 안에 휴대폰에서 프로로 업그레이드하면 다시 돌아옵니다.</string>
+    <string name="library_left_phone_pro">사고 시점부터 30일까지는 휴대폰에서 증거 파일을 내려받을 수 있습니다.</string>
+    <string name="handover_plan_needed">대리 운전 모드는 플러스 요금제부터 쓸 수 있습니다.</string>
+    <string name="handover_plan_phone">휴대폰에서 요금제를 바꿀 수 있습니다.</string>
     <string name="phone_handover_blocked">대리 운전 모드 중에는 휴대폰을 새로 연결할 수 없습니다.</string>
 
     <string name="gap_clean">정상 종료로</string>
@@ -215,6 +239,7 @@
 
     <!-- Triggers -->
     <string name="trigger_airbag">에어백 전개</string>
+    <string name="trigger_test_airbag">시험용 에어백 신호</string>
     <string name="trigger_delta_v">충격 감지</string>
     <string name="trigger_short_delta_v">짧은 충격 감지</string>
     <string name="trigger_braked_spike">제동 중 충격</string>

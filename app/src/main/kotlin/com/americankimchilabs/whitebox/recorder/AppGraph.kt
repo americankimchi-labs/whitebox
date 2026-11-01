@@ -4,6 +4,7 @@ import android.content.Context
 import com.americankimchilabs.whitebox.data.CapsuleShares
 import com.americankimchilabs.whitebox.data.ClaimClient
 import com.americankimchilabs.whitebox.data.HandoverController
+import com.americankimchilabs.whitebox.data.LibraryController
 import com.americankimchilabs.whitebox.data.FileEventStore
 import com.americankimchilabs.whitebox.data.Outbox
 import com.americankimchilabs.whitebox.data.Recorder
@@ -17,7 +18,8 @@ import java.io.File
 
 /**
  * Where the signals come from. LIVE is the car (Pleos + AAOS); REPLAY plays the scripted demo drive from
- * :vehicle-fake for clean screen recording. Each has its own chain: replayed data never enters the live evidence.
+ * :vehicle-fake for clean screen recording (test builds only). Each has its own chain: replayed data never enters the
+ * live evidence.
  */
 enum class SourceMode { LIVE, REPLAY }
 
@@ -36,6 +38,8 @@ class ActiveSession(
     val shares: CapsuleShares? = null,
     /** Handover mode (대리 운전); runs with or without a server. */
     val handover: HandoverController? = null,
+    /** The driver's library, the plan, and what the car keeps on disk. */
+    val library: LibraryController? = null,
 )
 
 object AppGraph {

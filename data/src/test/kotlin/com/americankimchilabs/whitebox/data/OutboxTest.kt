@@ -63,7 +63,7 @@ class OutboxTest {
     fun normalDrivingGoesInBatchesAndResumesAfterTheLastAcknowledgement() = runTest {
         val dir = tmp.newFolder()
         val r = rig(dir)
-        repeat(20) { r.t += 100; r.speed(50f) }
+        repeat(20) { r.t += 100; r.speed(50f + it) } // a moving car: every sample differs
         r.channel.connected.value = true
         runCurrent()
         val first = r.channel.sent.filterIsInstance<Frame.Batch>().single()
@@ -73,7 +73,7 @@ class OutboxTest {
 
         r.channel.ack(19)
         runCurrent()
-        repeat(5) { r.t += 100; r.speed(50f) }
+        repeat(5) { r.t += 100; r.speed(70f + it) }
         advanceTimeBy(Tuning.NORMAL_BATCH_INTERVAL_S * 1_000L + 1)
         assertEquals(listOf(20L, 24L), r.channel.sent.filterIsInstance<Frame.Batch>().last().records.map { MirrorProtocol.Record.parse(it)!!.seq }.let { listOf(it.first(), it.last()) })
 
@@ -236,7 +236,11 @@ class OutboxTest {
         repeat(20) { t += 100; speed(60f) }
         recorder.record(ChainEntry.Signal(SignalSample(VehicleSignal.BrakePedal(true), clock.now())))
         t += 100; speed(60f)
-        t += 100; speed(35f) // crash
+        t += 100; speed(35f) // crash-level drop (충돌): no keys yet, it is not a 큰 사고
+        runCurrent()
+        assertTrue(channel.sent.none { it is Frame.Escrow })
+        t += 40
+        recorder.record(ChainEntry.Signal(SignalSample(VehicleSignal.AirbagDeployed("ROW_1_LEFT", true), clock.now()))) // the airbag fired
         repeat(115) { t += 100; speed(0f) }
         runCurrent()
 

@@ -10,6 +10,11 @@
 .verdict .mark{font-size:22px}
 table{width:100%;border-collapse:collapse;font-size:15px}td{padding:6px 0;border-top:1px solid var(--line);vertical-align:top}td:first-child{color:var(--muted);width:7.5em}
 tr:first-child td{border-top:0}
+.actions{display:flex;flex-wrap:wrap;gap:8px}.actions button,.actions .button-like{margin-top:6px}
+.reading small{display:block;margin-top:2px}
+table.log{font-size:12px;font-variant-numeric:tabular-nums}table.log td{padding:2px 4px 2px 0;width:auto}table.log td:first-child{width:auto}
+.blank td:last-child{height:2.2em;border-bottom:1px solid var(--line)}
+@media print{#report .card{break-inside:avoid-page}table.log{font-size:9px}}
 </style>
 </head>
 <body><main>
@@ -39,6 +44,12 @@ tr:first-child td{border-top:0}
     <div class="verdict"><span class="mark" id="mark"></span><span id="verdict"></span></div>
     <p class="msg" id="verdict-sub"></p>
   </div>
+  <div class="card" id="keep-card" hidden>
+    <h2>보관</h2>
+    <p id="keep-text"></p>
+    <div class="actions noprint" id="keep-actions"></div>
+    <p class="msg" id="keep-msg"></p>
+  </div>
   <div class="card" id="trip-card" hidden>
     <h2 id="trip-events-title"></h2>
     <div id="trip-events"></div>
@@ -57,6 +68,7 @@ tr:first-child td{border-top:0}
   <div class="card noprint" id="sync-card">
     <h2>블랙박스 영상과 맞춰 보기</h2>
     <div id="sync"></div>
+    <div id="clips"></div>
   </div>
   <div class="card noprint" id="share-card" hidden>
     <button class="wide secondary" id="share">공유 링크 만들기</button>
@@ -68,22 +80,28 @@ tr:first-child td{border-top:0}
   </div>
   <details class="card"><summary>자세히 (검증 정보)</summary><div id="tech" class="tech"></div></details>
 </div>
+<div id="report" hidden></div>
 </main>
 <script src="/codec.js"></script>
 <script src="/packet.js"></script>
 <script src="/verify.js"></script>
 <script src="/sync.js"></script>
+<script src="/report.js"></script>
+<script src="/clip.js"></script>
 <script src="/wb.js"></script>
 <script>
 const esc = WB.esc;
 const { d, s = 'live', id, t: shareCode, k: shareKeys } = WB.params();
-const KIND = (c) => c.trigger === 'MANUAL' ? '운전자가 음성으로 보관한 순간' : c.severe ? '큰 사고 (충돌 수준)' : '위험 순간 (아찔했던 상황)';
+const KIND = (c) => c.trigger === 'MANUAL' ? '운전자가 음성으로 보관한 순간'
+  : c.trigger === 'TEST_AIRBAG' ? '큰 사고 (시험용 에어백 신호 · 실제 사고 아님)'
+  : c.trigger === 'SERVER_SEAL' ? '큰 사고 (충돌 뒤 차 신호가 끊겨 서버가 봉인)'
+  : c.severe ? '큰 사고 (에어백 전개)' : c.crash ? '충돌 (충돌 수준의 충격)' : '위험 순간 (아찔했던 상황)';
 const ANSWER = { kept: '운전자가 "보관"이라고 답했습니다.', released: '운전자가 보관하지 않겠다고 답했습니다. 기록 자체는 봉인된 채 남아 있습니다.', unanswered: '운전자가 대답하지 않아 보관되었습니다.' };
 
 async function load() {
   if (!d || !id) return deny();
   if (shareCode) return loadShared();
-  const me = await WB.get('/v1/me');
+  me = await WB.get('/v1/me');
   ownerRoots = await WB.ownerRoots(me, d);
   let ring = WBCodec.keyring({ roots: ownerRoots });
   const q = `/v1/capsule?device=${encodeURIComponent(d)}&stream=${encodeURIComponent(s)}&id=${encodeURIComponent(id)}`;
@@ -92,10 +110,26 @@ async function load() {
   // No key on this phone (a new phone, or the family): a severe capsule opens with the minutes the car handed over.
   if (ring.isEmpty() && data.capsule.severe && !data.keys.length) data = (await WB.get(q + '&keys=1')) || data;
   if (data.keys.length) {
-    const minutes = Object.fromEntries(data.keys.map((k) => [`${k.epoch}:${k.minute}`, WB.unb64(k.key)]));
-    ring = WBCodec.keyring({ minutes });
+    minuteMap = Object.fromEntries(data.keys.map((k) => [`${k.epoch}:${k.minute}`, WB.unb64(k.key)]));
+    ring = WBCodec.keyring({ minutes: minuteMap });
   }
   await show(data, ring);
+}
+
+let me = null;
+/** Minute keys this page was given (a crash's escrowed keys, or a share link's); the owner derives them instead. */
+let minuteMap = {};
+async function minuteBytes(epoch, minute) {
+  if (ownerRoots[epoch]) return WBCodec.minuteKey(ownerRoots[epoch], Number(minute));
+  return minuteMap[`${epoch}:${minute}`] || null;
+}
+/** The key of the capsule's first minute: what its saved clip's key is derived from. */
+async function clipBase(c, data) {
+  const entries = data.records.map(WBCodec.parseLine).filter((r) => r && r.seq >= c.firstSeq).map((r) => r.entry);
+  const first = WBCodec.minutesOf(entries)[0];
+  if (!first) return null;
+  const [e, m] = first.split(':');
+  return minuteBytes(e, m);
 }
 
 async function show(data, ring) {
@@ -113,7 +147,9 @@ async function show(data, ring) {
   if (!events.length) return deny();
   // An owner's phone without the car's key, on a moment that is not a big crash: nothing here can be opened.
   if (!events.some((x) => (x.e.type === 'S' || x.e.type === 'L') && !x.e.locked)) return noKey();
-  if (Object.keys(ownerRoots).length && !shareCode) offerShare(c, data);
+  const owner = Object.keys(ownerRoots).length > 0 && !shareCode;
+  if (owner) offerShare(c, data);
+  if (owner) offerKeep(c, data);
   if (c.trigger === 'HANDOVER') return renderTrip(c, data, events, await WBVerify.capsule(data));
   // As on the car: the detection that names the capsule (a crash escalates a near-miss capsule), else the first;
   // without one (a server seal), the first alert.
@@ -124,6 +160,7 @@ async function show(data, ring) {
   const t = WBPacket.build(events, causeSeq);
   const verdict = await WBVerify.capsule(data);
   render(c, data, events.filter((x) => x.seq <= causeSeq), events, t, verdict, trigger);
+  if (owner) offerReport(c, data, events, t, verdict, trigger);
 }
 
 /**
@@ -139,6 +176,7 @@ async function loadShared() {
     const [e, m, key] = k.split('.');
     minutes[`${e}:${m}`] = WB.unb64(key);
   }
+  minuteMap = minutes;
   WB.show('shared-note');
   await show(data, WBCodec.keyring({ minutes }));
 }
@@ -236,6 +274,215 @@ function renderTrip(c, data, events, v) {
 }
 function noKey() { WB.show('loading', false); WB.show('nokey'); }
 
+const won = (n) => n.toLocaleString('ko-KR') + '원';
+/** 13:05:07.4: the log's own time, to a tenth of a second. */
+const hms = (ms) => { const t = new Date(ms); const p = (n) => String(n).padStart(2, '0'); return `${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}.${Math.floor(t.getMilliseconds() / 100)}`; };
+const dateOf = (ms) => new Date(ms).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
+const daysLeft = (ms) => Math.max(0, Math.ceil((ms - Date.now()) / 86400000));
+
+/**
+ * The owner's view of how long this record stays and what they can do about it: extend it (records and clip), save
+ * its evidence file for free, or move to a bigger plan if it had to leave a full library.
+ */
+function offerKeep(c, data) {
+  const plan = me && me.plan;
+  WB.show('keep-card');
+  const clips = c.clips || [];
+  const clipLine = clips.length ? ` 저장한 블랙박스 영상은 ${dateOf(c.clipUntilMs)}까지 보관됩니다.` : '';
+  const text = {
+    SEVERE: `${c.trigger === 'TEST_AIRBAG' ? '시험용 에어백 신호로 만든 큰 사고 기록이라' : c.trigger === 'SERVER_SEAL' ? '충돌 뒤 차 신호가 끊긴 큰 사고 기록이라' : '에어백이 터진 큰 사고 기록이라'} ${dateOf(c.keptUntilMs)}까지 10년 동안 무료로 보관됩니다.${clipLine}`,
+    KEPT: `${dateOf(c.keptUntilMs)}에 삭제됩니다 (사고 시점부터 30일 보관, ${daysLeft(c.keptUntilMs)}일 남음).${clipLine} 분쟁이 길어질 것 같으면 연장해 두세요.`,
+    EXTENDED: `${dateOf(c.keptUntilMs)}까지 보관합니다 (연장함).${clipLine}`,
+    LEFT: `보관함이 가득 차 이 기록이 보관함에서 빠졌습니다. ${dateOf(c.keptUntilMs)}에 삭제됩니다.${plan && plan.upgrades.length ? ' 그 전에 업그레이드하면 자리가 있는 만큼 다시 돌아옵니다.' : ' 그 전에 증거 파일을 내려받아 둘 수 있습니다.'}`,
+    RELEASED: '운전자가 보관하지 않겠다고 답한 기록입니다. 주행 기록 보관 기간이 지나면 삭제됩니다. 연장하면 보관됩니다.',
+    EXPIRED: '보관 기간이 지났습니다. 곧 삭제됩니다.',
+  }[c.status] || '';
+  WB.$('keep-text').innerHTML = esc(text);
+  WB.$('keep-text').className = c.warn || c.status === 'LEFT' ? 'warn' : '';
+  const buttons = [];
+  // A 큰 사고 stays ten years for free: only its clip can be extended. One that left a full library comes back only
+  // with room (an upgrade); extending would not make room.
+  const extendable = c.status !== 'LEFT' && (!c.severe || clips.length);
+  if (extendable && plan) for (const x of plan.extensions) buttons.push(`<button data-years="${x.years}">${c.severe ? '영상 ' : ''}${x.years}년 연장 · ${won(x.priceWon)}</button>`);
+  buttons.push('<button class="secondary" id="evidence">증거 파일 내려받기 (무료)</button>');
+  if (plan && (c.status === 'LEFT' || c.warn)) buttons.push(WB.upgrades(plan.upgrades));
+  WB.$('keep-actions').innerHTML = buttons.join('');
+  WB.$('keep-actions').querySelectorAll('[data-years]').forEach((b) => b.onclick = async () => {
+    const years = Number(b.dataset.years);
+    const x = plan.extensions.find((e) => e.years === years);
+    const end = new Date(Math.max(c.eventMs + 30 * 86400000, c.extendedUntilMs || 0) + years * 365 * 86400000);
+    if (!confirm(`이 기록${clips.length ? '과 블랙박스 영상' : ''}을 ${dateOf(end.getTime())}까지 보관합니다.\n${won(x.priceWon)}을 결제할까요?${plan.paymentNotice ? '\n\n' + plan.paymentNotice : ''}`)) return;
+    try {
+      const r = await WB.post('/v1/extend', { device: d, stream: s, id: c.id, years });
+      c.status = 'EXTENDED'; c.keptUntilMs = c.severe ? c.keptUntilMs : r.untilMs; c.clipUntilMs = r.untilMs; c.extendedUntilMs = r.untilMs; c.warn = false;
+      offerKeep(c, data);
+      WB.say('keep-msg', `${dateOf(r.untilMs)}까지 보관합니다. 차에도 곧 반영됩니다.${r.notice ? ' (' + r.notice + ')' : ''}`);
+    } catch (e) { WB.say('keep-msg', e.message, true); }
+  });
+  WB.$('evidence').onclick = () => downloadEvidence(c, data).catch((e) => WB.say('keep-msg', e.message, true));
+}
+
+/**
+ * The evidence file: this record exactly as stored (encrypted lines, the car's seals, the server's signed anchors)
+ * with the keys of its own minutes, as one text file. The verification tool checks it without White Box.
+ */
+async function downloadEvidence(c, data) {
+  const entries = data.records.map(WBCodec.parseLine).filter((r) => r && r.seq >= c.firstSeq).map((r) => r.entry);
+  const keys = [];
+  for (const em of WBCodec.minutesOf(entries)) {
+    const [e, m] = em.split(':');
+    const k = await minuteBytes(e, m);
+    if (k) keys.push(`KEY|${e}|${m}|${WB.b64(k)}`);
+  }
+  const lines = [
+    'WHITEBOX-EVIDENCE|1',
+    `CAPSULE|${c.id}|${c.trigger}|${c.firstSeq}|${c.lastSeq}|${d}|${s}`,
+    ...c.seals.map((l) => 'SEAL|' + l),
+    ...(c.attestation ? ['ATTESTATION|' + c.attestation] : []),
+    ...data.anchors.map((a) => 'ANCHOR|' + a),
+    'SERVERKEY|' + data.serverKey,
+    ...keys,
+    ...data.records.map((l) => 'RECORD|' + l),
+  ];
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([lines.join('\n') + '\n'], { type: 'text/plain' }));
+  a.download = `whitebox-${c.id}.txt`;
+  a.click();
+  WB.say('keep-msg', '증거 파일을 내려받았습니다. 이 기록과 그 열쇠가 들어 있으니, 믿을 수 있는 곳에만 보내 주세요. White Box 없이도 검증 도구로 원본임을 확인할 수 있습니다.');
+}
+
+/** After a picked clip is placed: save it (encrypted here) against the plan's clip slots. */
+function offerClipSave(c, data, picked) {
+  const el = WB.$('clips');
+  el.innerHTML = `<div class="actions"><button id="clip-save">이 영상 저장하기</button></div><p class="msg" id="clip-msg">저장하면 사고 시점부터 30일 동안 보관됩니다 (연장 가능).</p>`;
+  WB.$('clip-save').onclick = () => saveClip(c, data, picked, null);
+}
+
+async function saveClip(c, data, picked, replace) {
+  const base = await clipBase(c, data);
+  if (!base) return WB.say('clip-msg', '이 휴대폰에서는 이 기록의 열쇠를 찾을 수 없어 저장할 수 없습니다.', true);
+  const offsetMs = picked.current();
+  if (offsetMs == null) return WB.say('clip-msg', '영상 위치를 먼저 맞춰 주세요.', true);
+  WB.$('clip-save').disabled = true;
+  try {
+    const id = WBClip.newId();
+    const key = await WBClip.key(base, id);
+    const body = await WBClip.encrypt(key, picked.file, (p) => WB.say('clip-msg', `이 휴대폰에서 암호화하는 중… ${Math.round(p * 100)}%`));
+    WB.say('clip-msg', '올리는 중…');
+    const q = new URLSearchParams({ device: d, stream: s, id: c.id, clip: id, offsetMs: String(offsetMs), name: picked.file.name });
+    if (replace) q.set('replace', replace);
+    const r = await (await fetch('/v1/clips?' + q, { method: 'POST', body, credentials: 'same-origin' })).json();
+    if (r.full) return clipsFull(c, data, picked, r);
+    if (!r.ok) throw new Error(r.error || '저장하지 못했습니다.');
+    WB.say('clip-msg', `저장했습니다. ${dateOf(r.untilMs)}까지 보관됩니다. 다른 휴대폰이나 비상 연락처에 저장된 분도 이 기록을 열 수 있으면 영상도 볼 수 있습니다.`);
+  } catch (e) {
+    WB.say('clip-msg', e.message, true);
+    if (WB.$('clip-save')) WB.$('clip-save').disabled = false;
+  }
+}
+
+/**
+ * The clip slots are full (paid clips count too). Replace the oldest unpaid clip, or move up a plan; a paid clip is
+ * never replaced. A Pro owner whose slots hold only paid clips may delete one (asked first) and save this one.
+ */
+function clipsFull(c, data, picked, r) {
+  const old = (r.replaceable || [])[0];
+  const retry = (replace) => { WB.$('clips').innerHTML = '<div class="actions"><button id="clip-save" disabled>저장 중</button></div><p class="msg" id="clip-msg"></p>'; saveClip(c, data, picked, replace); };
+  const ups = WB.upgrades(r.upgrades);
+  let body;
+  if (old) {
+    body = `<div class="actions"><button id="clip-replace">이전 영상을 지우고 저장</button>${ups}</div>
+      <p class="msg" id="clip-msg">지울 영상: ${esc(old.name)} (${dateOf(old.savedAtMs)} 저장). 연장한 영상은 지우지 않습니다.</p>`;
+  } else if (ups) {
+    body = `<div class="actions">${ups}</div><p class="msg" id="clip-msg">저장한 영상이 모두 연장한 영상이라 바꿀 수 없습니다. 업그레이드하면 영상을 더 저장할 수 있습니다.</p>`;
+  } else {
+    body = `<p class="msg">저장한 영상이 모두 연장한 영상입니다. 하나를 지우면 이 영상을 저장할 수 있습니다.</p>`
+      + (r.saved || []).map((k) => `<div class="row"><span>${esc(k.name)}<br><span class="sub">${dateOf(k.savedAtMs)} 저장 · ${dateOf(k.untilMs)}까지${k.paid ? ' (연장)' : ''}</span></span><button class="secondary" data-del="${esc(k.id)}">지우기</button></div>`).join('')
+      + '<p class="msg" id="clip-msg"></p>';
+  }
+  WB.$('clips').innerHTML = `<p class="warn">영상 저장 칸(${r.slots}개)이 가득 찼습니다.</p>${body}`;
+  if (old) WB.$('clip-replace').onclick = () => retry(old.id);
+  WB.$('clips').querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => {
+    const k = r.saved.find((x) => x.id === b.dataset.del);
+    const ask = k.paid
+      ? `"${k.name}"은 연장한 기록의 영상입니다. 지우면 되돌릴 수 없습니다 (기록은 연장한 기간까지 그대로 남습니다).\n지우고 이 영상을 저장할까요?`
+      : `"${k.name}"을 지우고 이 영상을 저장할까요?`;
+    if (!confirm(ask)) return;
+    try {
+      await WB.post('/v1/clips/delete', { clip: k.id });
+      retry(null);
+    } catch (e) { WB.say('clip-msg', e.message, true); }
+  });
+}
+
+/** Clips saved before: opened here (decrypted on this phone) at the position they were saved with. */
+function showSavedClips(c, data, player) {
+  const clips = c.clips || [];
+  if (!clips.length) return;
+  WB.$('clips').innerHTML = `<h3>저장된 영상</h3>` + clips.map((k) => `<div class="row"><span>${esc(k.name)}<br><span class="sub">${dateOf(k.savedAtMs)} 저장 · ${(k.bytes / 1048576).toFixed(1)} MB${c.clipUntilMs ? ` · ${dateOf(c.clipUntilMs)}까지` : ''}</span></span><button class="secondary" data-clip="${esc(k.id)}">열기</button></div>`).join('') + '<p class="msg" id="clip-msg"></p>';
+  WB.$('clips').querySelectorAll('[data-clip]').forEach((b) => b.onclick = async () => {
+    const k = clips.find((x) => x.id === b.dataset.clip);
+    try {
+      WB.say('clip-msg', '영상을 받아 이 휴대폰에서 푸는 중…');
+      const res = shareCode
+        ? await fetch('/v1/shared/clip', { method: 'POST', body: new URLSearchParams({ clip: k.id, t: shareCode }) })
+        : await fetch('/v1/clips/get?clip=' + encodeURIComponent(k.id), { credentials: 'same-origin' });
+      if (!res.ok || (res.headers.get('content-type') || '').includes('json')) throw new Error('영상을 받을 수 없습니다.');
+      const base = await clipBase(c, data);
+      const blob = await WBClip.decrypt(await WBClip.key(base, k.id), await res.arrayBuffer());
+      player.open(blob, k.name, k.offsetMs);
+      WB.say('clip-msg', '');
+    } catch (e) { WB.say('clip-msg', e.message || '영상을 열 수 없습니다.', true); }
+  });
+}
+
+/** Pro: the accident account for insurers and the police, in place of the summary (back returns). */
+function offerReport(c, data, events, t, v, trigger) {
+  const plan = me && me.plan;
+  const box = document.createElement('div');
+  box.className = 'card noprint';
+  box.innerHTML = plan && plan.accidentReport
+    ? '<button class="wide" id="open-report">보험·경찰 제출용 사고 경위서</button><p class="msg">기록을 해석한 사고 경위와 당사자 기재란, 맨 아래에 상세 기록이 들어간 인쇄용 문서입니다.</p>'
+    : `<button class="wide secondary" disabled>보험·경찰 제출용 사고 경위서</button><p class="msg">프로 요금제에서 쓸 수 있습니다.</p><div class="actions">${WB.upgrades(['PRO'])}</div>`;
+  WB.$('keep-card').after(box);
+  const open = WB.$('open-report');
+  if (open) open.onclick = () => renderReport(c, data, events, t, v, trigger);
+}
+
+function renderReport(c, data, events, t, v, trigger) {
+  const causeWall = t.causeWall;
+  const upTo = events.filter((x) => x.e.at.wall <= causeWall);
+  const place = upTo.filter((x) => x.e.type === 'L' && !x.e.locked).pop();
+  const readings = WBReport.interpret(events, causeWall, t.context);
+  const rows = WBReport.log(events, causeWall);
+  const facts = [
+    ['일시', WB.when(causeWall)],
+    ['장소', place ? `위도 ${place.e.lat.toFixed(5)}, 경도 ${place.e.lon.toFixed(5)} (±${Math.round(place.e.acc || 0)} m) · <a href="${WB.mapLink(place.e.lat, place.e.lon)}" target="_blank" rel="noopener">지도</a>` : '기록 없음'],
+    ['감지', esc(WBPacket.TRIGGER[c.trigger] || c.trigger) + (trigger ? ` (${esc(String(trigger.e.measured.toFixed ? trigger.e.measured.toFixed(1) : trigger.e.measured))}${DELTA_KMH.includes(trigger.e.trigger) ? ' km/h 속도 변화' : ''})` : '')],
+    ['기록 출처', 'White Box (차량 내장 기록 앱)가 차에서 실시간으로 기록하고 봉인한 원본'],
+  ];
+  if (c.answer) facts.push(['운전자의 대답', esc(ANSWER[c.answer])]);
+  const el = WB.$('report');
+  el.innerHTML = `
+    <div class="card"><h1>사고 경위서</h1><p class="msg">보험사·경찰 제출용 · 차량 기록에서 자동으로 작성 · 작성 ${esc(WB.when(Date.now()))}</p>
+      ${c.trigger === 'TEST_AIRBAG' ? '<p class="warn">시험용 에어백 신호로 만든 기록입니다. 실제 사고가 아니므로 제출하지 마세요.</p>' : ''}
+      <table>${facts.map(([k, val]) => `<tr><td>${k}</td><td>${val}</td></tr>`).join('')}</table></div>
+    <div class="card"><h2>기록으로 본 사고 경위</h2><ol class="bullets reading">${readings.map((r) => `<li>${esc(r.text)}${r.note ? `<small>${esc(r.note)}</small>` : ''}</li>`).join('') || '<li>해석할 기록이 없습니다.</li>'}</ol>
+      <p class="msg">기록된 값만으로 쓴 문장입니다. "가능성"은 기록이 그렇게 보일 근거가 있다는 뜻이며, 단정이 아닙니다.</p></div>
+    <div class="card"><h2>감지 직전 운전자의 조작</h2><ul class="bullets">${t.lines.map((l) => `<li>${esc(WBPacket.lineText(l))}</li>`).join('') || '<li>감지 직전 바뀐 조작이 없습니다.</li>'}</ul>${WBPacket.svg(t)}</div>
+    <div class="card"><h2>기록의 신뢰성</h2><p>${v.ok ? '✓ 원본 그대로입니다.' : '✗ 원본과 다릅니다.'} 기록 ${v.chain.checked}건의 해시 체인, 차량 서명${v.anchors.length ? ', 서버 서명' : ''}을 확인했습니다.</p>
+      <p class="msg">기록은 차에서 생기는 즉시 한 건씩 앞 기록과 이어져 봉인되고, 사본이 서버에 보관됩니다. 한 글자만 바뀌어도 검증이 실패합니다. 원본 대조가 필요하면 증거 요약의 공유 링크나 증거 파일을 함께 제출해 주세요.</p></div>
+    <div class="card"><h2>당사자 기재란</h2><table class="blank">
+      ${['상대 차량 번호', '상대 운전자 이름·연락처', '상대 보험사·접수번호', '목격자', '사고 경위 (직접 작성)', '', '작성일', '작성자 서명'].map((k) => `<tr><td>${k}</td><td></td></tr>`).join('')}</table></div>
+    <div class="card"><h2>상세 기록 (${rows.length}건)</h2><p class="msg">이 사고 구간에 차가 기록한 모든 값입니다. 시간은 감지 순간 기준(초)입니다.</p>
+      <table class="log"><tr><td>#</td><td>시각</td><td>감지 기준</td><td>항목</td><td>값</td></tr>${rows.map(([seq, wall, rel, what, val]) => `<tr><td>${seq}</td><td>${hms(wall)}</td><td>${rel > 0 ? '+' : ''}${rel.toFixed(1)}</td><td>${esc(what)}</td><td>${esc(val)}</td></tr>`).join('')}</table></div>
+    <div class="card noprint actions"><button onclick="print()">인쇄 · PDF로 저장</button><button class="secondary" id="report-back">증거 요약으로 돌아가기</button></div>`;
+  WB.show('packet', false);
+  WB.show('report');
+  WB.$('report-back').onclick = () => { WB.show('report', false); WB.show('packet'); };
+  scrollTo(0, 0);
+}
+
 /** Detections whose measured value is a speed change (the car shows "before → after" for these). */
 const DELTA_KMH = ['DELTA_V', 'SHORT_DELTA_V', 'BRAKED_SPIKE', 'REAR_SHOVE', 'HARD_BRAKE', 'BRAKE_SPEED_RISE', 'BRAKE_NO_DECEL', 'ALERT_RESOLVED', 'LURCH'];
 
@@ -280,7 +527,13 @@ function render(c, data, upToCause, events, t, v, trigger) {
   const post = Math.max(1000, Math.trunc((last.ns - causeEv.e.at.ns) / 1e6));
   const whole = WBPacket.build(events, t.causeSeq, { pre, post });
   const beacons = events.filter((x) => x.e.type === 'A' && x.e.event === 'BEACON').map((x) => x.e.playedAt.wall);
-  WBSync.mount(WB.$('sync'), { timeline: whole, causeWall, beacons, Packet: WBPacket });
+  const owner = Object.keys(ownerRoots).length > 0 && !shareCode;
+  const player = WBSync.mount(WB.$('sync'), {
+    timeline: whole, causeWall, beacons, Packet: WBPacket,
+    pickNote: owner ? '영상은 이 휴대폰에서 맞춥니다. 저장을 누를 때만 이 휴대폰에서 암호화되어 올라가며, 서버는 내용을 볼 수 없습니다.' : null,
+    onSynced: owner ? (picked) => offerClipSave(c, data, picked) : null,
+  });
+  showSavedClips(c, data, player);
 
   const tech = [
     `캡슐 ${c.id} · 기록 #${c.firstSeq}–#${c.lastSeq} (${events.length}건 열람)`,

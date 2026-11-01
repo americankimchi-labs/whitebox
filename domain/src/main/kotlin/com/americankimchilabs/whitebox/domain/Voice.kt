@@ -30,6 +30,9 @@ enum class VoiceLine {
 
     // Handover mode: to the hired driver, polite and short.
     HANDOVER_STARTED, HANDOVER_SET_DESTINATION, HANDOVER_SLOW_DOWN, HANDOVER_DRIVE_SAFELY, HANDOVER_CHECK_ROUTE,
+
+    // The library was full and the oldest kept moment made room (said once parked).
+    LIBRARY_FULL,
 }
 
 /**

@@ -73,7 +73,7 @@
       case 'TURN_SIGNAL': case 'GEAR': case 'IGNITION': case 'CRUISE_CONTROL': return v;
       case 'STEERING_ANGLE': case 'SPEED': case 'CRUISE_TARGET_SPEED': case 'ODOMETER': case 'ROAD_GRADE':
       case 'EV_EFFICIENCY': case 'ACCELERATOR_PEDAL': case 'BRAKE_PRESSURE': return Number(v);
-      case 'AIRBAG': { const [seat, d] = pair(v); return { seat, deployed: bool(d) }; }
+      case 'AIRBAG': { const [seat, d, t] = v.split(';'); return { seat, deployed: bool(d), test: t === 'test' }; }
       case 'TELLTALE': { const [name, state] = pair(v); return { name, state }; }
       case 'DOOR': { const [area, o] = pair(v); return { area, open: bool(o) }; }
       case 'SEAT_BELT': { const [seat, b] = pair(v); return { seat, buckled: bool(b) }; }
@@ -117,6 +117,7 @@
           };
           case 'STOPPED': return { type: 'R', event: 'STOPPED', at };
           case 'DEGRADED': case 'RESTORED': return { type: 'R', event: f[2], permission: f[3], at };
+          case 'PRUNED': return { type: 'R', event: 'PRUNED', throughSeq: Number(f[3]), throughWall: Number(f[4]), unsent: bool(f[5]), at };
           default: throw new Error('unknown recorder event ' + f[2]);
         }
       }
@@ -150,6 +151,16 @@
           case 'RESUMED': return { type: 'H', event: 'RESUMED', at };
           case 'ENDED': return { type: 'H', event: 'ENDED', reason: f[3], capsuleId: f[4], at };
           default: throw new Error('unknown handover event ' + f[2]);
+        }
+      }
+      case 'K': {
+        const at = ts(f[1]);
+        switch (f[2]) {
+          case 'PLAN': return { type: 'K', event: 'PLAN', tier: f[3], previous: f[4] === '-' ? null : f[4], at };
+          case 'LEFT': return { type: 'K', event: 'LEFT', capsuleId: f[3], at };
+          case 'RETURNED': return { type: 'K', event: 'RETURNED', capsuleId: f[3], at };
+          case 'EXTENDED': return { type: 'K', event: 'EXTENDED', capsuleId: f[3], untilWall: Number(f[4]), at };
+          default: throw new Error('unknown library event ' + f[2]);
         }
       }
       default: throw new Error('unknown entry type ' + f[0]);

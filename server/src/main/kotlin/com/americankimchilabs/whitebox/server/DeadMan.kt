@@ -16,8 +16,8 @@ data class StreamId(val deviceId: String, val stream: String) {
  * antenna — the server seals what it received after [Tuning.DEADMAN_SEAL_SILENCE_S] (a server-attested seal; a
  * false alarm in a tunnel is harmless: the resumed stream simply appends, and the seal stands as an extra
  * checkpoint, so each new silence seals again). After [Tuning.DEADMAN_NOTIFY_SILENCE_S] the emergency notice is
- * considered once per episode; it goes out only with evidence of a severe event (decided by the caller), so a hard
- * brake in a tunnel never alarms the family.
+ * considered once per episode; it goes out only with evidence of a crash-level event (decided by the caller), so a
+ * hard brake in a tunnel never alarms the family.
  */
 class DeadMan(
     private val sealSilenceMs: Long = Tuning.DEADMAN_SEAL_SILENCE_S * 1_000L,
@@ -27,7 +27,7 @@ class DeadMan(
         /** Seal what was received of this episode (it began at [episodeStartMs]). */
         data class Attest(val stream: StreamId, val episodeStartMs: Long) : Action
 
-        /** Long silence: record it for the family's page if the episode shows a severe event ([severeSeen] is the frame evidence). */
+        /** Long silence: record it for the family's page if the episode shows a crash-level event ([severeSeen] is the frame evidence). */
         data class ConsiderNotice(val stream: StreamId, val episodeStartMs: Long, val severeSeen: Boolean) : Action
     }
 

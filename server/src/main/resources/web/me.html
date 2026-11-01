@@ -31,6 +31,7 @@
 </div>
 
 <div id="cars"></div>
+<div class="card" id="plan" hidden></div>
 
 <div class="card" id="contacts-card" hidden>
   <h2>비상 연락처</h2>
@@ -62,16 +63,51 @@ async function distanceKm(drive, ring) {
 }
 
 const ANSWER = { kept: '보관하기로 함', released: '보관하지 않기로 함', unanswered: '대답이 없어 보관' };
+const dateOf = (ms) => new Date(ms).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
+const daysLeft = (ms) => Math.max(0, Math.ceil((ms - Date.now()) / 86400000));
+/** How long a kept record stays, in a few words. */
+function keptFor(c) {
+  if (c.status === 'SEVERE') return '10년 무료 보관';
+  if (c.status === 'EXTENDED') return `${dateOf(c.keptUntilMs)}까지 (연장)`;
+  if (c.status === 'LEFT') return `보관함에서 빠짐 · ${dateOf(c.keptUntilMs)}에 삭제`;
+  if (c.status === 'RELEASED') return '보관 안 함 · 연장하면 보관';
+  return `${daysLeft(c.keptUntilMs)}일 뒤 삭제`;
+}
 function capsuleRow(dev, stream, c) {
   const name = WBPacket.TRIGGER[c.trigger] || c.trigger;
-  const tag = c.severe ? '<span class="badge bad">큰 사고</span>' : c.trigger === 'HANDOVER' ? '<span class="badge">대리 운전</span>' : '<span class="badge warn">위험 순간</span>';
+  const tag = c.severe ? '<span class="badge bad">큰 사고</span>' : c.crash ? '<span class="badge bad">충돌</span>' : c.trigger === 'HANDOVER' ? '<span class="badge">대리 운전</span>' : '<span class="badge warn">위험 순간</span>';
   const answer = c.answer ? ` · ${ANSWER[c.answer]}` : '';
-  return `<a class="row" href="/capsule#d=${dev}&s=${stream}&id=${encodeURIComponent(c.id)}"><span>${esc(name)}<br><span class="sub">${WB.when(c.sealedAtMs)}${answer}</span></span>${tag}</a>`;
+  const kept = c.status ? ` · <span class="${c.warn ? 'warn' : ''}">${esc(keptFor(c))}</span>` : '';
+  return `<a class="row" href="/capsule#d=${dev}&s=${stream}&id=${encodeURIComponent(c.id)}"><span>${esc(name)}<br><span class="sub">${WB.when(c.sealedAtMs)}${answer}${kept}</span></span>${tag}</a>`;
+}
+const TIER = WB.TIER;
+/** The plan: what it includes, how much is used, and the three plans side by side to change. */
+function planCard(plan) {
+  const row = (t) => `<tr><td><b>${TIER[t.tier]}</b><br><small>${t.monthlyWon ? `월 ${t.monthlyWon.toLocaleString('ko-KR')}원` : '무료'}</small></td>
+    <td>주행 기록 ${t.historyDays}일 · 보관 ${t.librarySlots}개 · 영상 ${t.clipSlots}개${t.handover ? ' · 대리 운전' : ''}${t.accidentReport ? ' · 사고 경위서' : ''}</td>
+    <td>${t.tier === plan.tier ? '<span class="badge">지금</span>' : `<button class="${t.monthlyWon > plan.monthlyWon ? '' : 'secondary'}" data-tier="${t.tier}">${t.monthlyWon > plan.monthlyWon ? `${TIER[t.tier]}로 업그레이드` : '바꾸기'}</button>`}</td></tr>`;
+  const shrinking = plan.previous && plan.historyDays > plan.planHistoryDays
+    ? `<p class="warn">요금제를 바꿔 주행 기록 보관 기간이 ${plan.planHistoryDays}일로 줄어듭니다. ${dateOf(plan.changedAtMs + 7 * 86400000)}까지는 지금처럼 ${plan.historyDays}일을 보관합니다. 이미 보관한 기록과 영상은 각자의 기간까지 그대로 남습니다.</p>` : '';
+  return `<h2>${TIER[plan.tier]} 요금제</h2>
+    <div class="stats">
+      <div class="stat"><b>${plan.historyDays}일</b><span>주행 기록 보관</span></div>
+      <div class="stat"><b>${plan.libraryUsed}/${plan.librarySlots}개</b><span>보관 기록</span></div>
+      <div class="stat"><b>${plan.clipsUsed}/${plan.clipSlots}개</b><span>블랙박스 영상</span></div>
+      <div class="stat"><b>10년</b><span>큰 사고(에어백) 무료 보관</span></div></div>
+    ${shrinking}
+    ${plan.libraryUsed > plan.librarySlots ? `<p class="warn">보관 기록이 ${plan.libraryUsed}개로 ${plan.librarySlots}칸보다 많습니다. 이미 보관한 기록은 각자의 기간까지 그대로 남고, 새 기록이 생기면 연장하지 않은 오래된 기록부터 빠집니다.</p><div class="actions">${WB.upgrades(plan.upgrades, '#plan')}</div>` : ''}
+    <p class="msg">보관 기록과 영상은 사고 시점부터 30일 보관됩니다. 오래 남겨야 하면 기록마다 1년(9,900원)·3년(19,900원) 연장할 수 있습니다. 연장한 기록과 영상도 칸을 차지하지만, 결제한 기간까지 보관함에서 빠지지 않습니다. 보관함이 가득 차면 연장하지 않은 오래된 기록부터 빠지고(모두 연장한 기록이면 새 기록이 빠짐), 빠진 기록은 사고 시점부터 30일 안에 업그레이드하면 다시 돌아옵니다. 에어백이 터진 큰 사고는 어느 요금제든 10년 동안 무료로 보관되고 칸을 차지하지 않습니다.</p>
+    <table>${plan.tiers.map(row).join('')}</table>
+    ${plan.paymentNotice ? `<p class="msg">${esc(plan.paymentNotice)}</p>` : ''}<p class="msg" id="plan-msg"></p>`;
 }
 
 /** 대리 운전 모드 for the owner's car: where it stands, and the one button that makes sense now. */
-function handoverCard(dev) {
+function handoverCard(dev, plan) {
   const h = dev.handover || { phase: 'OFF' };
+  if (plan && !plan.handover && h.phase === 'OFF') {
+    return `<h3>대리 운전 모드</h3><p>플러스 요금제부터 쓸 수 있습니다.</p><div class="actions">${WB.upgrades(plan.upgrades, '#plan')}</div>
+      <p class="msg">대리기사님이 운전하는 동안 단속 카메라 앞 과속, 급제동, 급가속, 급핸들, 경로 이탈을 기록하고, 끝나면 리포트를 남깁니다.</p>`;
+  }
   const state = {
     OFF: '꺼져 있습니다.',
     ARMED: '대기 중 · 대리기사님이 출발하면 기록을 시작합니다.',
@@ -119,8 +155,7 @@ async function render(force = false) {
       : `<div class="card alert"><h2 class="bad">차주가 연결을 거절했습니다</h2><p>본인 차가 맞다면 이전 차주에게 연결을 넘겨 달라고 요청해 주세요.</p></div>`);
   }
   for (const c of me.contactsLeft) alerts.push(`<div class="card"><p>${esc(c.name)} 님이 ${WB.day(c.atMs)}에 비상 연락처에서 빠졌습니다. 다른 분을 저장해 두시길 권합니다.</p></div>`);
-  WB.$('alerts').innerHTML = alerts.join('');
-  document.querySelectorAll('[data-transfer]').forEach((b) => b.onclick = async () => {
+  const bindTransfers = () => document.querySelectorAll('[data-transfer]').forEach((b) => b.onclick = async () => {
     const yes = b.dataset.approve === 'yes';
     if (!confirm(yes ? '차 연결을 넘길까요? 요청한 뒤의 기록은 새 휴대폰이 보게 됩니다.' : '이 요청을 거절할까요?')) return;
     await WB.post('/v1/transfer/answer', { id: b.dataset.transfer, approve: yes ? 'yes' : 'no' }).catch((e) => alert(e.message));
@@ -155,8 +190,16 @@ async function render(force = false) {
       }
       // Risky moments: the owner sees every one; without a key on this phone, the severe ones still open.
       const caps = (await WB.get(`/v1/capsules?device=${dev.id}&stream=${live.stream}`)) || [];
-      const shown = mine ? caps : caps.filter((c) => c.severe);
+      const kept = caps.filter((c) => ['SEVERE', 'KEPT', 'EXTENDED'].includes(c.status || 'KEPT'));
+      const shown = mine ? kept : kept.filter((c) => c.severe);
       body += `<h3>보관 기록</h3>${shown.slice(0, 5).map((c) => capsuleRow(dev.id, live.stream, c)).join('') || '<p class="msg">아직 없습니다. 위험한 순간이 생기면 자동으로 보관되어 여기에 나타납니다.</p>'}`;
+      if (mine && dev.current) {
+        // Deleted within the week, or out of a full library: said here, with what can be done.
+        const soon = kept.filter((c) => c.warn);
+        if (soon.length) alerts.push(`<div class="card alert"><h2>${soon.length}건의 기록이 7일 안에 삭제됩니다</h2><p>필요하면 기록을 열어 연장하거나, 증거 파일을 무료로 내려받아 두세요.</p>${soon.map((c) => capsuleRow(dev.id, live.stream, c)).join('')}</div>`);
+        const out = caps.filter((c) => c.status === 'LEFT');
+        if (out.length) alerts.push(`<div class="card alert"><h2>보관함이 가득 차 ${out.length}건이 빠졌습니다</h2><p>빠진 기록은 사고 시점부터 30일까지 보관해 두었다가 지웁니다.${me.plan && me.plan.upgrades.length ? ' 그 전에 업그레이드하면 자리가 있는 만큼 다시 돌아옵니다.' : ' 그 전에 기록을 열어 증거 파일을 내려받아 둘 수 있습니다.'}</p>${out.slice(0, 3).map((c) => capsuleRow(dev.id, live.stream, c)).join('')}${me.plan ? `<div class="actions">${WB.upgrades(me.plan.upgrades, '#plan')}</div>` : ''}</div>`);
+      }
       if (mine) {
         const drives = (await WB.get(`/v1/drives?device=${dev.id}&stream=${live.stream}`)) || [];
         const month = new Date(); month.setDate(1); month.setHours(0, 0, 0, 0);
@@ -174,11 +217,25 @@ async function render(force = false) {
           <a class="button-like secondary wide" style="text-align:center" href="/drives#d=${dev.id}&s=${live.stream}">주행 기록 모두 보기</a>`;
       }
     }
-    if (dev.current && dev.wraps.length) body += handoverCard(dev);
+    if (dev.current && dev.wraps.length) body += handoverCard(dev, me.plan);
     cars.push(`<div class="card"><h2>${dev.current ? '내 차' : '이전에 연결했던 차'}</h2><p class="big">${status}</p>${dev.current && live && live.silentForMs != null ? `<p class="msg" data-age="${live.silentForMs}" data-at="${Date.now()}">마지막 수신 ${WB.ago(live.silentForMs)}</p>` : ''}${body}</div>`);
     tech.push(`차량 기기 ID ${dev.id}`, `이 휴대폰이 가진 차량 열쇠: ${dev.wraps.map((w) => w.epoch).join(', ') || '없음'}번`, ...(dev.current ? dev.streams.map((s) => `${s.stream}: 기록 ${s.records}건, 단계 ${s.level || '-'}`) : []));
   }
   WB.$('cars').innerHTML = cars.join('') || (me.transfersOut.length ? '' : '<div class="card"><p>연결된 차가 없습니다. 차 화면의 <b>휴대폰</b> 탭에서 QR을 찍으면 연결됩니다.</p></div>');
+  WB.$('alerts').innerHTML = alerts.join('');
+  bindTransfers();
+  if (me.plan) {
+    WB.show('plan');
+    WB.$('plan').innerHTML = planCard(me.plan);
+    WB.$('plan').querySelectorAll('[data-tier]').forEach((b) => b.onclick = async () => {
+      const t = me.plan.tiers.find((x) => x.tier === b.dataset.tier);
+      const down = t.monthlyWon < me.plan.monthlyWon;
+      if (!confirm(`${TIER[t.tier]} 요금제${t.monthlyWon ? ` (월 ${t.monthlyWon.toLocaleString('ko-KR')}원)` : ''}로 바꿀까요?${down ? `\n주행 기록 보관 기간은 7일 뒤부터 ${t.historyDays}일로 줄고, 이미 보관한 기록과 영상은 각자의 기간까지 남습니다.` : ''}${me.plan.paymentNotice ? '\n\n' + me.plan.paymentNotice : ''}`)) return;
+      try { await WB.post('/v1/plan', { tier: t.tier }); render(true); WB.say('plan-msg', '바꿨습니다. 차에도 곧 반영됩니다.'); }
+      catch (e) { WB.say('plan-msg', e.message, true); }
+    });
+    if (location.hash === '#plan') WB.$('plan').scrollIntoView();
+  }
 
   document.querySelectorAll('[data-handover]').forEach((b) => b.onclick = async () => {
     const arm = b.dataset.handover === 'arm';

@@ -26,10 +26,11 @@ sealed interface EngineOutput {
 /**
  * NORMAL → ALERT → TRIGGERED (constants and rationale in [Tuning]).
  *
- * Every dangerous pattern opens a capsule at once, without asking: a near-miss pattern (non-severe trigger) raises
- * ALERT, a crash signature (severe trigger) raises TRIGGERED. A severe trigger inside a near-miss capsule always
- * counts and escalates it. Near-miss capsules close at stillness or [Tuning.CAPSULE_POST_WINDOW_S] after their last
- * trigger; severe ones only at stillness (or [Tuning.CAPSULE_MAX_OPEN_S]).
+ * Every dangerous pattern opens a capsule at once, without asking: a near-miss pattern raises ALERT, a crash
+ * signature ([CapsuleTrigger.crash]) raises TRIGGERED. A graver trigger inside an open capsule always counts and
+ * takes it over (a near-miss that became a crash, a crash whose airbag then fired). Near-miss capsules close at
+ * stillness or [Tuning.CAPSULE_POST_WINDOW_S] after their last trigger; crash ones only at stillness (or
+ * [Tuning.CAPSULE_MAX_OPEN_S]).
  *
  * Pure and deterministic: fed the same chain it makes the same decisions, so a replay reproduces a capsule exactly.
  * All speed conditions use |speed| (AAOS reports reverse as negative) and the VHAL source timestamp when present.
@@ -98,7 +99,7 @@ class EscalationEngine {
         if (entry is ChainEntry.Signal) {
             when (val s = entry.sample.signal) {
                 is VehicleSignal.BrakePedal -> onBrake(s.pressed, event.seq, nowNs, out)
-                is VehicleSignal.AirbagDeployed -> if (s.deployed) trigger(CapsuleTrigger.AIRBAG, event.seq, 0f, nowNs, out)
+                is VehicleSignal.AirbagDeployed -> if (s.deployed) trigger(if (s.test) CapsuleTrigger.TEST_AIRBAG else CapsuleTrigger.AIRBAG, event.seq, 0f, nowNs, out)
                 is VehicleSignal.Speed -> onSpeed(event.seq, entry.sample, out)
                 is VehicleSignal.SteeringAngle -> onSteering(s.degrees, event.seq, entry.sample, out)
                 is VehicleSignal.Gear -> {
@@ -324,7 +325,7 @@ class EscalationEngine {
         if (now.kmh < Tuning.STILL_SPEED_KMH) open.stoppedSinceOpen = true
         if (ms(now.tNs - open.openedNs) < Tuning.KEEP_PROMPT_DELAY_S * 1_000L) return
         open.promptDecided = true
-        if (!open.trigger.severe && !open.stoppedSinceOpen && now.kmh >= Tuning.KEEP_PROMPT_MIN_KMH) {
+        if (!open.trigger.crash && !open.stoppedSinceOpen && now.kmh >= Tuning.KEEP_PROMPT_MIN_KMH) {
             out += EngineOutput.IncidentPrompt(IncidentCapsule(open.id, open.trigger, open.firstSeq, now.seq))
         }
     }
@@ -333,7 +334,7 @@ class EscalationEngine {
         stillSinceNs = if (now.kmh < Tuning.STILL_SPEED_KMH) stillSinceNs ?: now.tNs else null
         val still = stillSinceNs?.let { ms(now.tNs - it) >= Tuning.CAPSULE_STILLNESS_CLOSE_S * 1_000L } ?: false
         val open = capsule ?: return
-        val drovePast = !open.trigger.severe && ms(now.tNs - open.lastTriggerNs) >= Tuning.CAPSULE_POST_WINDOW_S * 1_000L
+        val drovePast = !open.trigger.crash && ms(now.tNs - open.lastTriggerNs) >= Tuning.CAPSULE_POST_WINDOW_S * 1_000L
         if (still || drovePast || ms(now.tNs - open.openedNs) >= Tuning.CAPSULE_MAX_OPEN_S * 1_000L) {
             setLevel(EscalationLevel.NORMAL, now.seq, out) // marker first, so the final seal covers it
             out += EngineOutput.Seal(open.id, open.trigger, open.firstSeq, final = true)
@@ -343,24 +344,30 @@ class EscalationEngine {
 
     /**
      * A trigger opens a capsule. Inside an open capsule (chain collision, 연쇄 추돌) a later trigger is still recorded
-     * and re-sealed at once, after a refractory period so one moment's consecutive samples count once; a severe
-     * trigger inside a near-miss capsule always counts and escalates it.
+     * and re-sealed at once, after a refractory period so one moment's consecutive samples count once; a graver
+     * trigger (near-miss → crash → airbag) always counts and takes the capsule over.
      */
+    private fun gravity(t: CapsuleTrigger) = when {
+        t.severe -> 2
+        t.crash -> 1
+        else -> 0
+    }
+
     private fun trigger(trigger: CapsuleTrigger, causeSeq: Long, measured: Float, nowNs: Long, out: MutableList<EngineOutput>) {
         if (trigger != CapsuleTrigger.POST_EVENT_EXIT) lastDangerNs = nowNs
-        if (trigger.severe) {
+        if (trigger.crash) {
             lastSevereNs = nowNs
             guided = false
         }
         // A bookmark asks for the record, not for burst transmission: it keeps the current level.
         val target = when {
-            trigger.severe -> EscalationLevel.TRIGGERED
+            trigger.crash -> EscalationLevel.TRIGGERED
             trigger == CapsuleTrigger.MANUAL -> level
             else -> EscalationLevel.ALERT
         }
         capsule?.let { open ->
             if (trigger == CapsuleTrigger.MANUAL) open.promptDecided = true
-            val escalates = trigger.severe && !open.trigger.severe
+            val escalates = gravity(trigger) > gravity(open.trigger)
             if (!escalates && ms(nowNs - open.lastTriggerNs) < Tuning.TRIGGER_REFRACTORY_MS) return
             open.lastTriggerNs = nowNs
             if (escalates) open.trigger = trigger

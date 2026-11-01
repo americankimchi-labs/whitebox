@@ -8,6 +8,8 @@ import com.americankimchilabs.whitebox.data.MemoryKeyRing
 import com.americankimchilabs.whitebox.data.CapsuleShares
 import com.americankimchilabs.whitebox.data.ClaimClient
 import com.americankimchilabs.whitebox.data.HandoverController
+import com.americankimchilabs.whitebox.data.LibraryController
+import com.americankimchilabs.whitebox.domain.Entitlements
 import com.americankimchilabs.whitebox.data.FileEventStore
 import com.americankimchilabs.whitebox.data.MirrorProtocol
 import com.americankimchilabs.whitebox.data.MirrorProtocol.Frame
@@ -90,8 +92,14 @@ fun main(args: Array<String>): Unit = runBlocking {
     // The evidence packet's QR, as the car shows it on its packet screen.
     val shares = CapsuleShares(store, channel, dir, MirrorProtocol.deviceId(signer.publicKey), MirrorProtocol.STREAM_REPLAY, { e, m -> ring.key(e)?.let { RecordCipher.minuteKey(it, m) } })
     val sharing = launch(Dispatchers.Default) { shares.start(this) }
+    // The library and plan, as on the car: the owner's plan comes from the server (Pro unless switched on the dashboard).
+    var handoverRef: HandoverController? = null
+    val library = LibraryController(recorder, store, dir, clock, channel, acked = { outbox.acked }, holding = { handoverRef?.holding() ?: emptyList() })
+    val libraryJob = launch(Dispatchers.Default) { library.start(this) }
+    launch(Dispatchers.Default) { library.tier.collect { say("plan: $it (${Entitlements(it).historyDays}-day history, ${Entitlements(it).librarySlots} library slots)") } }
     // Handover mode, as on the car; the grace before a trip is final is shortened to 20 s for the demonstration.
-    val handover = HandoverController(recorder, store, dir, clock, channel, graceMs = if (withHandover) DEMO_GRACE_MS else Tuning.HANDOVER_GRACE_MS)
+    val handover = HandoverController(recorder, store, dir, clock, channel, graceMs = if (withHandover) DEMO_GRACE_MS else Tuning.HANDOVER_GRACE_MS, allowed = { library.entitlements.handover })
+    handoverRef = handover
     val handoverJob = launch(Dispatchers.Default) { handover.start(this) }
     val voice = launch(Dispatchers.Default) { handover.say.collect { say("voice to the driver: $it") } }
 
@@ -128,8 +136,8 @@ fun main(args: Array<String>): Unit = runBlocking {
 
     val powerLossAtMs = DemoDrive.IMPACT_AT_MS + POWER_LOSS_AFTER_IMPACT_MS
     if (withHandover) {
-        handover.armOnCar()
-        say("handover mode (대리 운전) armed: it starts when the car leaves Park; watch the 대리 운전 card on the phone page")
+        if (handover.armOnCar()) say("handover mode (대리 운전) armed: it starts when the car leaves Park; watch the 대리 운전 card on the phone page")
+        else say("handover mode is not in this owner's plan (Free): switch the plan on the dashboard to try it")
     }
     say(if (driveOn) "driving the demo drive (≈ 70 s), ending normally" else "driving the demo drive; crash at ${DemoDrive.IMPACT_AT_MS / 1000.0} s, then power loss")
     val fixes = launch { ScriptedLocationSource(DemoDrive.locations(), clock).fixes().collect { recorder.record(ChainEntry.Location(it)) } }
@@ -159,7 +167,7 @@ fun main(args: Array<String>): Unit = runBlocking {
     fixes.cancel()
     chirps.cancel()
     val wav = writeDashcamStandIn(dir, driveStartWall, System.currentTimeMillis(), synchronized(played) { played.toList() })
-    val qrLink = recorder.capsules.value.lastOrNull { it.capsule.trigger.severe }?.capsule?.let { shares.link(it, web) }
+    val qrLink = recorder.capsules.value.lastOrNull { it.capsule.trigger.crash }?.capsule?.let { shares.link(it, web) }
 
     if (withHandover) {
         recorder.record(ChainEntry.Signal(SignalSample(VehicleSignal.Ignition(IgnitionState.OFF), clock.now())))
@@ -184,6 +192,7 @@ fun main(args: Array<String>): Unit = runBlocking {
     qrLink?.let { say("the crash's evidence-packet QR (what an insurer or the police would scan; opens without signing in):\n\n    $it\n") }
     sharing.cancel()
     handoverJob.cancel()
+    libraryJob.cancel()
     voice.cancel()
     exitProcess(0)
 }

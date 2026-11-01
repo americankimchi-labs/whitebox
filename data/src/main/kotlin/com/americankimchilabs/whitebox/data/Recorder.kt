@@ -10,6 +10,7 @@ import com.americankimchilabs.whitebox.domain.EscalationEvent
 import com.americankimchilabs.whitebox.domain.EscalationLevel
 import com.americankimchilabs.whitebox.domain.IncidentCapsule
 import com.americankimchilabs.whitebox.domain.Tuning
+import com.americankimchilabs.whitebox.domain.VehicleSignal
 import com.americankimchilabs.whitebox.domain.VoiceLine
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -64,14 +65,54 @@ class Recorder(
 
     val eventStore: EventStore get() = store
 
+    /**
+     * An unchanged speed between heartbeats: written only if it turns out to be the last one before a change (or
+     * before any other record), so the moment a value starts changing keeps its full resolution.
+     */
+    private var pendingSpeed: ChainEntry.Signal? = null
+    private var storedSpeed: Float? = null
+    private var storedSpeedNs = 0L
+
     suspend fun record(entry: ChainEntry): DriveEvent = mutex.withLock {
+        if (thinnable(entry)) {
+            // The engine sees every sample. Only if nothing at all follows from it does it stay unwritten for now;
+            // it would take the next seq, and nothing else is written before it (any write flushes it first).
+            val peek = DriveEvent(store.head()?.lastSeq?.plus(1) ?: 0, entry)
+            val outputs = engine.onEvent(peek)
+            if (outputs.isEmpty()) {
+                pendingSpeed = entry as ChainEntry.Signal
+                expireIncident(entry.at.elapsedNanos)
+                return@withLock peek
+            }
+            pendingSpeed = null // an older equal value; this later one stands for it
+            return@withLock handle(append(entry), outputs)
+        }
+        // A heartbeat (or an alert sample) of the same value stands for the one held back: nothing changed between them.
+        if (speedOf(entry) != null && speedOf(entry) == storedSpeed) pendingSpeed = null
         val event = append(entry)
-        for (output in engine.onEvent(event)) {
+        handle(event, engine.onEvent(event))
+    }
+
+    private fun speedOf(entry: ChainEntry) = ((entry as? ChainEntry.Signal)?.sample?.signal as? VehicleSignal.Speed)?.metersPerSecond
+
+    /**
+     * Speed is reported about ten times a second even when it does not change (standing still, cruising on a
+     * constant reading). In normal driving an unchanged value is written at most once a second; every change, the
+     * last unchanged value before it, and everything during an alert or a crash are written as they come.
+     */
+    private fun thinnable(entry: ChainEntry): Boolean {
+        val speed = speedOf(entry) ?: return false
+        return engine.level == EscalationLevel.NORMAL && speed == storedSpeed &&
+            entry.at.elapsedNanos - storedSpeedNs < Tuning.SPEED_HEARTBEAT_MS * 1_000_000L
+    }
+
+    private suspend fun handle(event: DriveEvent, outputs: List<EngineOutput>): DriveEvent {
+        for (output in outputs) {
             when (output) {
                 is EngineOutput.Append -> append(ChainEntry.Escalation(output.event, clock.now()))
                 is EngineOutput.Seal -> {
                     // A crash signature inside the asked-about capsule: it is no longer the driver's to release.
-                    if (output.trigger.severe && _incident.value?.id == output.capsuleId) _incident.value = null
+                    if (output.trigger.crash && _incident.value?.id == output.capsuleId) _incident.value = null
                     seal(IncidentCapsule(output.capsuleId, output.trigger, output.firstSeq, store.head()!!.lastSeq), output.final)
                 }
                 is EngineOutput.IncidentPrompt -> {
@@ -84,7 +125,7 @@ class Recorder(
         }
         expireIncident(event.entry.at.elapsedNanos)
         _level.value = engine.level
-        event
+        return event
     }
 
     /**
@@ -112,7 +153,21 @@ class Recorder(
         if (_incident.value != null && nowNs - incidentAskedNs > maxNs) _incident.value = null
     }
 
-        private fun append(entry: ChainEntry) = store.append(entry).also { _events.tryEmit(it) }
+    private fun append(entry: ChainEntry): DriveEvent {
+        pendingSpeed?.let { held ->
+            pendingSpeed = null
+            write(held)
+        }
+        return write(entry)
+    }
+
+    private fun write(entry: ChainEntry): DriveEvent {
+        ((entry as? ChainEntry.Signal)?.sample?.signal as? VehicleSignal.Speed)?.let {
+            storedSpeed = it.metersPerSecond
+            storedSpeedNs = entry.at.elapsedNanos
+        }
+        return store.append(entry).also { _events.tryEmit(it) }
+    }
 
     private suspend fun seal(capsule: IncidentCapsule, final: Boolean) {
         val seal = CapsuleSeal.create(capsule, store.hashAt(capsule.lastSeq), final, clock.now().wallMillis, signer)

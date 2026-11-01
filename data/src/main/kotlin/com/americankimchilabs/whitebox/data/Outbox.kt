@@ -211,6 +211,11 @@ class Outbox(
     private fun drain(level: EscalationLevel) {
         val head = store.head()?.lastSeq ?: return
         if (head <= sentUpTo || sentUpTo - acked >= WINDOW) return
+        // Records removed from the car before they were sent (offline past the limit): say so, then go on after them.
+        store.checkpoint()?.takeIf { it.seq > sentUpTo && store.oldestSeq() > sentUpTo + 1 }?.let { cp ->
+            if (!send(Frame.Checkpoint(cp.seq, cp.hash))) return
+            sentUpTo = cp.seq
+        }
         val to = minOf(head, sentUpTo + MAX_BATCH)
         if (send(Frame.Batch(level, store.records(sentUpTo + 1, to)))) sentUpTo = to
     }

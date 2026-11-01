@@ -124,6 +124,9 @@ const WB = (() => {
   /** Opens the place in Kakao Map, only when the person taps it (until then the position stays on this phone). */
   const mapLink = (lat, lon) => `https://map.kakao.com/link/map/${encodeURIComponent('기록 위치')},${lat.toFixed(6)},${lon.toFixed(6)}`;
   const secure = () => window.isSecureContext && !!crypto.subtle;
+  const TIER = { FREE: '무료', PLUS: '플러스', PRO: '프로' };
+  /** One button per plan above the owner's ("플러스로 업그레이드", "프로로 업그레이드"); none on Pro. */
+  const upgrades = (tiers, href = '/me#plan') => (tiers || []).map((t) => `<a class="button-like secondary" href="${href}">${TIER[t]}로 업그레이드</a>`).join('');
 
-  return { newPhoneKey, phoneKey, unwrap, unwrapAll, ownerKeys, ownerRoots, claimMac, checkCode, post, get, $, show, say, ago, when, day, clock, esc, params, mapLink, secure, b64, unb64 };
+  return { newPhoneKey, phoneKey, unwrap, unwrapAll, ownerKeys, ownerRoots, claimMac, checkCode, post, get, $, show, say, ago, when, day, clock, esc, params, mapLink, secure, b64, unb64, TIER, upgrades };
 })();
