@@ -141,6 +141,20 @@ test('a sweep far from where the file\'s own clock puts it is not trusted', () =
   assert.deepEqual(Sync.align([{ atSeconds: 5, strength: 0.8 }], beacons, 1_700_000_010_400), { startWall: 1_700_000_010_000, how: 'chirp', error: 1 });
   // A video from another day: the nearest sweep is hours away from the file's clock, so the clock is used instead.
   assert.equal(Sync.align([{ atSeconds: 5, strength: 0.8 }], beacons, 1_700_100_000_000).how, 'clock');
+  // A clock up to 7 s off still picks its sweep; farther, the sweeps (every 15 s) could be confused, so the clock places it.
+  assert.equal(Sync.align([{ atSeconds: 5, strength: 0.8 }], beacons, 1_700_000_017_000).how, 'chirp');
+  assert.equal(Sync.align([{ atSeconds: 5, strength: 0.8 }], beacons, 1_700_000_017_500).how, 'clock'); // halfway between two sweeps
   // No clock and several sweeps played: cannot tell which one this is.
   assert.equal(Sync.align([{ atSeconds: 5, strength: 0.8 }], beacons, null).how, 'none');
+});
+
+test('a video of another moment is not snapped onto this record\'s sweeps', () => {
+  // This record: …000 s to …140 s, sweeps every 15 s. The video's own clock says it began two minutes after the record.
+  const beacons = [15, 30, 45, 60, 75, 90, 105, 120].map((s) => 1_700_000_000_000 + s * 1000);
+  const span = { fromWall: 1_700_000_000_000, toWall: 1_700_000_140_000 };
+  const later = 1_700_000_260_000;
+  const a = Sync.align([{ atSeconds: 3.2, strength: 0.9 }], beacons, later, { span, durationMs: 8_300 });
+  assert.deepEqual(a, { startWall: null, how: 'elsewhere', error: null }); // not "exact": it is not this moment
+  // A clock inside the record but halfway between two sweeps: which one is unclear, so the clock places it (about 1 s).
+  assert.equal(Sync.align([{ atSeconds: 3.2, strength: 0.9 }], beacons, 1_700_000_049_300, { span, durationMs: 8_300 }).how, 'clock');
 });

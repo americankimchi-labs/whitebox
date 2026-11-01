@@ -38,3 +38,6 @@ vendor/
 
 # Local mirror server data (records, keys)
 server-data/
+
+# Stock clips the dashcam stand-in downloads (tools/virtual-console/dashcam.py fetch)
+tools/virtual-console/.dashcam/

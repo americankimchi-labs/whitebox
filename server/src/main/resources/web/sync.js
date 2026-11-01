@@ -125,14 +125,21 @@
   }
 
   /**
-   * The video's offset from the record: [found] sweeps in the video (seconds from its start), [beacons] the car's
-   * recorded playback instants (wall ms), [guessWall] the file's own start time (or null). With a sweep, the beacon
-   * nearest to where the guess puts it wins (sweeps repeat, so the guess picks which one); returns
-   * {startWall, how: 'chirp'|'clock'|'none', error}.
+   * How far the file's own clock may be from where a sweep places the video and still pick that sweep: just under
+   * half the car's sweep period (15 s). Sweeps repeat, so a clock off by more could pick the wrong one, and a video of
+   * another moment would snap onto whichever sweep of this record is nearest.
    */
-  function align(found, beacons, guessWall) {
-    // A sweep this far from where the file's own clock puts it belongs to another drive (or the file is not this one).
-    const PLAUSIBLE_MS = 5 * 60 * 1000;
+  const CLOCK_TRUST_MS = 7000;
+
+  /**
+   * The video's offset from the record: [found] sweeps in the video (seconds from its start), [beacons] the car's
+   * recorded playback instants within this record (wall ms), [guessWall] the file's own start time (or null),
+   * [span] the record's time span {fromWall, toWall} and [durationMs] the video's length (both optional).
+   * With a sweep, the beacon nearest to where the clock puts it wins, if within [CLOCK_TRUST_MS]; otherwise the clock
+   * places it, unless the video then misses the record altogether ('elsewhere': a video of another moment, or a
+   * clock far off — to be placed by hand). Returns {startWall, how: 'chirp'|'clock'|'elsewhere'|'none', error}.
+   */
+  function align(found, beacons, guessWall, { span = null, durationMs = 0 } = {}) {
     if (found.length && beacons.length) {
       let best = null;
       for (const f of found) {
@@ -143,9 +150,12 @@
         }
       }
       // Without the file's clock, one sweep alone could be any of them: only certain if just one was played.
-      if ((guessWall != null && best.miss <= PLAUSIBLE_MS) || (guessWall == null && beacons.length === 1)) return { startWall: best.startWall, how: 'chirp', error: 1 };
+      if ((guessWall != null && best.miss <= CLOCK_TRUST_MS) || (guessWall == null && beacons.length === 1)) return { startWall: best.startWall, how: 'chirp', error: 1 };
     }
-    if (guessWall != null) return { startWall: guessWall, how: 'clock', error: 1000 };
+    if (guessWall != null) {
+      const misses = span && (guessWall + durationMs < span.fromWall || guessWall > span.toWall);
+      return misses ? { startWall: null, how: 'elsewhere', error: null } : { startWall: guessWall, how: 'clock', error: 1000 };
+    }
     return { startWall: null, how: 'none', error: null };
   }
 
@@ -219,10 +229,12 @@
       const audio = await audioOf(file);
       const guess = videoStartGuess(file.name, audio && audio.bytes);
       const found = audio ? findAll(audio.samples, audio.rate) : [];
-      const a = align(found, beacons, guess && guess.wall);
+      const span = { fromWall: causeWall - timeline.pre, toWall: causeWall + timeline.post };
+      const a = align(found, beacons, guess && guess.wall, { span, durationMs: audio ? (audio.samples.length / audio.rate) * 1000 : 0 });
       startWall = a.startWall;
       status.textContent = a.how === 'chirp' ? '동기화 신호음으로 정확히 맞췄습니다 (오차 약 0.001초).'
         : a.how === 'clock' ? `${guess.source === 'name' ? '파일 이름' : '영상 정보'}의 시각으로 맞췄습니다 (오차 약 1초). 아래 버튼으로 다듬을 수 있습니다.`
+        : a.how === 'elsewhere' ? `${guess.source === 'name' ? '파일 이름' : '영상 정보'}의 시각(${new Date(guess.wall).toLocaleString('ko-KR')})이 이 기록과 맞지 않습니다. 이 순간을 찍은 영상인지 확인하거나, 영상을 사고 순간에 멈추고 아래 버튼으로 맞춰 주세요.`
         : '영상에서 시각을 찾지 못했습니다. 영상을 사고 순간에 멈추고 아래 버튼으로 맞춰 주세요.';
       stage.dataset.startWall = startWall ?? '';
       toCause();
