@@ -36,8 +36,9 @@ android {
         applicationId = "com.americankimchilabs.whitebox"
         minSdk = 28
         targetSdk = targetAndroidSdk
-        versionCode = 1
-        versionName = "0.1.0"
+        // Every submission to the market changes both (review rule); the server's WHITEBOX_APP_VERSION follows.
+        versionCode = 2
+        versionName = "0.9.0"
 
         buildConfigField("String", "VEHICLE_SDK_VERSION", "\"${libs.versions.vehicleSdk.get()}\"")
         // Pleos My Project credentials for server speech (local.properties, never committed). Empty until Pleos opens

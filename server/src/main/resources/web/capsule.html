@@ -40,6 +40,11 @@ table.log{font-size:12px;font-variant-numeric:tabular-nums}table.log td{padding:
     <p id="kind" class="msg"></p>
     <table id="facts"></table>
   </div>
+  <div class="card" id="readings-card" hidden>
+    <h2>기록으로 본 상황</h2>
+    <ol class="bullets reading" id="readings"></ol>
+    <p class="msg">기록된 값만으로 쓴 문장입니다. "가능성"은 기록이 그렇게 보일 근거가 있다는 뜻이며, 단정이 아닙니다.</p>
+  </div>
   <div class="card" id="verdict-card">
     <div class="verdict"><span class="mark" id="mark"></span><span id="verdict"></span></div>
     <p class="msg" id="verdict-sub"></p>
@@ -61,10 +66,6 @@ table.log{font-size:12px;font-variant-numeric:tabular-nums}table.log td{padding:
     <h3>감지 전 10초 ~ 후 5초</h3>
     <div id="graph"></div>
   </div>
-  <div class="card" id="context-card" hidden>
-    <h2>그때의 차량 상태</h2>
-    <table id="context"></table>
-  </div>
   <div class="card noprint" id="sync-card">
     <h2>블랙박스 영상과 맞춰 보기</h2>
     <div id="sync"></div>
@@ -78,6 +79,13 @@ table.log{font-size:12px;font-variant-numeric:tabular-nums}table.log td{padding:
     <button class="wide secondary" id="print" onclick="print()">증거 요약 인쇄 · PDF로 저장</button>
     <p class="msg">한 장짜리 요약으로 인쇄됩니다. 원본은 차와 서버에 봉인된 그대로 남습니다.</p>
   </div>
+  <details class="card" id="log-card" hidden><summary id="log-title">상세 기록</summary>
+    <h3>감지 순간의 차량 상태</h3>
+    <table id="context"></table>
+    <h3>차가 기록한 모든 값</h3>
+    <p class="msg">시간은 감지 순간 기준(초)입니다.</p>
+    <table class="log" id="log"></table>
+  </details>
   <details class="card"><summary>자세히 (검증 정보)</summary><div id="tech" class="tech"></div></details>
 </div>
 <div id="report" hidden></div>
@@ -229,7 +237,7 @@ const END_REASON = { IGNITION_OFF: '시동 꺼짐', PARKED: '오래 주차', ARR
 function renderTrip(c, data, events, v) {
   WB.show('loading', false);
   WB.show('packet');
-  ['lines-card', 'context-card', 'sync-card'].forEach((id) => WB.show(id, false));
+  ['lines-card', 'sync-card', 'readings-card', 'log-card'].forEach((id) => WB.show(id, false));
   WB.show('trip-card');
   WB.$('print').textContent = '리포트 인쇄 · PDF로 저장';
   WB.$('title').textContent = '대리 운전 리포트';
@@ -518,9 +526,17 @@ function render(c, data, upToCause, events, t, v, trigger) {
 
   WB.$('lines').innerHTML = t.lines.map((l) => `<li>${esc(WBPacket.lineText(l))}</li>`).join('') || '<li>감지 직전 바뀐 조작이 없습니다.</li>';
   WB.$('graph').innerHTML = WBPacket.svg(t);
+  // What the records say first, in plain sentences (every plan); every value the car recorded last, folded.
+  const readings = WBReport.interpret(events, causeWall, t.context);
+  WB.show('readings-card', readings.length > 0);
+  WB.$('readings').innerHTML = readings.map((r) => `<li>${esc(r.text)}${r.note ? `<small>${esc(r.note)}</small>` : ''}</li>`).join('');
   const ctx = WBPacket.contextRows(t.context);
-  WB.show('context-card', ctx.length > 0);
-  WB.$('context').innerHTML = ctx.map(([k, val]) => `<tr><td>${esc(k)}</td><td>${esc(val)}</td></tr>`).join('');
+  const rows = WBReport.log(events, causeWall);
+  WB.show('log-card');
+  WB.$('log-title').textContent = `상세 기록 (${rows.length}건)`;
+  WB.$('context').innerHTML = ctx.map(([k, val]) => `<tr><td>${esc(k)}</td><td>${esc(val)}</td></tr>`).join('') || '<tr><td>기록 없음</td></tr>';
+  WB.$('log').innerHTML = '<tr><td>#</td><td>시각</td><td>감지 기준</td><td>항목</td><td>값</td></tr>'
+    + rows.map(([seq, wall, rel, what, val]) => `<tr><td>${seq}</td><td>${hms(wall)}</td><td>${rel > 0 ? '+' : ''}${rel.toFixed(1)}</td><td>${esc(what)}</td><td>${esc(val)}</td></tr>`).join('');
 
   // The dashcam view spans the whole capsule, not just the packet's −10 s … +5 s.
   const first = events[0].e.at, last = events[events.length - 1].e.at;

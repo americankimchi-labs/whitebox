@@ -12,6 +12,10 @@ import androidx.core.app.ServiceCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.americankimchilabs.whitebox.BuildConfig
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import com.americankimchilabs.whitebox.data.SleepDetector
+import android.os.SystemClock
 import com.americankimchilabs.whitebox.R
 import com.americankimchilabs.whitebox.data.EpochRecordCipher
 import com.americankimchilabs.whitebox.data.RecordCipher
@@ -116,9 +120,13 @@ class RecorderService : LifecycleService() {
      * Where the phone pages live: the mirror's own address over http(s). The emulator reaches its host computer as
      * 10.0.2.2, but a browser on that computer knows it as localhost.
      */
-    private fun webBase(mirrorUrl: String): String? = runCatching {
+    /**
+     * The server's web address for [forPhones] (QR links: the emulator's host is `localhost` to a phone on that
+     * computer) or for the car's own requests (the host as the car reaches it).
+     */
+    private fun webBase(mirrorUrl: String, forPhones: Boolean = true): String? = runCatching {
         val u = java.net.URI(mirrorUrl)
-        val host = if (u.host == "10.0.2.2") "localhost" else u.host
+        val host = if (forPhones && u.host == "10.0.2.2") "localhost" else u.host
         "${if (u.scheme == "wss") "https" else "http"}://$host${if (u.port > 0) ":${u.port}" else ""}"
     }.getOrNull()?.takeIf { mirrorUrl.isNotEmpty() }
 
@@ -215,7 +223,7 @@ class RecorderService : LifecycleService() {
         mode = next
         inbox = Channel(Channel.UNLIMITED)
         sessionFile = SessionFile(java.io.File(dir, "session"))
-        AppGraph.publish(ActiveSession(next, recorder, store, claim, webBase(url), outbox, shares, handover, library))
+        AppGraph.publish(ActiveSession(next, recorder, store, claim, webBase(url), outbox, shares, handover, library, carBase = webBase(url, forPhones = false)))
 
         val boot = bootCount()
         val started = classifyStart(sessionFile!!.read(), if (next == SourceMode.REPLAY) StartReason.APP_OPENED else reason, boot, AndroidClock.now())
@@ -225,6 +233,17 @@ class RecorderService : LifecycleService() {
         guardGrants()
 
         jobs += lifecycleScope.launch(Dispatchers.IO) { consume(recorder) }
+        // A real car suspends at ignition off and freezes the app: once it wakes, the time it slept goes into the chain,
+        // so the gap reads as "the car was off", not as a recorder failure. (The emulator only simulates suspend and
+        // keeps the app running, so it never writes one.)
+        jobs += lifecycleScope.launch {
+            val sleep = SleepDetector()
+            while (isActive) {
+                sleep.check(SystemClock.elapsedRealtime(), SystemClock.uptimeMillis())
+                    ?.let { inbox.send(ChainEntry.Recorder(RecorderEvent.Slept(it), AndroidClock.now())) }
+                delay(SLEEP_CHECK_MS)
+            }
+        }
         channel?.start(lifecycleScope + Dispatchers.IO)
         claim?.let { jobs += it.start(lifecycleScope + Dispatchers.IO) }
         shares?.let { jobs += it.start(lifecycleScope + Dispatchers.IO) }
@@ -362,6 +381,7 @@ class RecorderService : LifecycleService() {
         private const val PREFS = "recorder"
         private const val PREF_MIRROR = "mirror"
         private const val PREF_TIER = "tier"
+        private const val SLEEP_CHECK_MS = 5_000L
 
         fun start(context: Context, source: SourceMode? = null, restartReplay: Boolean = false, mirror: String? = null, extras: android.os.Bundle? = null) {
             context.startForegroundService(

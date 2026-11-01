@@ -45,6 +45,9 @@ class WebSocketMirrorChannel(
         .pingInterval(15, TimeUnit.SECONDS)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
+        // permessage-deflate, offered on every connection: batches compress to under half; frames smaller than this
+        // (each sample of a crash-time burst) are sent as they are, without the cost of compressing them.
+        .minWebSocketMessageToCompress(1024)
         .build()
 
     private val _connected = MutableStateFlow(false)

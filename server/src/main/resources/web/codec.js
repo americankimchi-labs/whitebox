@@ -118,6 +118,7 @@
           case 'STOPPED': return { type: 'R', event: 'STOPPED', at };
           case 'DEGRADED': case 'RESTORED': return { type: 'R', event: f[2], permission: f[3], at };
           case 'PRUNED': return { type: 'R', event: 'PRUNED', throughSeq: Number(f[3]), throughWall: Number(f[4]), unsent: bool(f[5]), at };
+          case 'SLEPT': return { type: 'R', event: 'SLEPT', sleptMs: Number(f[3]), at };
           default: throw new Error('unknown recorder event ' + f[2]);
         }
       }

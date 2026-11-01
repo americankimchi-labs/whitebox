@@ -48,7 +48,9 @@ import com.americankimchilabs.whitebox.data.verifyCapsule
 import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.EscalationEvent
 import com.americankimchilabs.whitebox.domain.EscalationLevel
+import com.americankimchilabs.whitebox.domain.EvidenceReadings
 import com.americankimchilabs.whitebox.domain.EvidenceTimeline
+import com.americankimchilabs.whitebox.domain.Reading
 import com.americankimchilabs.whitebox.domain.LanePoint
 import com.americankimchilabs.whitebox.domain.LaneStep
 import com.americankimchilabs.whitebox.domain.LocationFix
@@ -71,6 +73,8 @@ private class Packet(
     val state: LiveState,
     val location: LocationFix?,
     val timeline: EvidenceTimeline,
+    /** The most telling plain readings (the phone shows them all, then every record). */
+    val readings: List<Reading>,
     val eventCount: Int,
     val check: CapsuleCheck,
 )
@@ -88,6 +92,7 @@ private fun buildPacket(seal: CapsuleSeal, session: ActiveSession): Packet {
     var state = LiveState()
     upToCause.forEach { state = state.with(it.entry) }
     val after = state.kmh
+    val timeline = EvidenceTimeline.build(events, causeSeq)
     return Packet(
         causeWallMillis = upToCause.last().entry.at.wallMillis,
         triggered = triggered,
@@ -95,7 +100,8 @@ private fun buildPacket(seal: CapsuleSeal, session: ActiveSession): Packet {
         speedAfter = after,
         state = state,
         location = upToCause.mapNotNull { (it.entry as? ChainEntry.Location)?.fix }.lastOrNull(),
-        timeline = EvidenceTimeline.build(events, causeSeq),
+        timeline = timeline,
+        readings = EvidenceReadings.top(EvidenceReadings.of(events, causeSeq, timeline.context)),
         eventCount = events.size,
         check = verifyCapsule(seal, session.store),
     )
@@ -124,13 +130,14 @@ fun EvidencePacket(labels: Labels, seal: CapsuleSeal, session: ActiveSession, on
             Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(40.dp)) {
                 Column(Modifier.weight(1f).ccpRow().padding(8.dp)) { Summary(labels, seal, p) }
                 Column(Modifier.weight(1f).ccpRow().padding(8.dp)) {
-                    Section(stringResource(R.string.packet_lines))
-                    if (p.timeline.lines.isEmpty()) Line(stringResource(R.string.packet_no_data))
-                    p.timeline.lines.forEach { Line(labels.controlLine(it)) }
-                    Section(stringResource(R.string.packet_context), top = 28.dp)
-                    val context = labels.context(p.timeline.context)
-                    if (context.isEmpty()) Line(stringResource(R.string.packet_no_data))
-                    context.forEach { (k, v) -> Field(k, v, labelWidth = 150.dp, top = 6.dp) }
+                    // A glance, parked: the three readings that say most; all of them and every record are on the phone.
+                    Section(stringResource(R.string.packet_readings))
+                    if (p.readings.isEmpty()) Line(stringResource(R.string.packet_no_data))
+                    p.readings.forEach { r ->
+                        Line(r.text)
+                        r.note?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.Gray, modifier = Modifier.padding(start = 4.dp, top = 2.dp)) }
+                    }
+                    Text(stringResource(R.string.packet_readings_more), style = MaterialTheme.typography.bodyMedium, color = Color.Gray, modifier = Modifier.padding(top = 16.dp))
                 }
                 // Shown to an insurer or the police: their phone opens this capsule alone and checks it itself.
                 Column(Modifier.padding(top = 8.dp).width(220.dp), horizontalAlignment = Alignment.CenterHorizontally) {

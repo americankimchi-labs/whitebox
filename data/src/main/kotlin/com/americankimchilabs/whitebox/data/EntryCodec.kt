@@ -234,6 +234,7 @@ object EntryCodec {
         is RecorderEvent.PermissionDegraded -> listOf("DEGRADED", e.permission)
         is RecorderEvent.PermissionRestored -> listOf("RESTORED", e.permission)
         is RecorderEvent.Pruned -> listOf("PRUNED", e.throughSeq, e.throughWall, e.unsent)
+        is RecorderEvent.Slept -> listOf("SLEPT", e.sleptMillis)
     }
 
     private fun recorder(f: List<String>): RecorderEvent = when (f[0]) {
@@ -246,6 +247,7 @@ object EntryCodec {
         "DEGRADED" -> RecorderEvent.PermissionDegraded(RecorderPermission.valueOf(f[1]))
         "RESTORED" -> RecorderEvent.PermissionRestored(RecorderPermission.valueOf(f[1]))
         "PRUNED" -> RecorderEvent.Pruned(f[1].toLong(), f[2].toLong(), f[3].toBooleanStrict())
+        "SLEPT" -> RecorderEvent.Slept(f[1].toLong())
         else -> error("unknown recorder event ${f[0]}")
     }
 }

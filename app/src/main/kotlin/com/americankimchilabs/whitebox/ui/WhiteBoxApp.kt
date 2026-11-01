@@ -53,6 +53,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.americankimchilabs.whitebox.R
+import com.americankimchilabs.whitebox.platform.UpdateCheck
+import com.americankimchilabs.whitebox.BuildConfig
 import com.americankimchilabs.whitebox.data.CapsuleSeal
 import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.DriveEvent
@@ -194,6 +196,7 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
             HandoverSheet(session, onClose = { handoverSheet = false })
             return@Column
         }
+        UpdateNotice(session.carBase)
         HandoverBar(session, handoverPhase, handoverSince, onOpen = { handoverSheet = true })
         Spacer(Modifier.padding(4.dp))
         val shown = open
@@ -252,6 +255,25 @@ private fun RegrantBanner(names: String, onAllow: () -> Unit, onLater: () -> Uni
         TextButton(onClick = onLater, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.regrant_later)) }
     }
     Spacer(Modifier.padding(6.dp))
+}
+
+/** A newer version is on the market (parked only): one line and the market link; the app never updates itself. */
+@Composable
+private fun UpdateNotice(base: String?) {
+    val context = LocalContext.current
+    var latest by remember(base) { mutableStateOf<UpdateCheck.Latest?>(null) }
+    var dismissed by remember { mutableStateOf(false) }
+    LaunchedEffect(base) { latest = base?.let { UpdateCheck.latest(it) } }
+    val l = latest ?: return
+    if (dismissed || l.code <= BuildConfig.VERSION_CODE) return
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp).background(Color(0x141565C0), RoundedCornerShape(8.dp)).padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(stringResource(R.string.update_available, l.name), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        OutlinedButton(onClick = { if (!UpdateCheck.openMarket(context)) dismissed = true }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.update_open_market)) }
+        TextButton(onClick = { dismissed = true }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.update_later)) }
+    }
 }
 
 @Composable

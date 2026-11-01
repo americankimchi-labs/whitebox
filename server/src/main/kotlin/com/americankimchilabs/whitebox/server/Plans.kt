@@ -61,14 +61,17 @@ class DemoPayment : PaymentPort {
  * `X|device|capsule|until|years|paidAt|receipt`, `C|device|commandId|frame`, `D|device|commandId`.
  */
 class Plans(
-    dir: File,
+    private val store: Durable,
     val defaultTier: Tier = Entitlements.DEFAULT,
     val payments: PaymentPort = DemoPayment(),
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
+    /** On the local disk: `<dir>/plans.log`. */
+    constructor(dir: File, defaultTier: Tier = Entitlements.DEFAULT, payments: PaymentPort = DemoPayment(), clock: () -> Long = System::currentTimeMillis) :
+        this(FileDurable(dir), defaultTier, payments, clock)
+
     data class Plan(val tier: Tier, val previous: Tier?, val changedAtMs: Long)
 
-    private val file = File(dir.apply { mkdirs() }, "plans.log")
     private val plans = HashMap<String, Plan>()
     private val extensions = HashMap<Pair<String, String>, Long>()
     private val commands = HashMap<String, LinkedHashMap<String, String>>() // device → command id → frame, until acked
@@ -76,7 +79,7 @@ class Plans(
     private val random = SecureRandom()
 
     init {
-        if (file.exists()) file.readLines().filter { it.isNotBlank() }.forEach(::apply)
+        store.lines("plans").forEach(::apply)
     }
 
     private fun apply(line: String) {
@@ -96,10 +99,7 @@ class Plans(
     @Synchronized
     private fun record(vararg fields: Any) {
         val line = fields.joinToString("|")
-        FileOutputStream(file, true).use {
-            it.write((line + "\n").toByteArray())
-            it.fd.sync()
-        }
+        store.append("plans", line)
         apply(line)
     }
 

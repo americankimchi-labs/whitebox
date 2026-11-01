@@ -19,6 +19,7 @@ import com.americankimchilabs.whitebox.domain.CruiseState
 import com.americankimchilabs.whitebox.domain.DriveEvent
 import com.americankimchilabs.whitebox.domain.EscalationEvent
 import com.americankimchilabs.whitebox.domain.EscalationLevel
+import com.americankimchilabs.whitebox.domain.EvidenceReadings
 import com.americankimchilabs.whitebox.domain.EvidenceTimeline
 import com.americankimchilabs.whitebox.domain.Gap
 import com.americankimchilabs.whitebox.domain.GapCause
@@ -107,6 +108,7 @@ class WebVectorsTest {
         ChainEntry.Library(LibraryEvent.Returned("C3"), ts(18)),
         ChainEntry.Library(LibraryEvent.Extended("C4", 1_800_000_000_000), ts(18)),
         ChainEntry.Recorder(RecorderEvent.Pruned(120, 1_700_000_000_001, unsent = true), ts(18)),
+        ChainEntry.Recorder(RecorderEvent.Slept(754_000), ts(18)),
         ChainEntry.Signal(SignalSample(VehicleSignal.AirbagDeployed("ROW_1_LEFT", true, test = true), ts(18))),
         ChainEntry.Escalation(EscalationEvent.Triggered(CapsuleTrigger.TEST_AIRBAG, 40, 0f), ts(18)),
         ChainEntry.Handover(HandoverEvent.Cancelled(HandoverSource.CAR, HandoverEndReason.EXPIRED), ts(17)),
@@ -135,6 +137,7 @@ class WebVectorsTest {
         add(ChainEntry.Signal(SignalSample(VehicleSignal.Gear(GearPosition.DRIVE), ts(100))))
         add(ChainEntry.Signal(SignalSample(VehicleSignal.BrakePedal(false), ts(150))))
         add(ChainEntry.Signal(SignalSample(VehicleSignal.SeatBelt("ROW_1_LEFT", true), ts(200))))
+        add(ChainEntry.Signal(SignalSample(VehicleSignal.SeatOccupancy("ROW_1_RIGHT", true), ts(205))))
         add(ChainEntry.Signal(SignalSample(VehicleSignal.Door("ROW_1_LEFT", false), ts(210))))
         add(ChainEntry.Signal(SignalSample(VehicleSignal.Light(Lamp.LOW_BEAM, true), ts(220))))
         add(ChainEntry.Signal(SignalSample(VehicleSignal.RoadContext(RoadContextType.SPEED_LIMIT, "50"), ts(230))))
@@ -148,6 +151,8 @@ class WebVectorsTest {
             if (ms == 15_500L) add(ChainEntry.Signal(SignalSample(VehicleSignal.Light(Lamp.HIGH_BEAM, false), ts(ms + 20))))
             if (ms == 16_500L) add(ChainEntry.Signal(SignalSample(VehicleSignal.BrakePedal(true), ts(ms + 30))))
             if (ms == 19_000L) add(ChainEntry.Signal(SignalSample(VehicleSignal.TurnSignal(TurnSignalState.OFF), ts(ms + 10))))
+            if (ms == 20_000L) add(ChainEntry.Signal(SignalSample(VehicleSignal.Light(Lamp.HAZARD, true), ts(ms + 40))))
+            if (ms == 20_500L) add(ChainEntry.Signal(SignalSample(VehicleSignal.Door("ROW_1_LEFT", true), ts(ms + 60))))
         }
     }
 
@@ -196,6 +201,9 @@ class WebVectorsTest {
                 "records" to capsuleStore.records(0, last),
                 "causeSeq" to causeSeq,
                 "timeline" to timelineJson(timeline),
+                // The plain readings the car shows (its top three) and the phone shows (all): the same sentences.
+                "readings" to EvidenceReadings.of(crash.mapIndexed { i, e -> DriveEvent(i.toLong(), e) }, causeSeq, timeline.context)
+                    .map { obj("text" to it.text, "note" to it.note) },
                 "seal" to SealStore.line(seal),
                 "anchor" to "$anchorText|sig=${server.sign(anchorText)}",
                 "serverKey" to b64.encodeToString(server.publicKey),
@@ -230,6 +238,7 @@ class WebVectorsTest {
             is RecorderEvent.PermissionDegraded -> obj("type" to "R", "event" to "DEGRADED", "permission" to r.permission.name, "at" to at(e.at))
             is RecorderEvent.PermissionRestored -> obj("type" to "R", "event" to "RESTORED", "permission" to r.permission.name, "at" to at(e.at))
             is RecorderEvent.Pruned -> obj("type" to "R", "event" to "PRUNED", "throughSeq" to r.throughSeq, "throughWall" to r.throughWall, "unsent" to r.unsent, "at" to at(e.at))
+            is RecorderEvent.Slept -> obj("type" to "R", "event" to "SLEPT", "sleptMs" to r.sleptMillis, "at" to at(e.at))
         }
         is ChainEntry.Escalation -> when (val v = e.event) {
             is EscalationEvent.LevelChanged -> obj("type" to "E", "event" to "LEVEL", "level" to v.level.name, "causeSeq" to v.causeSeq, "at" to at(e.at))

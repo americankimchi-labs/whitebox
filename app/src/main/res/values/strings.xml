@@ -210,6 +210,7 @@
     <string name="row_library_left">보관함이 가득 차 오래된 기록이 빠짐</string>
     <string name="row_library_returned">보관함에 자리가 생겨 빠졌던 기록이 돌아옴</string>
     <string name="row_extended">기록 연장 · %1$s까지</string>
+    <string name="row_slept">시동이 꺼져 차가 잠들어 있던 %1$s · 그동안 기록 없음</string>
     <string name="row_pruned">%1$s까지의 기록을 차에서 정리 (클라우드에 있음)</string>
     <string name="row_pruned_unsent">%1$s까지의 기록을 차에서 정리 · 오래 연결되지 않아 클라우드에 올리지 못함</string>
     <string name="library_header">%1$s 요금제 · 보관 %2$d/%3$d개 · 에어백이 터진 큰 사고는 10년 무료</string>
@@ -265,6 +266,9 @@
     <string name="window_lurch">출발 후 1초 안</string>
 
     <!-- Evidence packet -->
+    <string name="update_available">새 버전 %1$s이 나왔습니다. 앱 마켓에서 업데이트해 주세요.</string>
+    <string name="update_open_market">앱 마켓 열기</string>
+    <string name="update_later">나중에</string>
     <string name="packet_title">증거 요약</string>
     <string name="packet_back">← 목록</string>
     <string name="packet_verifying">확인하는 중…</string>
@@ -298,34 +302,8 @@
     <string name="lane_cause">감지</string>
     <string name="lane_left">좌</string>
     <string name="lane_right">우</string>
-
-    <string name="packet_lines">감지 직전 운전자의 조작</string>
-    <string name="line_before">%1$s · 감지 %2$.1f초 전</string>
-    <string name="line_held">%1$s · 기록 내내 그대로</string>
-    <string name="line_brake_on">브레이크 밟음</string>
-    <string name="line_brake_off">브레이크 뗌</string>
-    <string name="line_turn">방향지시등 %1$s</string>
-    <string name="line_gear">기어 %1$s</string>
-    <string name="line_steering_peak">최대 조향각 %1$s</string>
-    <string name="line_high_beam_flash">상향등 깜빡임</string>
-
-    <string name="packet_context">감지 순간의 차량 상태</string>
-    <string name="ctx_belts">안전벨트</string>
-    <string name="ctx_occupancy">착석</string>
-    <string name="ctx_doors">문</string>
-    <string name="ctx_windows">창문 위치</string>
-    <string name="ctx_lamps">조명</string>
-    <string name="ctx_wipers">와이퍼</string>
-    <string name="ctx_cruise">크루즈</string>
-    <string name="ctx_parking_brake">주차 브레이크</string>
-    <string name="ctx_speed_limit">제한속도</string>
-    <string name="ctx_road">주의 구간</string>
-    <string name="ctx_all_closed">모두 닫힘</string>
-    <string name="ctx_open">열림: %1$s</string>
-    <string name="ctx_nobody">없음</string>
-    <string name="ctx_unknown">정보 없음</string>
-    <string name="ctx_item">%1$s %2$s</string>
-    <string name="ctx_cruise_target">%1$s · 설정 %2$.0f km/h</string>
+    <string name="packet_readings">기록으로 본 상황</string>
+    <string name="packet_readings_more">모든 해석과 상세 기록은 QR을 찍거나 연결한 휴대폰에서 볼 수 있습니다.</string>
 
     <!-- First run -->
     <string name="intro_title">White Box는 운전자의 조작을 기록합니다</string>

@@ -14,7 +14,10 @@ import java.util.Base64
  *
  * `clips.log` lines: `S|clipId|device|stream|capsule|savedAtMs|bytes|offsetMs|name` and `R|clipId|reason|atMs`.
  */
-class ClipStore(dir: File) {
+class ClipStore(private val store: Durable, private val root: File) {
+    /** On the local disk: the index in `<dir>/clips/clips.log`, each clip a file beside it. */
+    constructor(dir: File) : this(FileDurable(dir), File(dir, "clips"))
+
     data class Clip(
         val id: String,
         val device: String,
@@ -28,13 +31,12 @@ class ClipStore(dir: File) {
         val name: String,
     )
 
-    private val root = File(dir, "clips").apply { mkdirs() }
-    private val logFile = File(root, "clips.log")
     private val clips = LinkedHashMap<String, Clip>()
     private val random = SecureRandom()
 
     init {
-        if (logFile.exists()) logFile.readLines().filter { it.isNotBlank() }.forEach { l ->
+        root.mkdirs()
+        store.lines(LOG).forEach { l ->
             val f = l.split("|")
             when (f[0]) {
                 "S" -> clips[f[1]] = Clip(f[1], f[2], f[3], f[4], f[5].toLong(), f[6].toLong(), f[7].toDouble(), f.drop(8).joinToString("|"))
@@ -92,11 +94,9 @@ class ClipStore(dir: File) {
         append("R|$id|$reason|$now")
     }
 
-    @Synchronized
-    private fun append(line: String) {
-        FileOutputStream(logFile, true).use {
-            it.write((line + "\n").toByteArray())
-            it.fd.sync()
-        }
+    private fun append(line: String) = store.append(LOG, line)
+
+    private companion object {
+        const val LOG = "clips/clips"
     }
 }

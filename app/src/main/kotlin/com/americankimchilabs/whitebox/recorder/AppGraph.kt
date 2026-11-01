@@ -40,6 +40,8 @@ class ActiveSession(
     val handover: HandoverController? = null,
     /** The driver's library, the plan, and what the car keeps on disk. */
     val library: LibraryController? = null,
+    /** The server as the car itself reaches it (its own requests, such as the version check); null without one. */
+    val carBase: String? = null,
 )
 
 object AppGraph {

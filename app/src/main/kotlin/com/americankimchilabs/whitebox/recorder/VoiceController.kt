@@ -14,6 +14,7 @@ import com.americankimchilabs.whitebox.domain.AudioEvent
 import com.americankimchilabs.whitebox.domain.BookmarkSource
 import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.GearPosition
+import com.americankimchilabs.whitebox.domain.IgnitionState
 import com.americankimchilabs.whitebox.domain.LibraryItem
 import com.americankimchilabs.whitebox.domain.IncidentCapsule
 import com.americankimchilabs.whitebox.domain.KeepQuestion
@@ -94,9 +95,19 @@ class VoiceController(
 ) {
     private val voice = Mutex()
     private val busy = MutableStateFlow(false)
+
+    /**
+     * The engine is off (ignition OFF or LOCK): a real car suspends soon after, freezing the app. Voice stops at once and
+     * the audio is given back before that; nothing asked before the car slept is asked again after it wakes.
+     */
+    private val engineOff = MutableStateFlow(false)
     private val lines = Channel<VoiceLine>(Channel.UNLIMITED)
 
     fun start(scope: CoroutineScope): Job = scope.launch {
+        resilient("ignition") {
+            recorder.events.mapNotNull { ((it.entry as? ChainEntry.Signal)?.sample?.signal as? VehicleSignal.Ignition)?.state }
+                .collect { engineOff.value = it == IgnitionState.OFF || it == IgnitionState.LOCK }
+        }
         resilient("keep question") { keepQuestions() }
         resilient("lines") { recorder.say.collect { lines.send(it) } }
         resilient("handover lines") { handoverLines.collect { lines.send(it) } }
@@ -161,6 +172,7 @@ class VoiceController(
         data class Heard(val text: String) : Input
         data object Tick : Input
         data object Withdrawn : Input
+        data object EngineOff : Input
     }
 
     private sealed interface Outcome {
@@ -178,6 +190,7 @@ class VoiceController(
         val ticker = launch { while (isActive) { delay(250); inputs.send(Input.Tick) } }
         // A crash-level trigger inside the capsule withdraws the question (it is no longer the driver's to release).
         val withdrawn = launch { recorder.pendingIncident.first { it?.id != capsule.id }; inputs.send(Input.Withdrawn) }
+        val engine = launch { engineOff.first { it }; inputs.send(Input.EngineOff) }
 
         var outcome: Outcome? = null
         fun act(actions: List<Action>) {
@@ -211,9 +224,15 @@ class VoiceController(
                 is Input.Heard -> act(q.heard(input.text))
                 Input.Tick -> act(q.tick(nowMs()))
                 Input.Withdrawn -> outcome = Outcome.Withdrawn
+                // Engine off before an answer: kept, as for silence, and never asked again after the car wakes.
+                Input.EngineOff -> {
+                    speech.stop()
+                    outcome = Outcome.Finished(Action.Finish(keep = true, answered = false, confirm = null))
+                }
             }
         }
         withdrawn.cancel()
+        engine.cancel()
         ticker.cancel()
         listening?.cancel()
         val done = (outcome as? Outcome.Finished)?.finish
@@ -242,12 +261,12 @@ class VoiceController(
         coroutineScope {
             val granted = MutableStateFlow(false)
             val focusJob = launch { focus.hold().collect { granted.value = it } }
-            if (withTimeoutOrNull(LINE_FOCUS_WAIT_MS) { granted.first { it } } == null) {
-                Log.i(TAG, "no audio for $line; dropped")
+            if (engineOff.value || withTimeoutOrNull(LINE_FOCUS_WAIT_MS) { granted.first { it } } == null) {
+                Log.i(TAG, "no audio for $line (or the engine is off); dropped")
             } else {
                 delay(PRE_ROLL_MS)
-                // Losing the audio mid-line stops it, so a call is not talked over.
-                val stopper = launch { granted.first { !it }; speech.stop() }
+                // Losing the audio mid-line stops it, so a call is not talked over; so does the engine going off.
+                val stopper = launch { combine(granted, engineOff) { g, off -> !g || off }.first { it }; speech.stop() }
                 val result = speech.speak(text(line))
                 stopper.cancel()
                 send(ChainEntry.Audio(AudioEvent.Spoke(line, result == SpeakResult.DONE), clock.now()))
@@ -272,7 +291,7 @@ class VoiceController(
 
     /** While offline and nothing else is speaking or listening, listen on-device for "방금 저장해". */
     private suspend fun offlineBookmarks() {
-        combine(connectivity.online(), busy) { online, b -> !online && !b }
+        combine(connectivity.online(), busy, engineOff) { online, b, off -> !online && !b && !off }
             .distinctUntilChanged()
             .collectLatest { listen ->
                 if (!listen) return@collectLatest

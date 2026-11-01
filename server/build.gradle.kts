@@ -14,6 +14,7 @@ dependencies {
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.netty)
     implementation(libs.ktor.server.websockets)
+    implementation(libs.google.cloud.firestore) // the store on Cloud Run (WHITEBOX_STORE=firestore)
     runtimeOnly(libs.slf4j.simple)
     testImplementation(libs.junit)
     testImplementation(libs.ktor.server.test.host)
@@ -29,6 +30,12 @@ tasks.named<JavaExec>("run") {
 }
 
 // A simulated car that drives the demo drive into a running mirror (no emulator needed).
+// A new value for the deployment's server-key secret (printed once; store it in Secret Manager).
+tasks.register<JavaExec>("newServerKey") {
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.americankimchilabs.whitebox.server.NewServerKeyKt")
+}
+
 tasks.register<JavaExec>("demoCar") {
     group = "application"
     description = "Drives the scripted demo drive into the mirror at ws://localhost:8080 (crash, then power loss)."

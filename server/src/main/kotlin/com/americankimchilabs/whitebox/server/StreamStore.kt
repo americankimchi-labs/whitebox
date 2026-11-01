@@ -2,7 +2,6 @@ package com.americankimchilabs.whitebox.server
 
 import com.americankimchilabs.whitebox.data.MirrorProtocol.Record
 import java.io.File
-import java.io.FileOutputStream
 import java.util.TreeMap
 
 /** What one put did. */
@@ -68,16 +67,17 @@ interface StreamStore {
     fun conflicts(stream: StreamId): Int
 }
 
-/**
- * [StreamStore] on the local disk: per stream, an append-only `records.log` (each record once, in arrival order,
- * fsync'd) and small logs beside it; an in-memory index of seq → record, rebuilt on start (arrival times stay in the file).
- * One process, modest scale: a deployment swaps in a managed store behind the same interface.
- */
-class FileStreamStore(private val root: File) : StreamStore {
+/** [StreamStore] on the local disk (the layout under [root] is `streams/<device>/<stream>/<log>.log`). */
+class FileStreamStore(root: File) : StreamStore by DurableStreamStore(FileDurable(root))
 
-    private class Index(val dir: File) {
-        val file = File(dir.apply { mkdirs() }, "records.log")
-        var out = FileOutputStream(file, true)
+/**
+ * [StreamStore] over a [Durable]: per stream an append-only `records` log (each record once, in arrival order, one
+ * append per received batch) and small logs beside it; an in-memory index of seq → record, rebuilt on start (arrival
+ * times stay in the log). One process at a time (Cloud Run runs a single instance, so the dead-man timers agree).
+ */
+class DurableStreamStore(private val durable: Durable) : StreamStore {
+
+    private class Index {
         val removed = TreeMap<Long, Long>()
         val hashes = TreeMap<Long, String>()
         val lines = HashMap<Long, String>()
@@ -88,30 +88,29 @@ class FileStreamStore(private val root: File) : StreamStore {
 
     private val indexes = HashMap<StreamId, Index>()
 
+    private fun path(stream: StreamId, log: String) = "streams/${stream.deviceId}/${stream.stream}/$log"
+
     init {
-        root.resolve("streams").listFiles()?.forEach { device ->
-            device.listFiles()?.forEach { s -> load(StreamId(device.name, s.name)) }
-        }
+        streams().forEach(::load)
     }
 
-    private fun dir(stream: StreamId) = root.resolve("streams/${stream.deviceId}/${stream.stream}")
-
     /** A stream only exists once a car wrote to it: reads never create one. */
-    private fun existing(stream: StreamId): Index? = indexes[stream] ?: if (dir(stream).resolve("records.log").exists()) load(stream) else null
+    private fun existing(stream: StreamId): Index? = indexes[stream] ?: if (durable.exists(path(stream, "records"))) load(stream) else null
 
     private fun load(stream: StreamId): Index = indexes.getOrPut(stream) {
-        Index(dir(stream)).also { idx ->
-            // records.log lines: receivedAtMs \t record (the record itself contains tabs)
-            if (idx.file.exists()) idx.file.readLines().filter { it.isNotBlank() }.forEach { l ->
+        Index().also { idx ->
+            // records lines: receivedAtMs \t record (the record itself contains tabs)
+            durable.lines(path(stream, "records")).forEach { l ->
                 Record.parse(l.substringAfter('\t'))?.let { r ->
                     idx.hashes[r.seq] = r.hash
                     idx.lines[r.seq] = r.line
                 }
             }
-            idx.dir.resolve("removed.log").takeIf { it.exists() }?.readLines()?.forEach { l ->
+            durable.lines(path(stream, "removed")).forEach { l ->
                 val f = l.split("|")
                 if (f.size >= 2) idx.removed.merge(f[0].toLong(), f[1].toLong(), ::maxOf)
             }
+            idx.conflicts = durable.lines(path(stream, "conflicts")).size
         }
     }
 
@@ -120,7 +119,7 @@ class FileStreamStore(private val root: File) : StreamStore {
         val idx = load(stream)
         var stored = 0
         val conflicts = mutableListOf<String>()
-        val buf = StringBuilder()
+        val lines = mutableListOf<String>()
         for (r in records.sortedBy { it.seq }) {
             val held = idx.hashes[r.seq]
             when {
@@ -131,18 +130,15 @@ class FileStreamStore(private val root: File) : StreamStore {
                 else -> {
                     idx.hashes[r.seq] = r.hash
                     idx.lines[r.seq] = r.line
-                    buf.append(receivedAtMs).append('\t').append(r.line).append('\n')
+                    lines += "$receivedAtMs\t${r.line}"
                     stored++
                 }
             }
         }
-        if (buf.isNotEmpty()) {
-            idx.out.write(buf.toString().toByteArray())
-            idx.out.fd.sync()
-        }
+        durable.append(path(stream, "records"), lines)
         if (conflicts.isNotEmpty()) {
             idx.conflicts += conflicts.size
-            appendLog(stream, "conflicts", conflicts.joinToString("\n"))
+            durable.append(path(stream, "conflicts"), conflicts)
         }
         return PutResult(stored, conflicts)
     }
@@ -172,14 +168,9 @@ class FileStreamStore(private val root: File) : StreamStore {
         val gone = idx.hashes.headMap(throughSeq, true).keys.filter { seq -> keep.none { seq in it } }
         if (gone.isEmpty()) return 0
         gone.forEach { idx.hashes.remove(it); idx.lines.remove(it) }
-        // Rewrite the log without them (written aside, then swapped in, so a crash leaves one whole file).
-        val tmp = idx.dir.resolve("records.log.tmp")
-        idx.out.close()
-        tmp.bufferedWriter().use { w ->
-            idx.file.forEachLine { l -> Record.parse(l.substringAfter('\t'))?.takeIf { idx.hashes[it.seq] == it.hash }?.let { w.write(l); w.write("\n") } }
-        }
-        tmp.renameTo(idx.file)
-        idx.out = FileOutputStream(idx.file, true)
+        // The log without them, replaced whole (a crash leaves the old or the new one).
+        val kept = durable.lines(path(stream, "records")).filter { l -> Record.parse(l.substringAfter('\t'))?.let { idx.hashes[it.seq] == it.hash } == true }
+        durable.replace(path(stream, "records"), kept)
         declareGap(stream, first, throughSeq, reason, atMs)
         return gone.size
     }
@@ -214,38 +205,34 @@ class FileStreamStore(private val root: File) : StreamStore {
 
     @Synchronized
     override fun appendLog(stream: StreamId, log: String, line: String, unique: Boolean): Boolean {
-        val f = dir(stream).apply { mkdirs() }.resolve("$log.log")
-        if (unique && f.exists() && f.readLines().contains(line)) return false
-        FileOutputStream(f, true).use {
-            it.write((line + "\n").toByteArray())
-            it.fd.sync()
-        }
+        if (unique && durable.lines(path(stream, log)).contains(line)) return false
+        durable.append(path(stream, log), line)
         return true
     }
 
     @Synchronized
-    override fun log(stream: StreamId, log: String): List<String> =
-        dir(stream).resolve("$log.log").takeIf { it.exists() }?.readLines()?.filter { it.isNotBlank() } ?: emptyList()
+    override fun log(stream: StreamId, log: String): List<String> = durable.lines(path(stream, log))
 
     @Synchronized
     override fun streams(): List<StreamId> = (
-        indexes.keys + (root.resolve("streams").listFiles()?.flatMap { d -> d.listFiles()?.map { StreamId(d.name, it.name) } ?: emptyList() } ?: emptyList())
+        indexes.keys + durable.logs("streams/").mapNotNull { name ->
+            name.replace('\\', '/').split("/").takeIf { it.size >= 4 }?.let { StreamId(it[1], it[2]) }
+        }
         ).distinct().sortedBy { it.toString() }
 
     @Synchronized
     override fun putLabeled(pseudonym: String, stored: String) {
-        val dir = root.resolve("labeled").apply { mkdirs() }
         if (!pseudonym.matches(Regex("[0-9a-f-]{36}"))) return
-        dir.resolve(pseudonym).writeText(stored)
+        durable.putDoc("labeled/$pseudonym", stored)
     }
 
     @Synchronized
-    override fun labeledCount() = root.resolve("labeled").listFiles()?.size ?: 0
+    override fun labeledCount() = durable.countDocs("labeled")
 
     @Synchronized
     override fun deleteLabeled(pseudonym: String): Boolean {
         if (!pseudonym.matches(Regex("[0-9a-f-]{36}"))) return false
-        root.resolve("labeled/$pseudonym").delete()
+        durable.deleteDoc("labeled/$pseudonym")
         return true
     }
 

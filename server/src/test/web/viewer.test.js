@@ -95,6 +95,17 @@ test('the evidence timeline is the car\'s, lane for lane', async () => {
   for (const l of t.lines) assert.match(Packet.lineText(l), /초 전|그대로/);
 });
 
+test('the plain readings are the car\'s, sentence for sentence', async () => {
+  const Report = require(path.join(web, 'report.js'));
+  const ring = Codec.keyring({ roots });
+  const events = [];
+  for (const line of V.capsule.records) { const r = Codec.parseLine(line); events.push({ seq: r.seq, e: await Codec.decode(r.entry, ring) }); }
+  const t = Packet.build(events, V.capsule.causeSeq);
+  const mine = Report.interpret(events, t.causeWall, t.context).map((r) => ({ text: r.text, note: r.note ?? null }));
+  assert.deepEqual(mine, V.capsule.readings);
+  assert.ok(mine.length >= 10, `only ${mine.length} readings`);
+});
+
 test('a capsule checks: links, hashes, the car\'s seal and the server\'s anchor', async () => {
   const data = { records: V.capsule.records, capsule: { firstSeq: 0, lastSeq: V.capsule.records.length - 1, seals: [V.capsule.seal] }, anchors: [V.capsule.anchor], serverKey: V.capsule.serverKey };
   const ok = await Verify.capsule(data);

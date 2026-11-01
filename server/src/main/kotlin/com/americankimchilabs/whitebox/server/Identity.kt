@@ -58,7 +58,13 @@ fun maskPhone(phone: String): String =
  * sessions only as hashes of their tokens, so a restart or a deployment signs nobody out); one-time codes and claim
  * codes live in memory.
  */
-class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender, private val clock: () -> Long = System::currentTimeMillis) {
+/** The identity log's name in the store. */
+private const val LOG = "identity"
+
+class Identity(private val store: Durable, private val key: ServerKey, private val sms: SmsSender, private val clock: () -> Long = System::currentTimeMillis) {
+    /** On the local disk: `<dir>/identity.log`. */
+    constructor(dir: File, key: ServerKey, sms: SmsSender, clock: () -> Long = System::currentTimeMillis) : this(FileDurable(dir), key, sms, clock)
+
 
     data class Owner(val id: String, val phoneHash: String, val phoneEnc: String, var ecdhKey: String)
     data class Contact(
@@ -90,7 +96,6 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
     private data class Otp(val code: String, val expiresMs: Long, var attempts: Int = 0)
     private data class ClaimCode(val stream: StreamId, val expiresMs: Long)
 
-    private val file = File(dir.apply { mkdirs() }, "identity.log")
     private val random = SecureRandom()
     private val owners = HashMap<String, Owner>()
     private val deviceOwner = HashMap<String, String>()
@@ -109,7 +114,7 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
     private val otpAll = ArrayDeque<Long>()
 
     init {
-        if (file.exists()) file.readLines().filter { it.isNotBlank() }.forEach(::apply)
+        store.lines(LOG).forEach(::apply)
     }
 
     /** Replays one stored line; every change is appended as one, so the file is the full state. */
@@ -138,7 +143,7 @@ class Identity(dir: File, private val key: ServerKey, private val sms: SmsSender
     @Synchronized
     private fun record(vararg fields: String) {
         val line = fields.joinToString("|")
-        file.appendText(line + "\n")
+        store.append(LOG, line)
         apply(line)
     }
 

@@ -26,6 +26,12 @@ sealed interface RecorderEvent {
      * the cloud ([unsent] false); [unsent] true means they never reached it and are lost — said here, not hidden.
      */
     data class Pruned(val throughSeq: Long, val throughWall: Long, val unsent: Boolean) : RecorderEvent
+
+    /**
+     * The car slept (a real car suspends at ignition off, freezing the app) for [sleptMillis] and has just woken; nothing
+     * was recorded meanwhile because the car was off, not because the recorder failed.
+     */
+    data class Slept(val sleptMillis: Long) : RecorderEvent
 }
 
 enum class StartReason {

@@ -9,8 +9,6 @@ import com.americankimchilabs.whitebox.domain.MeasureUnit
 import com.americankimchilabs.whitebox.domain.AudioEvent
 import com.americankimchilabs.whitebox.domain.BookmarkSource
 import com.americankimchilabs.whitebox.domain.ChainEntry
-import com.americankimchilabs.whitebox.domain.ControlLine
-import com.americankimchilabs.whitebox.domain.DrivingContext
 import com.americankimchilabs.whitebox.domain.CruiseState
 import com.americankimchilabs.whitebox.domain.EscalationEvent
 import com.americankimchilabs.whitebox.domain.EscalationLevel
@@ -195,51 +193,6 @@ class Labels(private val res: Resources) {
         else -> v
     }
 
-    /** One "N s before" line of the evidence packet. */
-    fun controlLine(l: ControlLine): String {
-        val (what, beforeMs) = when (l) {
-            is ControlLine.Brake -> res.getString(if (l.pressed) R.string.line_brake_on else R.string.line_brake_off) to l.beforeMs
-            is ControlLine.Turn -> res.getString(R.string.line_turn, turn(l.state)) to l.beforeMs
-            is ControlLine.Gear -> res.getString(R.string.line_gear, gear(l.position)) to l.beforeMs
-            is ControlLine.SteeringPeak -> res.getString(R.string.line_steering_peak, steering(l.degrees)) to l.beforeMs
-            is ControlLine.HighBeamFlash -> res.getString(R.string.line_high_beam_flash) to l.beforeMs
-        }
-        return if (beforeMs == null) res.getString(R.string.line_held, what) else res.getString(R.string.line_before, what, beforeMs / 1000.0)
-    }
-
-    /** The packet's context rows as (label, value), only for what this car reported. */
-    fun context(c: DrivingContext): List<Pair<String, String>> = buildList {
-        fun items(m: Map<String, String>) = m.entries.joinToString(" · ") { res.getString(R.string.ctx_item, area(it.key), it.value) }
-        if (c.seatBelts.isNotEmpty()) {
-            add(res.getString(R.string.ctx_belts) to items(c.seatBelts.mapValues { res.getString(if (it.value) R.string.belt_on else R.string.belt_off) }))
-        }
-        if (c.occupancy.isNotEmpty()) {
-            val seated = c.occupancy.filterValues { it }.keys.map(::area)
-            add(res.getString(R.string.ctx_occupancy) to (seated.joinToString(" · ").ifEmpty { res.getString(R.string.ctx_nobody) }))
-        }
-        if (c.doors.isNotEmpty()) {
-            val open = c.doors.filterValues { it }.keys.map(::area)
-            add(res.getString(R.string.ctx_doors) to if (open.isEmpty()) res.getString(R.string.ctx_all_closed) else res.getString(R.string.ctx_open, open.joinToString(" · ")))
-        }
-        // Raw positions: the vehicle's range per window is not documented, so no open/closed reading is claimed.
-        if (c.windows.isNotEmpty()) add(res.getString(R.string.ctx_windows) to items(c.windows.mapValues { it.value.toString() }))
-        if (c.lamps.isNotEmpty()) {
-            add(res.getString(R.string.ctx_lamps) to c.lamps.entries.sortedBy { it.key }.joinToString(" · ") {
-                res.getString(R.string.ctx_item, lamp(it.key), res.getString(if (it.value) R.string.state_on else R.string.state_off))
-            })
-        }
-        if (c.wipers.isNotEmpty()) add(res.getString(R.string.ctx_wipers) to items(c.wipers.mapValues { wiper(it.value) }))
-        c.cruise?.let { state ->
-            val target = c.cruiseTargetMps
-            add(res.getString(R.string.ctx_cruise) to if (target != null) res.getString(R.string.ctx_cruise_target, cruise(state), target * 3.6f) else cruise(state))
-        }
-        c.parkingBrake?.let { add(res.getString(R.string.ctx_parking_brake) to res.getString(if (it) R.string.pbrake_on else R.string.pbrake_off)) }
-        if (c.speedLimitKmh != null || c.roadAlerts.isNotEmpty()) {
-            add(res.getString(R.string.ctx_speed_limit) to (c.speedLimitKmh?.let { "$it km/h" } ?: res.getString(R.string.ctx_unknown)))
-        }
-        if (c.roadAlerts.isNotEmpty()) add(res.getString(R.string.ctx_road) to c.roadAlerts.joinToString(" · ") { roadContext(it.second) })
-    }
-
     /** One timeline row, or null for entries the timeline doesn't list (speed, steering, location). */
     fun row(e: ChainEntry): String? = when (e) {
         is ChainEntry.Signal -> when (val s = e.sample.signal) {
@@ -280,6 +233,7 @@ class Labels(private val res: Resources) {
             is RecorderEvent.PermissionDegraded -> res.getString(R.string.row_degraded, permission(r.permission))
             is RecorderEvent.PermissionRestored -> res.getString(R.string.row_restored, permission(r.permission))
             is RecorderEvent.Pruned -> res.getString(if (r.unsent) R.string.row_pruned_unsent else R.string.row_pruned, dateTime(r.throughWall))
+            is RecorderEvent.Slept -> res.getString(R.string.row_slept, (r.sleptMillis / 1000).let { s -> if (s >= 60) "${s / 60}분 ${s % 60}초" else "${s}초" })
         }
         is ChainEntry.Escalation -> when (val x = e.event) {
             is EscalationEvent.LevelChanged -> res.getString(R.string.row_level, level(x.level))

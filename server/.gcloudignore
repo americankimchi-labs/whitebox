@@ -1,0 +1,6 @@
+# Only the installed server distribution and the Dockerfile go to Cloud Build.
+*
+!Dockerfile
+!build/
+!build/install/
+!build/install/**

@@ -183,6 +183,7 @@
       else if (e.type === 'E' && e.event === 'ANSWER') rows.push([x.seq, e.at.wall, rel, '운전자 대답', !e.answered ? '대답 없음 (보관)' : e.keep ? '보관' : '보관 안 함']);
       else if (e.type === 'A' && e.event === 'SPOKE') rows.push([x.seq, e.at.wall, rel, '차의 음성 안내', e.line]);
       else if (e.type === 'A' && e.event === 'BEACON') rows.push([x.seq, e.at.wall, rel, '동기화 신호음', `#${e.chirpId}`]);
+      else if (e.type === 'R' && e.event === 'SLEPT') rows.push([x.seq, e.at.wall, rel, '기록 공백', `차가 잠들어 있던 ${dur(e.sleptMs)} (시동 꺼짐)`]);
     }
     return rows;
   }
