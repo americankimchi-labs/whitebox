@@ -70,7 +70,7 @@ function keptFor(c) {
   if (c.status === 'SEVERE') return '10년 무료 보관';
   if (c.status === 'EXTENDED') return `${dateOf(c.keptUntilMs)}까지 (연장)`;
   if (c.status === 'LEFT') return `보관함에서 빠짐 · ${dateOf(c.keptUntilMs)}에 삭제`;
-  if (c.status === 'RELEASED') return '보관 안 함 · 연장하면 보관';
+  if (c.status === 'RELEASED') return '보관 안 함';
   return `${daysLeft(c.keptUntilMs)}일 뒤 삭제`;
 }
 function capsuleRow(dev, stream, c) {

@@ -27,22 +27,22 @@ class DeadMan(
         /** Seal what was received of this episode (it began at [episodeStartMs]). */
         data class Attest(val stream: StreamId, val episodeStartMs: Long) : Action
 
-        /** Long silence: record it for the family's page if the episode shows a crash-level event ([severeSeen] is the frame evidence). */
-        data class ConsiderNotice(val stream: StreamId, val episodeStartMs: Long, val severeSeen: Boolean) : Action
+        /** Long silence: record it for the family's page if the episode shows a crash-level event ([crashSeen] is the frame evidence). */
+        data class ConsiderNotice(val stream: StreamId, val episodeStartMs: Long, val crashSeen: Boolean) : Action
     }
 
     private class State(var level: EscalationLevel, var lastMs: Long) {
         var episodeStartMs: Long? = null
         var attestedSinceFrame = false
         var consideredSinceFrame = false
-        var severe = false
+        var crash = false
         var notified = false
     }
 
     private val streams = HashMap<StreamId, State>()
 
     @Synchronized
-    fun onFrame(stream: StreamId, level: EscalationLevel, severeEvidence: Boolean, nowMs: Long) {
+    fun onFrame(stream: StreamId, level: EscalationLevel, crashEvidence: Boolean, nowMs: Long) {
         val s = streams.getOrPut(stream) { State(level, nowMs) }
         s.level = level
         s.lastMs = nowMs
@@ -50,12 +50,12 @@ class DeadMan(
         s.consideredSinceFrame = false
         if (level == EscalationLevel.NORMAL) {
             s.episodeStartMs = null // all-clear
-            s.severe = false
+            s.crash = false
             s.notified = false
             return
         }
         if (s.episodeStartMs == null) s.episodeStartMs = nowMs
-        s.severe = s.severe || severeEvidence || level == EscalationLevel.TRIGGERED
+        s.crash = s.crash || crashEvidence || level == EscalationLevel.TRIGGERED
     }
 
     /** The caller sent the notice for this episode. */
@@ -75,7 +75,7 @@ class DeadMan(
             }
             if (silence >= notifySilenceMs && !s.notified && !s.consideredSinceFrame) {
                 s.consideredSinceFrame = true
-                add(Action.ConsiderNotice(id, start, s.severe))
+                add(Action.ConsiderNotice(id, start, s.crash))
             }
         }
     }

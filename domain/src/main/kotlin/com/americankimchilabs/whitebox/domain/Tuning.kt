@@ -63,7 +63,7 @@ object Tuning {
     /** A capsule that never reaches stillness is closed after this long. */
     const val CAPSULE_MAX_OPEN_S = 600
 
-    /** A near-miss capsule (non-severe trigger) closes this long after its last trigger if the car drives on. */
+    /** A near-miss capsule (not a crash trigger) closes this long after its last trigger if the car drives on. */
     const val CAPSULE_POST_WINDOW_S = 30
 
     /** Below this the car counts as still. */

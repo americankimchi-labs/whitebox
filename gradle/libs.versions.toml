@@ -1,7 +1,7 @@
 [versions]
 agp = "8.8.2"
 kotlin = "2.0.0"
-# Pinned: 2.3.1 (the vendor sample's pin) does not exist in the Pleos repo. See research-notes §1, R8.
+# Pinned: 2.3.1 (the official sample app's pin) does not exist in the Pleos Maven repository.
 vehicleSdk = "2.3.2"
 naviHelperSdk = "3.0.5"
 sttSdk = "3.3.1"

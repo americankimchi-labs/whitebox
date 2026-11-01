@@ -76,7 +76,7 @@ class PlansTest {
         val (s, _) = r.connect()
         s.send(Frame.Batch(EscalationLevel.NORMAL, r.chain.records(0, 239)))
         s.send(r.seal("moment", CapsuleTrigger.EVASIVE_STEER, 20, 25, r.start + 21 * 3_600_000))
-        s.send(r.seal("crash", CapsuleTrigger.DELTA_V, 30, 31, r.start + 31 * 3_600_000))
+        s.send(r.seal("airbag", CapsuleTrigger.AIRBAG, 30, 31, r.start + 31 * 3_600_000))
         r.now = r.wall + 60_000
 
         val removed = r.service.retain(s.stream!!)
@@ -89,8 +89,8 @@ class PlansTest {
         r.drive(1)
         assertEquals(listOf(Frame.Ack(240)), s.send(Frame.Batch(EscalationLevel.NORMAL, r.chain.records(240, 240))))
 
-        // Thirty days after the moment it expires; the crash record stays.
-        r.now = r.start + 21 * 3_600_000 + 30 * DAY_MS
+        // Past thirty days the moment expires; the airbag crash stays (ten years).
+        r.now = r.start + 60 * DAY_MS
         r.service.retain(s.stream!!)
         assertTrue(r.store.records(s.stream!!, 20, 25).isEmpty())
         assertEquals(2, r.store.records(s.stream!!, 30, 31).size)

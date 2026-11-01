@@ -180,6 +180,13 @@ fun Route.phoneRoutes(service: MirrorService, identity: Identity) {
         val epochs = identity.wraps(device, owner.id).map { it.epoch }.toSet()
         val c = service.capsules(stream).firstOrNull { it.id == p["id"] && epochs.containsAll(it.epochs) } ?: return@post call.fail("기록을 찾을 수 없습니다.")
         val e = Extension.entries.firstOrNull { it.years.toString() == p["years"] } ?: return@post call.fail("잘못된 요청입니다.")
+        // Extending never makes room: a record out of a full library (held, or released by the driver) comes back
+        // only with an upgrade.
+        val status = service.library(stream, c).status(service.now())
+        val full = slotsUsed(service, identity.devicesOf(owner.id)) >= Entitlements(plans.tier(owner.id)).librarySlots
+        if (status == LibraryStatus.LEFT || (status == LibraryStatus.RELEASED && full)) {
+            return@post call.fail("보관함이 가득 차 지금은 연장할 수 없습니다. 업그레이드하면 보관함에 다시 넣을 수 있습니다.")
+        }
         val until = plans.extend(owner.id, device, c.id, c.eventMs, e).getOrElse { return@post call.fail(it.message ?: "결제하지 못했습니다.") }
         service.libraryChanged(device)
         call.json(obj("ok" to true, "untilMs" to until, "notice" to plans.payments.notice))
@@ -353,9 +360,9 @@ fun Route.phoneRoutes(service: MirrorService, identity: Identity) {
     }
 
     /**
-     * Capsules of a car: the owner sees every capsule of their time; an emergency contact sees severe ones only
-     * (crash-level, with the minute keys the car handed over), plus a severe event the server sealed when the car
-     * went silent.
+     * Capsules of a car: the owner sees every capsule of their time; an emergency contact sees 큰 사고 only (airbag
+     * crashes, with the minute keys the car handed over, and crash-level events the server sealed when the car went
+     * silent).
      */
     get("/v1/capsules") {
         val q = call.request.queryParameters
@@ -480,13 +487,19 @@ private fun slotJson(s: SlotClip) = s.clip.let { k ->
     obj("id" to k.id, "savedAtMs" to k.savedAtMs, "bytes" to k.bytes, "name" to k.name, "capsule" to k.capsuleId, "untilMs" to s.untilMs, "paid" to s.paid)
 }
 
+/** Library slots in use across the owner's cars (kept and extended records). */
+private fun slotsUsed(service: MirrorService, devices: List<String>): Int {
+    val now = service.now()
+    return devices.sumOf { d -> service.streamsOf(d).filter { it.stream == "live" }.sumOf { st -> service.capsules(st).count { service.library(st, it).usesSlot(now) } } }
+}
+
 /** The owner's plan as the phone shows it: what it includes, how much of it is used, and what can be bought. */
 private fun planJson(service: MirrorService, identity: Identity, ownerId: String, devices: List<String>): Json {
     val plans = service.plans
     val plan = plans?.plan(ownerId) ?: Plans.Plan(Entitlements.DEFAULT, null, 0)
     val e = Entitlements(plan.tier)
     val now = service.now()
-    val kept = devices.sumOf { d -> service.streamsOf(d).filter { it.stream == "live" }.sumOf { st -> service.capsules(st).count { service.library(st, it).usesSlot(now) } } }
+    val kept = slotsUsed(service, devices)
     return obj(
         "tier" to plan.tier.name, "previous" to plan.previous?.name, "changedAtMs" to plan.changedAtMs,
         "historyDays" to (plans?.historyDays(ownerId) ?: e.historyDays), "planHistoryDays" to e.historyDays,

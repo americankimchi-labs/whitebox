@@ -235,7 +235,6 @@
     <string name="perm_location">위치</string>
     <string name="perm_background">백그라운드 위치</string>
     <string name="perm_speed">차량 속도</string>
-    <string name="perm_notifications">알림</string>
 
     <!-- Triggers -->
     <string name="trigger_airbag">에어백 전개</string>
@@ -337,7 +336,6 @@
     <string name="intro_whose_title">누구의 기록인가요</string>
     <string name="intro_whose">운전자 본인의 증거입니다. 제조사나 보험사로 보내지 않으며, 평소 주행과 위치는 운전자의 휴대폰만 열 수 있습니다.</string>
     <string name="intro_start">시작하기</string>
-    <string name="setup_parked_only">설정은 주차(P) 상태에서만 진행할 수 있습니다.</string>
     <string name="step_count">%1$d / %2$d</string>
     <string name="step_speed_title">차량 속도</string>
     <string name="step_speed_body">속도는 사고를 알아보는 가장 중요한 신호입니다. 허용하지 않으면 급제동과 충돌을 감지하지 못해, 사고가 나도 기록이 자동으로 봉인되지 않습니다.</string>

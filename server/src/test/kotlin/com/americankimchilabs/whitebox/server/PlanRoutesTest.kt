@@ -7,6 +7,7 @@ import com.americankimchilabs.whitebox.data.SealStore
 import com.americankimchilabs.whitebox.data.Signer
 import com.americankimchilabs.whitebox.domain.CapsuleTrigger
 import com.americankimchilabs.whitebox.domain.ChainEntry
+import com.americankimchilabs.whitebox.domain.EscalationEvent
 import com.americankimchilabs.whitebox.domain.IncidentCapsule
 import com.americankimchilabs.whitebox.domain.SignalSample
 import com.americankimchilabs.whitebox.domain.Tier
@@ -72,13 +73,16 @@ class PlanRoutesTest {
             var t = 0L
             fun ts() = Timestamp(t * 1_000_000, 1_700_000_000_000 + t)
             repeat(30) { t += 100; chain.append(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(10f + it % 2), ts()))) }
+            t += 100
+            chain.append(ChainEntry.Escalation(EscalationEvent.IncidentAnswered("R", keep = false), ts())) // the driver said "아니"
             fun seal(id: String, trigger: CapsuleTrigger, from: Long, to: Long) = store.appendLog(
                 stream, "seals", SealStore.line(CapsuleSeal.create(IncidentCapsule(id, trigger, from, to), chain.hashAt(to), true, 1_700_000_000_000 + to * 100, car)),
             )
             seal("A", CapsuleTrigger.EVASIVE_STEER, 0, 5)
             seal("B", CapsuleTrigger.LURCH, 10, 15)
             seal("CRASH", CapsuleTrigger.DELTA_V, 20, 25)
-            store.put(stream, chain.records(0, 29).map { Record.parse(it)!! }, now)
+            seal("R", CapsuleTrigger.HARD_BRAKE, 26, 29)
+            store.put(stream, chain.records(0, 30).map { Record.parse(it)!! }, now)
             now += 31_000
             identity.sendOtp(owner, "login", owner)
             token = identity.login(Identity.OWNER, owner, texts.code(owner))!!
@@ -94,6 +98,9 @@ class PlanRoutesTest {
         // A crash without an airbag (충돌) takes a slot like any moment.
         assertTrue(me, "\"tier\":\"FREE\"" in me && "\"handover\":false" in me && "\"librarySlots\":3" in me && "\"libraryUsed\":3" in me)
         assertTrue(me, "\"upgrades\":[\"PLUS\",\"PRO\"]" in me)
+        // A released record would come back in by extending, but extending never makes room: not while the library is full.
+        val released = client.submitForm("/v1/extend", parameters { append("device", "car1"); append("id", "R"); append("years", "1") }) { header("Cookie", cookie) }.bodyAsText()
+        assertTrue(released, "\"ok\":false" in released && "업그레이드" in released)
         val listed = client.get("/v1/capsules?device=car1&stream=live") { header("Cookie", cookie) }.bodyAsText()
         assertTrue(listed, Regex("\"id\":\"CRASH\",\"trigger\":\"DELTA_V\",\"severe\":false,\"crash\":true").containsMatchIn(listed))
 
@@ -141,5 +148,8 @@ class PlanRoutesTest {
         assertTrue(plan, "\"ok\":true" in plan)
         assertTrue(client.get("/v1/me") { header("Cookie", relogged) }.bodyAsText().let { "\"tier\":\"PRO\"" in it && "\"handover\":true" in it })
         assertEquals(200, client.submitForm("/v1/handover", parameters { append("device", "car1"); append("action", "arm") }) { header("Cookie", relogged) }.status.value)
+        // With room again, the released record can be extended into the library.
+        val roomNow = client.submitForm("/v1/extend", parameters { append("device", "car1"); append("id", "R"); append("years", "1") }) { header("Cookie", relogged) }.bodyAsText()
+        assertTrue(roomNow, "\"ok\":true" in roomNow)
     }
 }

@@ -29,11 +29,11 @@ import java.util.Base64
  * car can write into another's stream. Records are checked against their own hashes and against their held
  * neighbours before they are stored. Each acknowledged batch anchors the stream's contiguous head with a
  * server-signed line (so the car's chain head is held outside the car), and the dead-man switch seals what was
- * received and records a severe event that went silent (for the family's page; nobody is texted).
+ * received and, when a crash-level event went silent, records it as a 큰 사고 for the family's page (nobody is texted).
  */
 private const val WINDOW_SCAN = 2_000L
 
-/** Stream logs: escrowed minute keys of severe capsules, a severe event that went silent, who opened a crash record. */
+/** Stream logs: escrowed minute keys of airbag crashes, a crash-level event that went silent, who opened a 큰 사고. */
 const val ESCROW = "escrow"
 const val SEVERE_SILENT = "severe-silent"
 const val OPENED = "opened"
@@ -106,14 +106,14 @@ class MirrorService(
                     val r = Record.parse(f.record) ?: return emptyList()
                     conflicts(s, store.put(s, listOf(r), now), now)
                     f.serverCopy?.let { keepCopy(s, r, it) }
-                    deadMan.onFrame(s, f.level, severe(r), now)
+                    deadMan.onFrame(s, f.level, crashTriggered(r), now)
                     levelSeen(s, f.level, now)
                     emptyList()
                 }
                 is Frame.Batch -> {
                     val records = f.records.mapNotNull(Record::parse)
                     conflicts(s, store.put(s, records, now), now)
-                    deadMan.onFrame(s, f.level, records.any(::severe), now)
+                    deadMan.onFrame(s, f.level, records.any(::crashTriggered), now)
                     levelSeen(s, f.level, now)
                     val head = store.contiguousHead(s)
                     anchor(s, head, now)
@@ -294,8 +294,8 @@ class MirrorService(
         for (action in deadMan.tick(now)) when (action) {
             is DeadMan.Action.Attest -> attest(action.stream, action.episodeStartMs, now)
             is DeadMan.Action.ConsiderNotice -> {
-                val severe = action.severeSeen || severeSignature(action.stream, action.episodeStartMs)
-                if (!severe) {
+                val crash = action.crashSeen || crashSignature(action.stream, action.episodeStartMs)
+                if (!crash) {
                     note(action.stream, now, "${Tuning.DEADMAN_NOTIFY_SILENCE_S}초째 신호 없음, 충돌 수준 증거 없음")
                     continue
                 }
@@ -323,7 +323,7 @@ class MirrorService(
     /** Records [from]..[to] held, as stored chain lines (`seq\tprev\tentry\thash`) for checking in the browser. */
     fun recordLines(stream: StreamId, from: Long, to: Long): List<String> = store.records(stream, from, to)
 
-    /** A capsule as the phone pages list it: the car's seals, or the server's own seal of a severe event gone silent. */
+    /** A capsule as the phone pages list it: the car's seals, or the server's own seal of a crash-level event gone silent. */
     data class CapsuleInfo(
         val id: String,
         val trigger: String,
@@ -568,7 +568,7 @@ class MirrorService(
         val conflicts: Int,
         val seals: List<String>,
         val attested: List<String>,
-        /** A severe event went silent (`atMs|attestation`): recorded for the family's page, never texted. */
+        /** A crash-level event went silent (`atMs|attestation`): a 큰 사고 on the family's page, never texted. */
         val severeSilent: List<String>,
         val lastAnchor: String?,
         val events: List<Pair<Long, String>>,
@@ -644,7 +644,7 @@ class MirrorService(
     }
 
     /** A crash-level trigger recorded by the car. */
-    private fun severe(r: Record): Boolean {
+    private fun crashTriggered(r: Record): Boolean {
         val e = runCatching { EntryCodec.decode(r.entry) }.getOrNull() as? ChainEntry.Escalation ?: return false
         return (e.event as? EscalationEvent.Triggered)?.trigger?.crash == true
     }
@@ -653,7 +653,7 @@ class MirrorService(
      * The car may lose power between the crash-level speed drop and writing its own trigger: replay what was
      * received of the episode through the same escalation engine the car runs.
      */
-    private fun severeSignature(stream: StreamId, episodeStartMs: Long): Boolean {
+    private fun crashSignature(stream: StreamId, episodeStartMs: Long): Boolean {
         val from = windowStart(stream, episodeStartMs, clock())
         val engine = EscalationEngine()
         // Records are end-to-end encrypted; plain ones (older chains) are read directly, encrypted ones through the

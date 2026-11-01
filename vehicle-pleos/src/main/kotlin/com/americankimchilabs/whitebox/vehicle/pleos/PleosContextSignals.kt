@@ -210,17 +210,17 @@ internal class PleosContextSignals(private val vehicle: Vehicle) {
         val light = vehicle.getLight()
         val driving = vehicle.getDrivingMode()
         Capabilities(
-            doors = capability { ok, fail -> door.checkDoorPositionCapabilities({ m -> ok(m.mapValues { it.value.minValue }) }, fail) }
+            doors = capability { ok, fail -> door.checkDoorPositionCapabilities({ _, m -> ok(m.mapValues { it.value.minValue }) }, fail) }
                 ?: emptyMap(),
-            belts = capability { ok, fail -> seat.checkSeatBeltBuckledCapabilities({ ok(it) }, fail) } ?: emptyList(),
-            occupancy = capability { ok, fail -> seat.checkSeatOccupancyCapabilities({ ok(it) }, fail) } ?: emptyList(),
+            belts = capability { ok, fail -> seat.checkSeatBeltBuckledCapabilities({ _, seats -> ok(seats) }, fail) } ?: emptyList(),
+            occupancy = capability { ok, fail -> seat.checkSeatOccupancyCapabilities({ _, seats -> ok(seats) }, fail) } ?: emptyList(),
             lamps = buildSet {
                 if (capability<Unit> { ok, fail -> light.checkLowBeamLightStateCapabilities({ _, _ -> ok(Unit) }, fail) } != null) add(Lamp.LOW_BEAM)
                 if (capability<Unit> { ok, fail -> light.checkHighBeamLightStateCapabilities({ _, _ -> ok(Unit) }, fail) } != null) add(Lamp.HIGH_BEAM)
                 if (capability<Unit> { ok, fail -> light.checkTailLampLightStateCapabilities({ _, _ -> ok(Unit) }, fail) } != null) add(Lamp.TAIL_LAMP)
             },
-            wipers = capability { ok, fail -> vehicle.getWiper().checkWiperStateCapabilities({ ok(it.keys.toList()) }, fail) } ?: emptyList(),
-            windows = capability { ok, fail -> vehicle.getWindow().checkWindowPositionCapabilities({ ok(it.keys.toList()) }, fail) }
+            wipers = capability { ok, fail -> vehicle.getWiper().checkWiperStateCapabilities({ _, m -> ok(m.keys.toList()) }, fail) } ?: emptyList(),
+            windows = capability { ok, fail -> vehicle.getWindow().checkWindowPositionCapabilities({ _, m -> ok(m.keys.toList()) }, fail) }
                 ?: emptyList(),
             cruiseState = capability<Unit> { ok, fail -> driving.checkCruiseControlStateCapabilities({ ok(Unit) }, fail) } != null,
             cruiseTarget = capability<Unit> { ok, fail -> driving.checkCruiseControlTargetSpeedCapabilities({ ok(Unit) }, fail) } != null,

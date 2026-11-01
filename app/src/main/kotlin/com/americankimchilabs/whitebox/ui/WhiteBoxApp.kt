@@ -139,7 +139,7 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
     val libraryItems by (session.library?.items ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList<LibraryItem>()) }).collectAsState()
     val tier by (session.library?.tier ?: remember { kotlinx.coroutines.flow.MutableStateFlow(Entitlements.DEFAULT) }).collectAsState()
     val leftNotice by (session.library?.notices ?: remember { kotlinx.coroutines.flow.MutableSharedFlow<LibraryItem>() }).collectAsState(initial = null)
-    // The library shows what is kept: crash records, kept moments and extended ones (a seal the library has not seen yet too).
+    // The library shows what is kept: airbag crashes, kept moments and extended ones (a seal the library has not seen yet too).
     val capsules = remember(allCapsules, libraryItems) {
         val byId = libraryItems.associateBy { it.id }
         val now = System.currentTimeMillis()

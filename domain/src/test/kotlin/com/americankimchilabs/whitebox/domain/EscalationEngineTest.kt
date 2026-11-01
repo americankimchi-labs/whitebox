@@ -299,7 +299,7 @@ class EscalationEngineTest {
         assertEquals(CapsuleTrigger.DELTA_V, tr.seals.last().trigger)
         assertTrue(tr.prompts.isEmpty())
         tr.ramp(40_000, 20f)
-        assertTrue(tr.seals.none { it.final }) // a severe capsule stays open while driving on
+        assertTrue(tr.seals.none { it.final }) // a crash capsule stays open while driving on
     }
 
     @Test

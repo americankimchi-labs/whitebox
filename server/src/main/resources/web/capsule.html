@@ -288,13 +288,15 @@ function offerKeep(c, data) {
   const plan = me && me.plan;
   WB.show('keep-card');
   const clips = c.clips || [];
+  // A released record comes into the library when extended; extending never makes room, so not while it is full.
+  const full = !!plan && plan.libraryUsed >= plan.librarySlots;
   const clipLine = clips.length ? ` 저장한 블랙박스 영상은 ${dateOf(c.clipUntilMs)}까지 보관됩니다.` : '';
   const text = {
     SEVERE: `${c.trigger === 'TEST_AIRBAG' ? '시험용 에어백 신호로 만든 큰 사고 기록이라' : c.trigger === 'SERVER_SEAL' ? '충돌 뒤 차 신호가 끊긴 큰 사고 기록이라' : '에어백이 터진 큰 사고 기록이라'} ${dateOf(c.keptUntilMs)}까지 10년 동안 무료로 보관됩니다.${clipLine}`,
     KEPT: `${dateOf(c.keptUntilMs)}에 삭제됩니다 (사고 시점부터 30일 보관, ${daysLeft(c.keptUntilMs)}일 남음).${clipLine} 분쟁이 길어질 것 같으면 연장해 두세요.`,
     EXTENDED: `${dateOf(c.keptUntilMs)}까지 보관합니다 (연장함).${clipLine}`,
     LEFT: `보관함이 가득 차 이 기록이 보관함에서 빠졌습니다. ${dateOf(c.keptUntilMs)}에 삭제됩니다.${plan && plan.upgrades.length ? ' 그 전에 업그레이드하면 자리가 있는 만큼 다시 돌아옵니다.' : ' 그 전에 증거 파일을 내려받아 둘 수 있습니다.'}`,
-    RELEASED: '운전자가 보관하지 않겠다고 답한 기록입니다. 주행 기록 보관 기간이 지나면 삭제됩니다. 연장하면 보관됩니다.',
+    RELEASED: `운전자가 보관하지 않겠다고 답한 기록입니다. 주행 기록 보관 기간이 지나면 삭제됩니다. ${full ? '보관함이 가득 차 지금은 연장할 수 없습니다. 업그레이드하면 연장해 보관할 수 있습니다.' : '연장하면 보관됩니다.'}`,
     EXPIRED: '보관 기간이 지났습니다. 곧 삭제됩니다.',
   }[c.status] || '';
   WB.$('keep-text').innerHTML = esc(text);
@@ -302,10 +304,10 @@ function offerKeep(c, data) {
   const buttons = [];
   // A 큰 사고 stays ten years for free: only its clip can be extended. One that left a full library comes back only
   // with room (an upgrade); extending would not make room.
-  const extendable = c.status !== 'LEFT' && (!c.severe || clips.length);
+  const extendable = c.status !== 'LEFT' && !(c.status === 'RELEASED' && full) && (!c.severe || clips.length);
   if (extendable && plan) for (const x of plan.extensions) buttons.push(`<button data-years="${x.years}">${c.severe ? '영상 ' : ''}${x.years}년 연장 · ${won(x.priceWon)}</button>`);
   buttons.push('<button class="secondary" id="evidence">증거 파일 내려받기 (무료)</button>');
-  if (plan && (c.status === 'LEFT' || c.warn)) buttons.push(WB.upgrades(plan.upgrades));
+  if (plan && (c.status === 'LEFT' || c.warn || (c.status === 'RELEASED' && full))) buttons.push(WB.upgrades(plan.upgrades));
   WB.$('keep-actions').innerHTML = buttons.join('');
   WB.$('keep-actions').querySelectorAll('[data-years]').forEach((b) => b.onclick = async () => {
     const years = Number(b.dataset.years);
