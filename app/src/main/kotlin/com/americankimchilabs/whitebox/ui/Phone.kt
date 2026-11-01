@@ -53,13 +53,13 @@ fun PhoneTab(claim: ClaimClient?, webBase: String?, consent: Boolean, handoverOn
         when (val s = state) {
             is ClaimClient.State.Claimed -> {
                 Text(stringResource(R.string.phone_claimed, s.maskedPhone), style = MaterialTheme.typography.titleLarge)
-                Text(stringResource(R.string.phone_claimed_hint), style = MaterialTheme.typography.bodyLarge)
-                Button(onClick = { claim.request() }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.phone_connect_other)) }
+                Text(stringResource(R.string.phone_claimed_hint).bySentence(), style = MaterialTheme.typography.bodyLarge)
+                Button(contentPadding = BigPadding, onClick = { claim.request() }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.phone_connect_other)) }
             }
             is ClaimClient.State.TransferPending -> {
                 Text(stringResource(R.string.phone_transfer, s.maskedPhone), style = MaterialTheme.typography.titleLarge)
-                Text(stringResource(R.string.phone_transfer_hint), style = MaterialTheme.typography.bodyLarge)
-                Button(onClick = { claim.request() }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.phone_connect_other)) }
+                Text(stringResource(R.string.phone_transfer_hint).bySentence(), style = MaterialTheme.typography.bodyLarge)
+                Button(contentPadding = BigPadding, onClick = { claim.request() }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.phone_connect_other)) }
             }
             is ClaimClient.State.Waiting -> {
                 val url = "$webBase/claim#${s.code}.${s.secret}"
@@ -68,15 +68,15 @@ fun PhoneTab(claim: ClaimClient?, webBase: String?, consent: Boolean, handoverOn
                     Image(qr, contentDescription = stringResource(R.string.phone_qr), modifier = Modifier.size(320.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(stringResource(R.string.phone_scan), style = MaterialTheme.typography.titleLarge)
-                        Text(stringResource(R.string.phone_scan_hint), style = MaterialTheme.typography.bodyLarge)
+                        Text(stringResource(R.string.phone_scan_hint).bySentence(), style = MaterialTheme.typography.bodyLarge)
                         Text(url, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
             ClaimClient.State.NotConnected -> {
                 Text(stringResource(R.string.phone_intro), style = MaterialTheme.typography.titleLarge)
-                Text(stringResource(R.string.phone_intro_hint), style = MaterialTheme.typography.bodyLarge)
-                Button(onClick = { claim.request() }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.phone_connect)) }
+                Text(stringResource(R.string.phone_intro_hint).bySentence(), style = MaterialTheme.typography.bodyLarge)
+                Button(contentPadding = BigPadding, onClick = { claim.request() }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.phone_connect)) }
             }
         }
     }
@@ -91,7 +91,7 @@ private fun ConsentRow(consent: Boolean, onConsent: (Boolean) -> Unit) {
             stringResource(if (stopped) R.string.consent_stopped else if (consent) R.string.consent_row_on else R.string.consent_row_off),
             style = MaterialTheme.typography.bodyLarge,
         )
-        OutlinedButton(onClick = { stopped = consent; onConsent(!consent) }, modifier = Modifier.ccpFocus(CircleShape)) {
+        OutlinedButton(contentPadding = BigPadding, onClick = { stopped = consent; onConsent(!consent) }, modifier = Modifier.ccpFocus(CircleShape)) {
             Text(stringResource(if (consent) R.string.consent_stop else R.string.consent_start))
         }
     }

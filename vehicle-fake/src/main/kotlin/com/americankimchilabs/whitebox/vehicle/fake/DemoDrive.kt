@@ -144,7 +144,9 @@ object DemoDrive {
         speed(2_000, to = 0f)
         speed(12_000) // stillness → final seal
         now(VehicleSignal.Gear(GearPosition.PARK))
-        speed(3_000)
+        speed(500)
+        now(VehicleSignal.BrakePedal(false)) // in P the driver lets go of the brake
+        speed(2_500)
     }
 }
 

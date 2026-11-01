@@ -285,7 +285,7 @@ class MirrorServiceTest {
         assertTrue(s.send(Frame.Escrow("C1", 0, 28_333_334, SealedBox.seal(r.service.serverPublicKey(), minuteKey, SealedBox.INFO_SERVER))).isEmpty())
         assertTrue(s.send(Frame.Escrow("C1", 0, 28_333_335, "e1.x.y")).isEmpty())
         val keys = r.service.minuteKeys(s.stream!!, "C1")
-        assertEquals(listOf(Triple(0, 28_333_333L, java.util.Base64.getEncoder().encodeToString(minuteKey))), keys)
+        assertEquals(listOf(MirrorService.EscrowedMinute(0, 28_333_333L, java.util.Base64.getEncoder().encodeToString(minuteKey), null)), keys)
         assertTrue(r.service.minuteKeys(s.stream!!, "C2").isEmpty())
     }
 

@@ -128,5 +128,44 @@ const WB = (() => {
   /** One button per plan above the owner's ("플러스로 업그레이드", "프로로 업그레이드"); none on Pro. */
   const upgrades = (tiers, href = '/me#plan') => (tiers || []).map((t) => `<a class="button-like secondary" href="${href}">${TIER[t]}로 업그레이드</a>`).join('');
 
-  return { newPhoneKey, phoneKey, unwrap, unwrapAll, ownerKeys, ownerRoots, claimMac, checkCode, post, get, $, show, say, ago, when, day, clock, esc, params, mapLink, secure, b64, unb64, TIER, upgrades };
+  /** "a · b · c" with each part kept whole: a narrow screen wraps between parts, never inside one. */
+  const parts = (...xs) => xs.filter(Boolean).map((x) => `<span class="nw">${x}</span>`).join(' · ');
+
+  // Each sentence of a paragraph starts on its own line, as on the car: a sentence never begins at the end of
+  // another's line. Only a stop followed by a space and a word ends a sentence (0.3초 and 1.5 km stay whole). Logs and
+  // technical blocks keep their text as it is.
+  const SENTENCE = /([.?!])[ \t]+(?=[^\s\d])/;
+  // A sentence that ends a text node followed by more text (the next sentence in its own element) breaks there too.
+  const TAIL = /[.?!][ \t]+$/;
+  const SKIP = 'script,style,textarea,input,.log,.tech,code,pre,button,.nw,.badge,svg';
+  const tail = (n) => TAIL.test(n.nodeValue) && n.nextSibling && n.nextSibling.nodeName !== 'BR';
+  function bySentence(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => ((SENTENCE.test(n.nodeValue) || tail(n)) && !n.parentElement?.closest(SKIP) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
+    });
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (const n of nodes) {
+      const pieces = n.nodeValue.split(new RegExp(SENTENCE.source + '|$')).filter((x) => x !== undefined);
+      const frag = document.createDocumentFragment();
+      let text = '';
+      for (let i = 0; i < pieces.length; i++) {
+        text += pieces[i];
+        if (/^[.?!]$/.test(pieces[i]) && i < pieces.length - 1) { frag.append(text, document.createElement('br')); text = ''; }
+      }
+      const ends = tail(n);
+      frag.append(ends ? text.replace(/[ \t]+$/, '') : text);
+      if (ends) frag.append(document.createElement('br'));
+      n.replaceWith(frag);
+    }
+  }
+  if (typeof document !== 'undefined' && typeof MutationObserver !== 'undefined') {
+    const start = () => {
+      bySentence(document.body);
+      new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => (n.nodeType === 1 || n.nodeType === 3) && n.parentNode && bySentence(n.nodeType === 1 ? n : n.parentNode)))).observe(document.body, { childList: true, subtree: true });
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+  }
+
+  return { parts, newPhoneKey, phoneKey, unwrap, unwrapAll, ownerKeys, ownerRoots, claimMac, checkCode, post, get, $, show, say, ago, when, day, clock, esc, params, mapLink, secure, b64, unb64, TIER, upgrades };
 })();

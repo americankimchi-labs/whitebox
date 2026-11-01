@@ -224,7 +224,11 @@ class OutboxTest {
         val store = FileEventStore(dir, cipher = EpochRecordCipher(ring, wall))
         val seals = SealStore(dir)
         val channel = FakeChannel().apply { serverKey = server.public.encoded }
-        val outbox = Outbox(store, seals, channel, dir, minuteKey = { e, m -> ring.key(e)?.let { RecordCipher.minuteKey(it, m) } })
+        val outbox = Outbox(
+            store, seals, channel, dir,
+            minuteKey = { e, m -> ring.key(e)?.let { RecordCipher.minuteKey(it, m) } },
+            placeKey = { e, m -> ring.key(e)?.let { RecordCipher.placeKey(it, m) } },
+        )
         val recorder = Recorder(store, seals, JdkSigner(), clock, outbox::onSeal)
         outbox.start(backgroundScope, recorder)
         channel.connected.value = true
@@ -235,6 +239,7 @@ class OutboxTest {
         t += 10 * 60_000
         repeat(20) { t += 100; speed(60f) }
         recorder.record(ChainEntry.Signal(SignalSample(VehicleSignal.BrakePedal(true), clock.now())))
+        recorder.record(ChainEntry.Location(com.americankimchilabs.whitebox.domain.LocationFix(37.4979, 127.0276, 5f, 2, clock.now()))) // where it happens
         t += 100; speed(60f)
         t += 100; speed(35f) // crash-level drop (충돌): no keys yet, it is not a 큰 사고
         runCurrent()
@@ -246,13 +251,16 @@ class OutboxTest {
 
         val escrow = channel.sent.filterIsInstance<Frame.Escrow>()
         assertTrue(escrow.isNotEmpty())
-        val keys = escrow.associate { (it.epoch to it.minute) to SealedBox.open(server.private, it.sealed, SealedBox.INFO_ESCROW) }
-        val family = MinuteKeysCipher(keys)
+        val opened = escrow.associate { (it.epoch to it.minute) to SealedBox.open(server.private, it.sealed, SealedBox.INFO_ESCROW) }
+        // Each escrowed minute: its key, then its location key (a contact may need to know where the crash was).
+        assertTrue(opened.values.all { it.size == 64 })
+        val family = MinuteKeysCipher(opened.mapValues { it.value.copyOfRange(0, 32) }, opened.mapValues { it.value.copyOfRange(32, 64) })
         val capsule = recorder.capsules.value.last { it.final }.capsule
         // The crash opens with the escrowed keys alone...
         val crash = store.records(capsule.firstSeq, capsule.lastSeq).map { MirrorProtocol.Record.parse(it)!!.entry }
         assertTrue(crash.any { it.startsWith("S|SPEED") })
         crash.forEach { EntryCodec.decode(it, family) }
+        assertTrue(crash.any { it.startsWith("L|v4.") }) // the crash's place, opened above with its escrowed key
         // ...the everyday location before it does not.
         val before = MirrorProtocol.Record.parse(store.records(0, 0).single())!!.entry
         assertTrue(runCatching { EntryCodec.decode(before, family) }.exceptionOrNull() is LockedRecordException)

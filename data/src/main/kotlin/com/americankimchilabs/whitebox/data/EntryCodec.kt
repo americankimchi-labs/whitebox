@@ -52,7 +52,7 @@ object EntryCodec {
         }
         is ChainEntry.Location -> with(e.fix) {
             if (cipher == null) listOf("L", latitude, longitude, accuracyMeters ?: "-", gpsTimeMillis, ts(e.at))
-            else listOf("L", cipher.seal("$latitude;$longitude;${accuracyMeters ?: "-"};$gpsTimeMillis", "L|${ts(e.at)}"), ts(e.at))
+            else listOf("L", cipher.sealPlace("$latitude;$longitude;${accuracyMeters ?: "-"};$gpsTimeMillis", "L|${ts(e.at)}"), ts(e.at))
         }
         is ChainEntry.Recorder -> listOf("R", ts(e.at)) + recorder(e.event)
         is ChainEntry.Escalation -> listOf("E", ts(e.at)) + when (val v = e.event) {

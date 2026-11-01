@@ -28,6 +28,7 @@ fun dashboard(service: MirrorService, sms: DemoSmsSender? = null): String = """<
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>White Box 서버</title>
 <link rel="stylesheet" href="/wb.css">
 <style>
+body{word-break:keep-all;overflow-wrap:anywhere;text-wrap:pretty}
 main{max-width:1100px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
 .cars .card h2{display:flex;gap:8px;align-items:center}.history{max-height:220px;overflow:auto;padding-left:18px}.t{color:var(--muted);font-variant-numeric:tabular-nums}
 </style></head>

@@ -216,6 +216,8 @@ class WebVectorsTest {
                 com.americankimchilabs.whitebox.data.ClipFormat.encrypt(com.americankimchilabs.whitebox.data.ClipFormat.key(minuteKey, "carClip0001xyz"), plain, sealed)
                 obj("minuteKey" to b64.encodeToString(minuteKey), "clipId" to "carClip0001xyz", "sealed" to b64.encodeToString(sealed.readBytes()), "plain" to b64.encodeToString(plain.readBytes()))
             },
+            // Every line the car can speak: the phone's log must quote each one in words.
+            "voiceLines" to VoiceLine.entries.map { it.name },
             "chirp" to obj("sampleRate" to 48_000, "length" to Chirp.samples(48_000).size, "head" to Chirp.samples(48_000).take(400).map { it.toDouble() }),
         )
         val out = File("build/web-vectors").apply { mkdirs() }.resolve("vectors.json")

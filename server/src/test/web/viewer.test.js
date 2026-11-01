@@ -58,6 +58,25 @@ test('without a key the values stay locked, and only markers read', async () => 
   }
 });
 
+test('a minute key opens the driving, not where the car was; the location key opens the place', async () => {
+  const minutes = {}, places = {};
+  for (const line of V.lines) {
+    const entry = Codec.parseLine(line).entry;
+    for (const em of Codec.minutesOf([entry])) { const [e, m] = em.split(':'); minutes[em] = await Codec.minuteKey(roots[e], Number(m)); }
+    for (const em of Codec.placesOf([entry])) { const [e, m] = em.split(':'); places[em] = await Codec.placeKey(roots[e], Number(m)); }
+  }
+  assert.ok(Object.keys(places).length > 0, 'the vectors hold no location');
+  const qr = Codec.keyring({ minutes }); // what the car's QR carries
+  const owner = Codec.keyring({ minutes, places }); // what a link the owner made carries
+  for (let i = 0; i < V.lines.length; i++) {
+    const entry = Codec.parseLine(V.lines[i]).entry;
+    const a = await Codec.decode(entry, qr);
+    const b = await Codec.decode(entry, owner);
+    if (a.type === 'L') { assert.equal(a.locked, true, `record ${i}: the QR opened a place`); close(b, V.decoded[i], `record ${i}`); }
+    if (a.type === 'S') assert.notEqual(a.locked, true, `record ${i}: a signal stayed locked`);
+  }
+});
+
 test('the minute key is the one the car derives, and opens that minute only', async () => {
   const derived = await Codec.minuteKey(roots[V.minute.epoch], V.minute.minute);
   assert.equal(Buffer.from(derived).toString('base64'), V.minute.key);
@@ -104,6 +123,18 @@ test('the plain readings are the car\'s, sentence for sentence', async () => {
   const mine = Report.interpret(events, t.causeWall, t.context).map((r) => ({ text: r.text, note: r.note ?? null }));
   assert.deepEqual(mine, V.capsule.readings);
   assert.ok(mine.length >= 10, `only ${mine.length} readings`);
+});
+
+test('the log quotes the car\'s spoken words, never a code', async () => {
+  const Report = require(path.join(web, 'report.js'));
+  for (const line of V.voiceLines) assert.ok(Report.VOICE[line], `no words for ${line}`);
+  const at = (wall) => ({ ns: wall * 1e6, wall });
+  const events = [
+    { seq: 1, e: { type: 'A', event: 'SPOKE', line: 'KEEP_QUESTION', complete: true, at: at(1000) } },
+    { seq: 2, e: { type: 'A', event: 'SPOKE', line: 'KEPT', complete: false, at: at(2000) } },
+  ];
+  const spoken = Report.log(events, 0).map((r) => r[4]);
+  assert.deepEqual(spoken, ['“방금 상황 보관할까요?”', '“보관 완료” (중단됨)']);
 });
 
 test('a capsule checks: links, hashes, the car\'s seal and the server\'s anchor', async () => {

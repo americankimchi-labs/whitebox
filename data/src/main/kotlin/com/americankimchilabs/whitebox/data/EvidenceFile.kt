@@ -19,6 +19,7 @@ import java.util.Base64
  *     ANCHOR|<server line>          (one per anchor)
  *     SERVERKEY|<base64 SPKI>
  *     KEY|epoch|minute|<base64>     (one per minute)
+ *     PLACE|epoch|minute|<base64>   (a minute's location key; only when the owner shared it)
  *     RECORD|<chain line>           (the record before the capsule, then the capsule's)
  */
 object EvidenceFile {
@@ -54,6 +55,9 @@ object EvidenceFile {
         val records = body("RECORD").mapNotNull { MirrorProtocol.Record.parse(it) }.sortedBy { it.seq }
         val serverKey = body("SERVERKEY").firstOrNull()?.let { Base64.getDecoder().decode(it) }
         val keys = body("KEY").associate { l -> l.split("|").let { (it[0].toInt() to it[1].toLong()) to Base64.getDecoder().decode(it[2]) } }
+        // Location keys travel only in a file the owner made (or a contact's, for a big crash): without them the
+        // records still check, their places just stay closed.
+        val places = body("PLACE").associate { l -> l.split("|").let { (it[0].toInt() to it[1].toLong()) to Base64.getDecoder().decode(it[2]) } }
 
         // The chain: from the record before the capsule (if present) through its last, every hash and every link.
         val hashes = HashMap<Long, String>()
@@ -81,7 +85,7 @@ object EvidenceFile {
             serverKey != null && serverSigned(serverKey, line) && (head == null || hashes[head] == null || hashes[head] == f[f.size - 2])
         }
 
-        val cipher = MinuteKeysCipher(keys)
+        val cipher = MinuteKeysCipher(keys, places)
         val entries = records.filter { it.seq in first..last }.mapNotNull { r -> runCatching { r.seq to EntryCodec.decode(r.entry, cipher) }.getOrNull() }
         return Result(
             cap[1], cap[2], first, last, checked, problem == null, problem, sealsValid, seals.size, anchorsValid, anchorLines.size,

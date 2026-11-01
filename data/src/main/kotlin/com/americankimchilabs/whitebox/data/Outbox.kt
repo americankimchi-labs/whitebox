@@ -49,6 +49,11 @@ class Outbox(
     private val consent: () -> Boolean = { false },
     /** The key of one minute of the car's records ((epoch, minute) → key), for severe-capsule escrow; null: none. */
     private val minuteKey: ((Int, Long) -> ByteArray?)? = null,
+    /**
+     * The location key of one minute ([RecordCipher.placeKey]). A severe capsule's escrow carries it next to the minute
+     * key, so a registered contact can see where the crash happened; nothing else ever hands it out from the car.
+     */
+    private val placeKey: ((Int, Long) -> ByteArray?)? = null,
 ) {
     private val ackFile = File(dir, "mirror-acked")
     private val sealAckFile = File(dir, "mirror-seals")
@@ -129,7 +134,9 @@ class Outbox(
         for ((capsule, open) in openEscrow()) {
             for ((epoch, minute) in open) {
                 val k = derive(epoch, minute) ?: continue
-                runCatching { SealedBox.seal(key, k, SealedBox.INFO_ESCROW) }.getOrNull()?.let { send(Frame.Escrow(capsule, epoch, minute, it)) }
+                // The minute key, then (when there is one) the minute's location key: 32 or 64 bytes.
+                val both = placeKey?.invoke(epoch, minute)?.let { k + it } ?: k
+                runCatching { SealedBox.seal(key, both, SealedBox.INFO_ESCROW) }.getOrNull()?.let { send(Frame.Escrow(capsule, epoch, minute, it)) }
             }
         }
     }
@@ -153,7 +160,7 @@ class Outbox(
     private fun minutesOf(from: Long, to: Long): Set<Pair<Int, Long>> = store.records(from, to)
         .mapNotNull { Record.parse(it)?.entry }
         .flatMap { it.split("|") }
-        .filter { it.startsWith(RecordCipher.PREFIX_V3) }
+        .filter { it.startsWith(RecordCipher.PREFIX_V3) || it.startsWith(RecordCipher.PREFIX_V4) }
         .mapTo(sortedSetOf(compareBy({ it.first }, { it.second }))) { RecordCipher.epochOf(it) to RecordCipher.minuteOf(it)!! }
 
     private fun serverCopy(e: ChainEntry): String? {

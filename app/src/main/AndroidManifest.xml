@@ -17,7 +17,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Online/offline: the car assistant needs a network; offline, our own on-device bookmark listener runs. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- The cloud mirror (store-and-forward batches, burst frames, seals). -->

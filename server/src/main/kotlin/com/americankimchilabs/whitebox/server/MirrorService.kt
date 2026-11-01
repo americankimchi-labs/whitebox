@@ -160,7 +160,8 @@ class MirrorService(
                 }
                 is Frame.Escrow -> {
                     // Kept only if it opens with this server's key; released only to the owner or a registered contact.
-                    val minuteKey = runCatching { key.openEscrow(f.sealed) }.getOrNull()?.takeIf { it.size == 32 } ?: return emptyList()
+                    // A minute key, or a minute key followed by that minute's location key.
+                    val minuteKey = runCatching { key.openEscrow(f.sealed) }.getOrNull()?.takeIf { it.size == 32 || it.size == 64 } ?: return emptyList()
                     // One line per capsule and minute: a key resent before its acknowledgement arrived is not stored again.
                     val held = store.log(s, ESCROW).any { it.startsWith("${f.capsuleId}|${f.epoch}|${f.minute}|") }
                     if (!held && store.appendLog(s, ESCROW, "${f.capsuleId}|${f.epoch}|${f.minute}|${f.sealed}")) {
@@ -461,11 +462,20 @@ class MirrorService(
         return n
     }
 
-    /** The minute keys the car handed over for a severe capsule, opened: (epoch, minute, base64 key). */
-    fun minuteKeys(stream: StreamId, capsuleId: String): List<Triple<Int, Long, String>> =
+    /** One escrowed minute of a severe capsule: its key and, when the car sent it, its location key (base64). */
+    data class EscrowedMinute(val epoch: Int, val minute: Long, val key: String, val place: String?)
+
+    /** The minute keys (and location keys) the car handed over for a severe capsule, opened. */
+    fun minuteKeys(stream: StreamId, capsuleId: String): List<EscrowedMinute> =
         store.log(stream, ESCROW).map { it.split("|", limit = 4) }.filter { it[0] == capsuleId }
-            .mapNotNull { f -> runCatching { Triple(f[1].toInt(), f[2].toLong(), Base64.getEncoder().encodeToString(key.openEscrow(f[3]))) }.getOrNull() }
-            .distinctBy { it.first to it.second }
+            .mapNotNull { f ->
+                runCatching {
+                    val both = key.openEscrow(f[3])
+                    val b64 = Base64.getEncoder()
+                    EscrowedMinute(f[1].toInt(), f[2].toLong(), b64.encodeToString(both.copyOfRange(0, 32)), if (both.size == 64) b64.encodeToString(both.copyOfRange(32, 64)) else null)
+                }.getOrNull()
+            }
+            .distinctBy { it.epoch to it.minute }
 
     /** Whether [code] (from a capsule's QR link) is a live share of [capsuleId]. */
     fun shareValid(stream: StreamId, capsuleId: String, code: String): Boolean {

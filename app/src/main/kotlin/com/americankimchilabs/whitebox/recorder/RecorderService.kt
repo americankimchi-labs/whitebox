@@ -116,6 +116,8 @@ class RecorderService : LifecycleService() {
 
     private fun minuteKey(epoch: Int, minute: Long): ByteArray? = keyRing.key(epoch)?.let { RecordCipher.minuteKey(it, minute) }
 
+    private fun placeKey(epoch: Int, minute: Long): ByteArray? = keyRing.key(epoch)?.let { RecordCipher.placeKey(it, minute) }
+
     /**
      * Where the phone pages live: the mirror's own address over http(s). The emulator reaches its host computer as
      * 10.0.2.2, but a browser on that computer knows it as localhost.
@@ -202,7 +204,7 @@ class RecorderService : LifecycleService() {
         val url = if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_MIRROR, MIRROR_DEFAULT) == MIRROR_LOCAL) LOCAL_MIRROR_URL else BuildConfig.MIRROR_URL
         val channel = url.takeIf { it.isNotEmpty() }?.let { WebSocketMirrorChannel(it, stream, AppGraph.signer) }
         if (channel == null) Log.i(TAG, "no mirror configured; recording locally only") else Log.i(TAG, "mirror: $url")
-        val outbox = channel?.let { Outbox(store, seals, it, dir, consent = { DataConsent.agreed(this) }, minuteKey = ::minuteKey) }
+        val outbox = channel?.let { Outbox(store, seals, it, dir, consent = { DataConsent.agreed(this) }, minuteKey = ::minuteKey, placeKey = ::placeKey) }
         // A built-in camera's clips would be attached here (CarClips with HttpClipUpload, Plus and Pro): no head unit
         // gives apps camera access today, so there is no CameraClipSource to give it.
         val recorder = Recorder(store, seals, AppGraph.signer, AndroidClock) { outbox?.onSeal(it) }

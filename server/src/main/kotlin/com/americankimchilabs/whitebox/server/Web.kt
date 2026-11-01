@@ -393,7 +393,7 @@ fun Route.phoneRoutes(service: MirrorService, identity: Identity) {
                 "records" to service.recordLines(stream, maxOf(0, c.firstSeq - 1), c.lastSeq),
                 "anchors" to service.anchorsCovering(stream, c.lastSeq),
                 "serverKey" to java.util.Base64.getEncoder().encodeToString(service.serverPublicKey()),
-                "keys" to keys.map { (e, m, k) -> obj("epoch" to e, "minute" to m, "key" to k) },
+                "keys" to keys.map { obj("epoch" to it.epoch, "minute" to it.minute, "key" to it.key, "place" to it.place) },
                 "copies" to if (c.attestation != null && (access.contact != null || q["keys"] == "1")) service.signalCopies(stream, c.firstSeq, c.lastSeq).map { (seq, e) -> obj("seq" to seq, "entry" to e) } else emptyList<Json>(),
             ),
         )

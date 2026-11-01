@@ -9,6 +9,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -90,7 +91,7 @@ fun HandoverBar(session: ActiveSession, phase: HandoverPhase, since: Long, onOpe
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     when (phase) {
-        HandoverPhase.OFF -> OutlinedButton(onClick = onOpen, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.handover_button)) }
+        HandoverPhase.OFF -> Unit // the button sits at the end of the status header (HandoverButton)
         else -> Row(
             Modifier.fillMaxWidth().background(HandoverColor, RoundedCornerShape(8.dp)).padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -103,12 +104,20 @@ fun HandoverBar(session: ActiveSession, phase: HandoverPhase, since: Long, onOpe
             }
             Text(text, color = Color.White, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             if (phase == HandoverPhase.ARMED) {
-                OutlinedButton(onClick = { openMaps(context) }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.handover_set_destination), color = Color.White) }
-                OutlinedButton(onClick = { scope.launch(Dispatchers.IO) { handover.cancelOnCar() } }, modifier = Modifier.ccpFocus(CircleShape)) {
+                OutlinedButton(contentPadding = BigPadding, onClick = { openMaps(context) }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.handover_set_destination), color = Color.White) }
+                OutlinedButton(contentPadding = BigPadding, onClick = { scope.launch(Dispatchers.IO) { handover.cancelOnCar() } }, modifier = Modifier.ccpFocus(CircleShape)) {
                     Text(stringResource(R.string.handover_cancel), color = Color.White)
                 }
             }
         }
+    }
+}
+
+/** Opens [HandoverSheet]; at the right end of the status header while parked and handover mode is off. */
+@Composable
+fun HandoverButton(onOpen: () -> Unit) {
+    OutlinedButton(onClick = onOpen, contentPadding = PaddingValues(horizontal = 28.dp, vertical = 12.dp), modifier = Modifier.ccpFocus(CircleShape)) {
+        Text(stringResource(R.string.handover_button), style = MaterialTheme.typography.titleMedium)
     }
 }
 
@@ -120,21 +129,21 @@ fun HandoverSheet(session: ActiveSession, onClose: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(stringResource(R.string.handover_title), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        listOf(R.string.handover_what, R.string.handover_rules, R.string.handover_end, R.string.handover_destination)
-            .forEach { Text("• " + stringResource(it), style = MaterialTheme.typography.bodyLarge) }
+        listOf(R.string.handover_what, R.string.handover_share, R.string.handover_rules, R.string.handover_end, R.string.handover_end_lock, R.string.handover_destination)
+            .forEach { Bullet(stringResource(it)) }
         if (!handover.allowed()) {
             // Not in the owner's plan: said plainly, with where to change it; no sales button on the car.
             Text(stringResource(R.string.handover_plan_needed), style = MaterialTheme.typography.titleMedium, color = HandoverColor)
-            Text(stringResource(R.string.handover_plan_phone), style = MaterialTheme.typography.bodyLarge, color = Color.Gray)
-            OutlinedButton(onClick = onClose, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.handover_close)) }
+            Text(stringResource(R.string.handover_plan_phone).bySentence(), style = MaterialTheme.typography.bodyLarge, color = Color.Gray)
+            OutlinedButton(contentPadding = BigPadding, onClick = onClose, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.handover_close)) }
             return@Column
         }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Button(onClick = { scope.launch(Dispatchers.IO) { handover.armOnCar() }; onClose() }, modifier = Modifier.ccpFocus(CircleShape)) {
+            Button(contentPadding = BigPadding, onClick = { scope.launch(Dispatchers.IO) { handover.armOnCar() }; onClose() }, modifier = Modifier.ccpFocus(CircleShape)) {
                 Text(stringResource(R.string.handover_turn_on), style = MaterialTheme.typography.titleMedium)
             }
-            OutlinedButton(onClick = { openMaps(context) }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.handover_set_destination)) }
-            OutlinedButton(onClick = onClose, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.handover_close)) }
+            OutlinedButton(contentPadding = BigPadding, onClick = { openMaps(context) }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.handover_set_destination)) }
+            OutlinedButton(contentPadding = BigPadding, onClick = onClose, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.handover_close)) }
         }
     }
 }
@@ -150,7 +159,7 @@ fun TripReport(labels: Labels, seal: CapsuleSeal, session: ActiveSession, onBack
     }
     Column(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(onClick = onBack, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.packet_back)) }
+            BackButton(onBack)
             Text("  " + stringResource(R.string.trigger_handover) + if (seal.final) "" else stringResource(R.string.handover_report_provisional), style = MaterialTheme.typography.headlineSmall)
         }
         val t = trip ?: run { Text(stringResource(R.string.packet_verifying), modifier = Modifier.padding(16.dp)); return@Column }
@@ -163,7 +172,7 @@ fun TripReport(labels: Labels, seal: CapsuleSeal, session: ActiveSession, onBack
                 t.armedBy?.let { ReportRow(stringResource(R.string.handover_report_armed), labels.source(it)) }
                 t.ended?.let { ReportRow(stringResource(R.string.handover_report_ended), labels.endReason(it.reason)) }
                 Text(stringResource(R.string.handover_report_events, t.events.size), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 12.dp))
-                if (t.events.isEmpty()) Text(stringResource(R.string.handover_report_none), style = MaterialTheme.typography.bodyLarge)
+                if (t.events.isEmpty()) Text(stringResource(R.string.handover_report_none).bySentence(), style = MaterialTheme.typography.bodyLarge)
                 t.events.forEach { (wall, e) -> Text("${labels.time(wall)}  ${labels.handoverEvent(e)}", style = MaterialTheme.typography.bodyLarge) }
                 SpeedOverTrip(t)
             }
@@ -171,9 +180,9 @@ fun TripReport(labels: Labels, seal: CapsuleSeal, session: ActiveSession, onBack
                 val l = link
                 if (l != null) {
                     Image(remember(l) { qr(l, 440) }, contentDescription = stringResource(R.string.handover_report_qr), modifier = Modifier.size(220.dp))
-                    Text(stringResource(R.string.handover_report_qr), style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.handover_report_qr).bySentence(), style = MaterialTheme.typography.bodyMedium)
                 } else {
-                    Text(stringResource(R.string.packet_qr_none), style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.packet_qr_none).bySentence(), style = MaterialTheme.typography.bodyMedium)
                 }
             }
         }

@@ -79,6 +79,29 @@ class CryptoTest {
     }
 
     @Test
+    fun aLocationOpensOnlyWithItsOwnKeyNotWithTheMinuteKey() {
+        val ring = MemoryKeyRing()
+        val cipher = EpochRecordCipher(ring, wallMillis = { 1_800_000_000_000L })
+        val place = EntryCodec.encode(ChainEntry.Location(com.americankimchilabs.whitebox.domain.LocationFix(37.4979, 127.0276, 5f, 1, ts(1))), cipher)
+        val speed = EntryCodec.encode(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(10f), ts(1))), cipher)
+        assertTrue(place.split("|")[1].startsWith("v4.0.30000000."))
+        val minute = 30_000_000L
+        val root = ring.key(0)!!
+        // Someone given the minute's key (the car's QR, a contact without the location key) reads the driving, not the place.
+        val minuteOnly = MinuteKeysCipher(mapOf((0 to minute) to RecordCipher.minuteKey(root, minute)))
+        assertEquals(VehicleSignal.Speed(10f), (EntryCodec.decode(speed, minuteOnly) as ChainEntry.Signal).sample.signal)
+        assertTrue(runCatching { EntryCodec.decode(place, minuteOnly) }.exceptionOrNull() is LockedRecordException)
+        // The owner, or someone the owner gave the location key, reads the place too.
+        val withPlace = MinuteKeysCipher(mapOf((0 to minute) to RecordCipher.minuteKey(root, minute)), mapOf((0 to minute) to RecordCipher.placeKey(root, minute)))
+        assertEquals(37.4979, (EntryCodec.decode(place, withPlace) as ChainEntry.Location).fix.latitude, 1e-9)
+        assertEquals(127.0276, (EntryCodec.decode(place, cipher) as ChainEntry.Location).fix.longitude, 1e-9)
+        // The location key is not the minute key, and does not open the minute's driving records.
+        assertTrue(!RecordCipher.placeKey(root, minute).contentEquals(RecordCipher.minuteKey(root, minute)))
+        val placeOnly = MinuteKeysCipher(emptyMap(), mapOf((0 to minute) to RecordCipher.placeKey(root, minute)))
+        assertTrue(runCatching { EntryCodec.decode(speed, placeOnly) }.exceptionOrNull() is LockedRecordException)
+    }
+
+    @Test
     fun anEpochCipherReadsEveryEpochItHoldsAndWritesTheNewest() {
         val ring = MemoryKeyRing()
         val cipher = EpochRecordCipher(ring)

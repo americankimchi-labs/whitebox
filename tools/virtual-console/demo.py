@@ -44,6 +44,10 @@ def controls(**kw):
 def gear(g):
     put(f"/vehicle/gear?gear={g}")
     say(f"gear {g}")
+    if g == "Park" and state.get("brake", 0) > 0:
+        # In P a driver lets go of the brake; a held pedal would show 밟음 on a parked car.
+        time.sleep(0.5)
+        controls(brake=0)
 
 
 def turn(mode):

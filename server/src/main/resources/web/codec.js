@@ -19,11 +19,13 @@
 
   async function sha256Hex(text) { return hex(await subtle.digest('SHA-256', enc.encode(text))); }
 
-  const isSealed = (s) => /^v[123]\./.test(s || '');
+  const isSealed = (s) => /^v[1234]\./.test(s || '');
 
   /** The key epoch and minute an encrypted field names, and its body. */
   function fieldInfo(s) {
     if (s.startsWith('v3.')) { const [, e, m, ...b] = s.split('.'); return { epoch: Number(e), minute: Number(m), body: b.join('.') }; }
+    // A location, under the minute's location key.
+    if (s.startsWith('v4.')) { const [, e, m, ...b] = s.split('.'); return { epoch: Number(e), minute: Number(m), place: true, body: b.join('.') }; }
     if (s.startsWith('v2.')) { const [, e, ...b] = s.split('.'); return { epoch: Number(e), minute: null, body: b.join('.') }; }
     return { epoch: 0, minute: null, body: s.slice(3) };
   }
@@ -34,17 +36,26 @@
     return new Uint8Array(await subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: enc.encode(`whitebox-minute-v1|${minute}`) }, k, 256));
   }
 
+  /** The location key of one minute: HKDF-SHA256 of the root key, info `whitebox-place-v1|<minute>`. */
+  async function placeKey(rootKey, minute) {
+    const k = await subtle.importKey('raw', rootKey, 'HKDF', false, ['deriveBits']);
+    return new Uint8Array(await subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: enc.encode(`whitebox-place-v1|${minute}`) }, k, 256));
+  }
+
   /**
    * The keys a reader holds: [roots] epoch → root key (the owner), and/or [minutes] "epoch:minute" → key (a crash's
-   * keys for the family). Imported AES keys are cached per field key.
+   * keys for the family, a share link's), and [places] "epoch:minute" → location key (only where the owner shared
+   * where the car was). Imported AES keys are cached per field key.
    */
-  function keyring({ roots = {}, minutes = {} } = {}) {
+  function keyring({ roots = {}, minutes = {}, places = {} } = {}) {
     const cache = new Map();
     async function aesFor(info) {
-      const id = `${info.epoch}:${info.minute}`;
+      const id = `${info.place ? 'p' : 'm'}:${info.epoch}:${info.minute}`;
       if (cache.has(id)) return cache.get(id);
       let raw = null;
-      if (info.minute != null) raw = minutes[`${info.epoch}:${info.minute}`] || (roots[info.epoch] && await minuteKey(roots[info.epoch], info.minute));
+      const at = `${info.epoch}:${info.minute}`;
+      if (info.place) raw = places[at] || (roots[info.epoch] && await placeKey(roots[info.epoch], info.minute));
+      else if (info.minute != null) raw = minutes[at] || (roots[info.epoch] && await minuteKey(roots[info.epoch], info.minute));
       else raw = roots[info.epoch] || null;
       const key = raw ? await subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']) : null;
       cache.set(id, key);
@@ -175,6 +186,13 @@
     return [...out];
   }
 
-  const WBCodec = { parseLine, sha256Hex, isSealed, fieldInfo, minuteKey, keyring, openField, decode, minutesOf, unb64, hex };
+  /** The minutes ("epoch:minute") whose locations the records were written under. */
+  function placesOf(entries) {
+    const out = new Set();
+    for (const e of entries) for (const field of e.split('|')) if (field.startsWith('v4.')) { const i = fieldInfo(field); out.add(`${i.epoch}:${i.minute}`); }
+    return [...out];
+  }
+
+  const WBCodec = { parseLine, sha256Hex, isSealed, fieldInfo, minuteKey, placeKey, keyring, openField, decode, minutesOf, placesOf, unb64, hex };
   if (typeof module === 'object' && module.exports) module.exports = WBCodec; else root.WBCodec = WBCodec;
 })(typeof self !== 'undefined' ? self : globalThis);

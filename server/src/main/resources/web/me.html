@@ -76,15 +76,15 @@ function keptFor(c) {
 function capsuleRow(dev, stream, c) {
   const name = WBPacket.TRIGGER[c.trigger] || c.trigger;
   const tag = c.severe ? '<span class="badge bad">큰 사고</span>' : c.crash ? '<span class="badge bad">충돌</span>' : c.trigger === 'HANDOVER' ? '<span class="badge">대리 운전</span>' : '<span class="badge warn">위험 순간</span>';
-  const answer = c.answer ? ` · ${ANSWER[c.answer]}` : '';
-  const kept = c.status ? ` · <span class="${c.warn ? 'warn' : ''}">${esc(keptFor(c))}</span>` : '';
-  return `<a class="row" href="/capsule#d=${dev}&s=${stream}&id=${encodeURIComponent(c.id)}"><span>${esc(name)}<br><span class="sub">${WB.when(c.sealedAtMs)}${answer}${kept}</span></span>${tag}</a>`;
+  const answer = c.answer ? ANSWER[c.answer] : null;
+  const kept = c.status ? `<span class="${c.warn ? 'warn' : ''}">${esc(keptFor(c))}</span>` : null;
+  return `<a class="row" href="/capsule#d=${dev}&s=${stream}&id=${encodeURIComponent(c.id)}"><span>${esc(name)}<br><span class="sub">${WB.parts(WB.when(c.sealedAtMs), answer, kept)}</span></span>${tag}</a>`;
 }
 const TIER = WB.TIER;
 /** The plan: what it includes, how much is used, and the three plans side by side to change. */
 function planCard(plan) {
-  const row = (t) => `<tr><td><b>${TIER[t.tier]}</b><br><small>${t.monthlyWon ? `월 ${t.monthlyWon.toLocaleString('ko-KR')}원` : '무료'}</small></td>
-    <td>주행 기록 ${t.historyDays}일 · 보관 ${t.librarySlots}개 · 영상 ${t.clipSlots}개${t.handover ? ' · 대리 운전' : ''}${t.accidentReport ? ' · 사고 경위서' : ''}</td>
+  const row = (t) => `<tr><td><b>${TIER[t.tier]}</b><br><small class="nw">${t.monthlyWon ? `월 ${t.monthlyWon.toLocaleString('ko-KR')}원` : '무료'}</small></td>
+    <td>${WB.parts(`주행 기록 ${t.historyDays}일`, `보관 ${t.librarySlots}개`, `영상 ${t.clipSlots}개`, t.handover && '대리 운전', t.accidentReport && '사고 경위서')}</td>
     <td>${t.tier === plan.tier ? '<span class="badge">지금</span>' : `<button class="${t.monthlyWon > plan.monthlyWon ? '' : 'secondary'}" data-tier="${t.tier}">${t.monthlyWon > plan.monthlyWon ? `${TIER[t.tier]}로 업그레이드` : '바꾸기'}</button>`}</td></tr>`;
   const shrinking = plan.previous && plan.historyDays > plan.planHistoryDays
     ? `<p class="warn">요금제를 바꿔 주행 기록 보관 기간이 ${plan.planHistoryDays}일로 줄어듭니다. ${dateOf(plan.changedAtMs + 7 * 86400000)}까지는 지금처럼 ${plan.historyDays}일을 보관합니다. 이미 보관한 기록과 영상은 각자의 기간까지 그대로 남습니다.</p>` : '';

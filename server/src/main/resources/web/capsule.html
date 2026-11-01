@@ -99,12 +99,12 @@ table.log{font-size:12px;font-variant-numeric:tabular-nums}table.log td{padding:
 <script src="/wb.js"></script>
 <script>
 const esc = WB.esc;
-const { d, s = 'live', id, t: shareCode, k: shareKeys } = WB.params();
+const { d, s = 'live', id, t: shareCode, k: shareKeys, p: sharePlaces } = WB.params();
 const KIND = (c) => c.trigger === 'MANUAL' ? '운전자가 음성으로 보관한 순간'
   : c.trigger === 'TEST_AIRBAG' ? '큰 사고 (시험용 에어백 신호 · 실제 사고 아님)'
   : c.trigger === 'SERVER_SEAL' ? '큰 사고 (충돌 뒤 차 신호가 끊겨 서버가 봉인)'
   : c.severe ? '큰 사고 (에어백 전개)' : c.crash ? '충돌 (충돌 수준의 충격)' : '위험 순간 (아찔했던 상황)';
-const ANSWER = { kept: '운전자가 "보관"이라고 답했습니다.', released: '운전자가 보관하지 않겠다고 답했습니다. 기록 자체는 봉인된 채 남아 있습니다.', unanswered: '운전자가 대답하지 않아 보관되었습니다.' };
+const ANSWER = { kept: '운전자가 보관하겠다고 답했습니다.', released: '운전자가 보관하지 않겠다고 답했습니다. 기록 자체는 봉인된 채 남아 있습니다.', unanswered: '운전자가 대답하지 않아 보관되었습니다.' };
 
 async function load() {
   if (!d || !id) return deny();
@@ -119,7 +119,9 @@ async function load() {
   if (ring.isEmpty() && data.capsule.severe && !data.keys.length) data = (await WB.get(q + '&keys=1')) || data;
   if (data.keys.length) {
     minuteMap = Object.fromEntries(data.keys.map((k) => [`${k.epoch}:${k.minute}`, WB.unb64(k.key)]));
-    ring = WBCodec.keyring({ minutes: minuteMap });
+    // A big crash's escrow carries where it happened too: an emergency contact may need to know the place.
+    placeMap = Object.fromEntries(data.keys.filter((k) => k.place).map((k) => [`${k.epoch}:${k.minute}`, WB.unb64(k.place)]));
+    ring = WBCodec.keyring({ minutes: minuteMap, places: placeMap });
   }
   await show(data, ring);
 }
@@ -127,9 +129,22 @@ async function load() {
 let me = null;
 /** Minute keys this page was given (a crash's escrowed keys, or a share link's); the owner derives them instead. */
 let minuteMap = {};
+/** Location keys this page was given: only from the owner (a share link they made) or a big crash's escrow. */
+let placeMap = {};
 async function minuteBytes(epoch, minute) {
   if (ownerRoots[epoch]) return WBCodec.minuteKey(ownerRoots[epoch], Number(minute));
   return minuteMap[`${epoch}:${minute}`] || null;
+}
+async function placeBytes(epoch, minute) {
+  if (ownerRoots[epoch]) return WBCodec.placeKey(ownerRoots[epoch], Number(minute));
+  return placeMap[`${epoch}:${minute}`] || null;
+}
+/** Keys as a share link carries them: `epoch.minute.key` (URL-safe base64), comma-separated. */
+const linkKey = (e, m, k) => `${e}.${m}.${WB.b64(k).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
+function fromLink(list) {
+  const out = {};
+  for (const k of (list || '').split(',').filter(Boolean)) { const [e, m, key] = k.split('.'); out[`${e}:${m}`] = WB.unb64(key); }
+  return out;
 }
 /** The key of the capsule's first minute: what its saved clip's key is derived from. */
 async function clipBase(c, data) {
@@ -179,14 +194,11 @@ async function loadShared() {
   let data;
   try { data = await WB.post('/v1/shared', { device: d, stream: s, id, t: shareCode }); }
   catch (e) { WB.show('loading', false); WB.show('denied'); WB.$('denied').innerHTML = `<h2>열 수 없는 QR입니다</h2><p>${esc(e.message)}</p>`; return; }
-  const minutes = {};
-  for (const k of (shareKeys || '').split(',').filter(Boolean)) {
-    const [e, m, key] = k.split('.');
-    minutes[`${e}:${m}`] = WB.unb64(key);
-  }
-  minuteMap = minutes;
+  // The car's QR carries the minutes' keys only; a link the owner made on the phone carries the locations' too.
+  minuteMap = fromLink(shareKeys);
+  placeMap = fromLink(sharePlaces);
   WB.show('shared-note');
-  await show(data, WBCodec.keyring({ minutes }));
+  await show(data, WBCodec.keyring({ minutes: minuteMap, places: placeMap }));
 }
 
 let ownerRoots = {};
@@ -206,12 +218,18 @@ function offerShare(c, data) {
       for (const em of WBCodec.minutesOf(entries)) {
         const [e, m] = em.split(':');
         if (!ownerRoots[e]) continue;
-        const k = await WBCodec.minuteKey(ownerRoots[e], Number(m));
-        keys.push(`${e}.${m}.${WB.b64(k).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`);
+        keys.push(linkKey(e, m, await WBCodec.minuteKey(ownerRoots[e], Number(m))));
+      }
+      // The owner shares where it happened as well (the car's own QR never does).
+      const places = [];
+      for (const em of WBCodec.placesOf(entries)) {
+        const [e, m] = em.split(':');
+        if (!ownerRoots[e]) continue;
+        places.push(linkKey(e, m, await WBCodec.placeKey(ownerRoots[e], Number(m))));
       }
       const code = WB.b64(crypto.getRandomValues(new Uint8Array(16))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
       await WB.post('/v1/share', { device: d, stream: s, id: c.id, hash: await WBCodec.sha256Hex(code) });
-      const link = `${location.origin}/capsule#d=${d}&s=${s}&id=${encodeURIComponent(c.id)}&t=${code}&k=${keys.join(',')}`;
+      const link = `${location.origin}/capsule#d=${d}&s=${s}&id=${encodeURIComponent(c.id)}&t=${code}&k=${keys.join(',')}${places.length ? `&p=${places.join(',')}` : ''}`;
       // Shared through the phone's share sheet, or copied; either may be unavailable, the link is shown regardless.
       let copied = false;
       if (navigator.share) { try { await navigator.share({ title: 'White Box', url: link }); } catch (e) { /* closed */ } }
@@ -343,6 +361,12 @@ async function downloadEvidence(c, data) {
     const [e, m] = em.split(':');
     const k = await minuteBytes(e, m);
     if (k) keys.push(`KEY|${e}|${m}|${WB.b64(k)}`);
+  }
+  // Location keys only where this phone holds them (the owner, or a link/escrow that carried them).
+  for (const em of WBCodec.placesOf(entries)) {
+    const [e, m] = em.split(':');
+    const k = await placeBytes(e, m);
+    if (k) keys.push(`PLACE|${e}|${m}|${WB.b64(k)}`);
   }
   const lines = [
     'WHITEBOX-EVIDENCE|1',
@@ -494,6 +518,8 @@ function renderReport(c, data, events, t, v, trigger) {
 }
 
 /** Detections whose measured value is a speed change (the car shows "before → after" for these). */
+/** The span each speed change was measured over, as the car's packet says it. */
+const WINDOW = { DELTA_V: '0.3초 만에', SHORT_DELTA_V: '0.2초 만에', BRAKED_SPIKE: '0.1초 만에', REAR_SHOVE: '0.2초 만에', HARD_BRAKE: '0.5초 만에', BRAKE_SPEED_RISE: '브레이크를 밟은 3초 동안', BRAKE_NO_DECEL: '브레이크를 밟은 3초 동안', LURCH: '출발 1초 만에' };
 const DELTA_KMH = ['DELTA_V', 'SHORT_DELTA_V', 'BRAKED_SPIKE', 'REAR_SHOVE', 'HARD_BRAKE', 'BRAKE_SPEED_RISE', 'BRAKE_NO_DECEL', 'ALERT_RESOLVED', 'LURCH'];
 
 function render(c, data, upToCause, events, t, v, trigger) {
@@ -507,12 +533,20 @@ function render(c, data, upToCause, events, t, v, trigger) {
   // before it is the speed then minus the measured change.
   const places = upToCause.filter((x) => x.e.type === 'L' && !x.e.locked);
   const place = places[places.length - 1];
-  facts.push(['위치', place ? `<a href="${WB.mapLink(place.e.lat, place.e.lon)}" target="_blank" rel="noopener">지도에서 보기</a> <small>(±${Math.round(place.e.acc || 0)} m)</small>` : '기록 없음']);
+  // A location that did not open: it was recorded, but only the owner decides who sees where the car was.
+  const placeHidden = !place && upToCause.some((x) => x.e.type === 'L' && x.e.locked);
+  facts.push(['위치', place ? `<a href="${WB.mapLink(place.e.lat, place.e.lon)}" target="_blank" rel="noopener">지도에서 보기</a> <small>(±${Math.round(place.e.acc || 0)} m)</small>` : placeHidden ? '차주만 볼 수 있습니다' : '기록 없음']);
   const speeds = upToCause.filter((x) => x.e.type === 'S' && x.e.kind === 'SPEED' && !x.e.locked);
   const after = speeds.length ? speeds[speeds.length - 1].e.value * 3.6 : null;
   if (after != null) {
+    // A speed change when that is what was detected; otherwise the speed at the detection and, for scale, 10 s before.
     const dv = trigger && DELTA_KMH.includes(trigger.e.trigger) ? trigger.e.measured : null;
-    facts.push(['속도', dv != null ? `${(after - dv).toFixed(0)} → ${after.toFixed(0)} km/h <small>(속도 변화 ${dv > 0 ? '+' : ''}${dv.toFixed(1)} km/h)</small>` : `${after.toFixed(0)} km/h`]);
+    const earlier = speeds.filter((x) => x.e.at.wall <= causeWall - 10000);
+    const ten = earlier.length ? earlier[earlier.length - 1].e.value * 3.6 : null;
+    const w = WINDOW[trigger?.e.trigger] ? WINDOW[trigger.e.trigger] + ' ' : '';
+    facts.push(['속도', dv != null
+      ? `시속 ${(after - dv).toFixed(0)} km → ${after.toFixed(0)} km <small>(${w}${Math.abs(dv).toFixed(0)} km ${dv < 0 ? '줄어듦' : '늘어남'})</small>`
+      : `감지 순간 시속 ${after.toFixed(0)} km${ten != null && Math.abs(ten - after) >= 1 ? ` <small>(10초 전 시속 ${ten.toFixed(0)} km)</small>` : ''}`]);
   }
   if (c.answer) facts.push(['운전자의 대답', ANSWER[c.answer]]);
   WB.$('facts').innerHTML = facts.map(([k, val]) => `<tr><td>${k}</td><td>${val}</td></tr>`).join('');

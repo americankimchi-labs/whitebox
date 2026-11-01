@@ -70,6 +70,11 @@ private class Packet(
     /** Speed before and after the trigger's measured change: post = speed at the cause sample, pre = post − ΔV. */
     val speedBefore: Float?,
     val speedAfter: Float?,
+    /** The speed 10 s before the detection (shown when the trigger is not itself a speed change). */
+    val speedTenBefore: Float?,
+    /** How far the kept records reach before and after the detection, in ms. */
+    val keptBeforeMs: Long,
+    val keptAfterMs: Long,
     val state: LiveState,
     val location: LocationFix?,
     val timeline: EvidenceTimeline,
@@ -92,12 +97,18 @@ private fun buildPacket(seal: CapsuleSeal, session: ActiveSession): Packet {
     var state = LiveState()
     upToCause.forEach { state = state.with(it.entry) }
     val after = state.kmh
+    val causeWall = upToCause.last().entry.at.wallMillis
+    var earlier = LiveState()
+    upToCause.filter { it.entry.at.wallMillis <= causeWall - 10_000 }.forEach { earlier = earlier.with(it.entry) }
     val timeline = EvidenceTimeline.build(events, causeSeq)
     return Packet(
-        causeWallMillis = upToCause.last().entry.at.wallMillis,
+        causeWallMillis = causeWall,
         triggered = triggered,
         speedBefore = if (after != null && triggered?.trigger?.unit == MeasureUnit.DELTA_KMH) after - triggered.measured else null,
         speedAfter = after,
+        speedTenBefore = earlier.kmh,
+        keptBeforeMs = causeWall - events.first().entry.at.wallMillis,
+        keptAfterMs = events.last().entry.at.wallMillis - causeWall,
         state = state,
         location = upToCause.mapNotNull { (it.entry as? ChainEntry.Location)?.fix }.lastOrNull(),
         timeline = timeline,
@@ -118,8 +129,8 @@ fun EvidencePacket(labels: Labels, seal: CapsuleSeal, session: ActiveSession, on
 
     Column(Modifier.fillMaxSize()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(onClick = onBack, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.packet_back)) }
-            Text("  " + stringResource(R.string.packet_title), style = MaterialTheme.typography.headlineSmall)
+            BackButton(onBack)
+            Text(stringResource(R.string.packet_title), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(start = 24.dp))
         }
         val p = packet ?: run {
             Text(stringResource(R.string.packet_verifying), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(16.dp))
@@ -127,57 +138,51 @@ fun EvidencePacket(labels: Labels, seal: CapsuleSeal, session: ActiveSession, on
         }
         // Each block is a rotary stop, so turning the knob walks down the page and the scroll follows.
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(40.dp)) {
+            Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(48.dp)) {
                 Column(Modifier.weight(1f).ccpRow().padding(8.dp)) { Summary(labels, seal, p) }
-                Column(Modifier.weight(1f).ccpRow().padding(8.dp)) {
-                    // A glance, parked: the three readings that say most; all of them and every record are on the phone.
-                    Section(stringResource(R.string.packet_readings))
-                    if (p.readings.isEmpty()) Line(stringResource(R.string.packet_no_data))
-                    p.readings.forEach { r ->
-                        Line(r.text)
-                        r.note?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.Gray, modifier = Modifier.padding(start = 4.dp, top = 2.dp)) }
-                    }
-                    Text(stringResource(R.string.packet_readings_more), style = MaterialTheme.typography.bodyMedium, color = Color.Gray, modifier = Modifier.padding(top = 16.dp))
-                }
                 // Shown to an insurer or the police: their phone opens this capsule alone and checks it itself.
-                Column(Modifier.padding(top = 8.dp).width(220.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(Modifier.padding(top = 8.dp).width(300.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     val link = shareLink
                     if (link != null) {
-                        val image = remember(link) { qr(link, 440) }
-                        androidx.compose.foundation.Image(image, contentDescription = stringResource(R.string.packet_qr_hint), modifier = Modifier.size(220.dp))
-                        Text(stringResource(R.string.packet_qr_hint), textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium)
+                        val image = remember(link) { qr(link, 600) }
+                        androidx.compose.foundation.Image(image, contentDescription = stringResource(R.string.packet_qr_hint), modifier = Modifier.size(260.dp))
+                        // A sentence per line: a narrow column must not break one sentence across another.
+                        listOf(R.string.packet_qr_hint, R.string.packet_qr_who, R.string.packet_qr_only).forEach {
+                            Text(stringResource(it), textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 6.dp))
+                        }
                     } else {
-                        Box(Modifier.size(220.dp).border(2.dp, Color.Gray), contentAlignment = Alignment.Center) {
-                            Text(stringResource(R.string.packet_qr_none), color = Color.Gray, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
+                        Box(Modifier.size(260.dp).border(2.dp, Color.Gray), contentAlignment = Alignment.Center) {
+                            Text(stringResource(R.string.packet_qr_none).bySentence(), color = Color.Gray, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
                         }
                     }
                 }
             }
-            Column(Modifier.fillMaxWidth().padding(top = 8.dp).ccpRow().padding(8.dp)) {
+            // A glance, parked: the three readings that say most; all of them and every record are on the phone.
+            Column(Modifier.fillMaxWidth().padding(top = 24.dp).ccpRow().padding(8.dp)) {
+                Section(stringResource(R.string.packet_readings))
+                if (p.readings.isEmpty()) Line(stringResource(R.string.packet_no_data))
+                p.readings.forEach { r ->
+                    Line(r.text)
+                    r.note?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.Gray, modifier = Modifier.padding(start = 4.dp, top = 2.dp)) }
+                }
+                Text(stringResource(R.string.packet_readings_more).bySentence(), style = MaterialTheme.typography.bodyMedium, color = Color.Gray, modifier = Modifier.padding(top = 16.dp))
+            }
+            Column(Modifier.fillMaxWidth().padding(top = 16.dp).ccpRow().padding(8.dp)) {
                 Section(stringResource(R.string.packet_lanes))
                 Lanes(labels, p.timeline)
             }
+            Details(labels, seal, p)
         }
     }
 }
 
+/** What a person needs at a glance: when, what, how fast, what the driver was doing, and how much was kept. */
 @Composable
 private fun Summary(labels: Labels, seal: CapsuleSeal, p: Packet) {
     VerificationBadge(p.check)
     Field(stringResource(R.string.packet_time), labels.dateTime(p.causeWallMillis))
     Field(stringResource(R.string.packet_type), labels.trigger(seal.capsule.trigger))
-    Field(
-        stringResource(R.string.packet_speed),
-        if (p.triggered != null && p.speedBefore != null && p.speedAfter != null) {
-            stringResource(
-                R.string.packet_speed_transition,
-                p.speedBefore, p.speedAfter, p.triggered.measured,
-                labels.window(p.triggered.trigger) ?: "",
-            )
-        } else {
-            labels.speed(p.speedAfter)
-        },
-    )
+    Field(stringResource(R.string.packet_speed), speedText(labels, p))
     Field(
         stringResource(R.string.packet_controls),
         stringResource(
@@ -185,18 +190,59 @@ private fun Summary(labels: Labels, seal: CapsuleSeal, p: Packet) {
             labels.brake(p.state.brake), labels.turn(p.state.turn), labels.gear(p.state.gear), labels.steering(p.state.steering),
         ),
     )
-    Field(
-        stringResource(R.string.packet_location),
-        p.location?.let { stringResource(R.string.packet_location_value, it.latitude, it.longitude, it.accuracyMeters ?: 0f) }
-            ?: stringResource(R.string.packet_no_location),
-    )
-    Field(stringResource(R.string.packet_range), stringResource(R.string.packet_range_value, seal.capsule.firstSeq, seal.capsule.lastSeq, p.eventCount))
-    Field(
-        stringResource(R.string.packet_seal),
-        stringResource(if (seal.final) R.string.packet_seal_final else R.string.packet_seal_provisional, labels.dateTime(seal.sealedAtWallMillis)),
-    )
-    Field(stringResource(R.string.packet_hash), seal.headHash.hex().take(32) + "…", mono = true)
-    Field(stringResource(R.string.packet_key), fingerprint(seal.publicKey), mono = true)
+    Field(stringResource(R.string.packet_range), stringResource(R.string.packet_range_value, duration(p.keptBeforeMs), duration(p.keptAfterMs)))
+}
+
+/**
+ * A speed change ("시속 56 km → 30 km, 0.3초 만에 26 km 줄어듦") when that is what was detected; otherwise the speed at
+ * the moment of detection and, for scale, the speed ten seconds earlier.
+ */
+@Composable
+private fun speedText(labels: Labels, p: Packet): String {
+    val before = p.speedBefore
+    val after = p.speedAfter ?: return labels.speed(null)
+    val t = p.triggered
+    if (t != null && before != null) {
+        val window = labels.window(t.trigger)?.let { "$it " } ?: ""
+        return stringResource(if (after < before) R.string.packet_speed_down else R.string.packet_speed_up, before, after, window, abs(t.measured))
+    }
+    val ten = p.speedTenBefore
+    return if (ten != null && abs(ten - after) >= 1f) stringResource(R.string.packet_speed_at_before, after, ten)
+    else stringResource(R.string.packet_speed_at, after)
+}
+
+@Composable
+private fun duration(ms: Long): String {
+    val s = ((ms + 500) / 1000).toInt().coerceAtLeast(0)
+    return when {
+        s < 60 -> stringResource(R.string.duration_s, s)
+        s % 60 == 0 -> stringResource(R.string.duration_m, s / 60)
+        else -> stringResource(R.string.duration_ms, s / 60, s % 60)
+    }
+}
+
+/** For whoever checks the record itself: where, which records, the seal and the keys. Folded until asked for. */
+@Composable
+private fun Details(labels: Labels, seal: CapsuleSeal, p: Packet) {
+    var open by remember(seal) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 24.dp)) {
+        OutlinedButton(contentPadding = BigPadding, onClick = { open = !open }, modifier = Modifier.ccpFocus(CircleShape)) {
+            Text(stringResource(if (open) R.string.packet_details_close else R.string.packet_details_open), style = MaterialTheme.typography.titleMedium)
+        }
+        if (!open) return@Column
+        Field(
+            stringResource(R.string.packet_location),
+            // Never the place itself on the car: anyone using the car could see where the owner went.
+            stringResource(if (p.location != null) R.string.packet_location_owner else R.string.packet_no_location),
+        )
+        Field(stringResource(R.string.packet_records), stringResource(R.string.packet_records_value, seal.capsule.firstSeq, seal.capsule.lastSeq, p.eventCount))
+        Field(
+            stringResource(R.string.packet_seal),
+            stringResource(if (seal.final) R.string.packet_seal_final else R.string.packet_seal_provisional, labels.dateTime(seal.sealedAtWallMillis)),
+        )
+        Field(stringResource(R.string.packet_hash), seal.headHash.hex().take(32) + "…", mono = true)
+        Field(stringResource(R.string.packet_key), fingerprint(seal.publicKey), mono = true)
+    }
 }
 
 @Composable
@@ -206,7 +252,7 @@ private fun Section(title: String, top: Dp = 0.dp) {
 
 @Composable
 private fun Line(text: String) {
-    Text(text, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 6.dp))
+    Text(text.bySentence(), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 6.dp))
 }
 
 @Composable
@@ -219,7 +265,7 @@ private fun VerificationBadge(check: CapsuleCheck) {
 }
 
 @Composable
-private fun Field(label: String, value: String, mono: Boolean = false, labelWidth: Dp = 170.dp, top: Dp = 12.dp) {
+private fun Field(label: String, value: String, mono: Boolean = false, labelWidth: Dp = 250.dp, top: Dp = 12.dp) {
     Row(Modifier.padding(top = top)) {
         Text(label, color = Color.Gray, style = MaterialTheme.typography.titleMedium, modifier = Modifier.width(labelWidth))
         Text(value, style = MaterialTheme.typography.titleMedium, fontFamily = if (mono) FontFamily.Monospace else null)

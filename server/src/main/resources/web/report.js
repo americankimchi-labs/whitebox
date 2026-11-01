@@ -11,6 +11,14 @@
   const area = (a) => AREA[a] || a;
   const LAMP = { LOW_BEAM: '전조등(하향등)', HIGH_BEAM: '상향등', TAIL_LAMP: '미등', HAZARD: '비상등' };
   const GEAR = { PARK: 'P(주차)', REVERSE: 'R(후진)', NEUTRAL: 'N(중립)', DRIVE: 'D(주행)', MANUAL: 'M(수동)' };
+  // The words of each line the car speaks, as the car's own timeline quotes them.
+  const VOICE = {
+    KEEP_QUESTION: '방금 상황 보관할까요?', KEPT: '보관 완료', RELEASED: '보관 취소',
+    CRASH_GUIDANCE: '사고 기록 완료. 과실 인정은 피하고, 현장을 촬영하세요.', BOOKMARKED: '보관 완료',
+    HANDOVER_STARTED: '대리 운전 모드입니다. 주행이 기록됩니다.', HANDOVER_SET_DESTINATION: '목적지를 설정해 주세요.',
+    HANDOVER_SLOW_DOWN: '속도를 줄여 주세요.', HANDOVER_DRIVE_SAFELY: '안전 운전 부탁드립니다.',
+    HANDOVER_CHECK_ROUTE: '경로를 확인해 주세요.', LIBRARY_FULL: '보관함이 가득 차 기록 하나가 빠졌습니다.',
+  };
   const wiperOn = (m) => m && m !== 'OFF';
   const fast = (m) => /HIGH|CONTINUOUS_2|FAST/.test(m || '');
 
@@ -177,17 +185,17 @@
       const e = x.e;
       const rel = (e.at.wall - causeWall) / 1000;
       if (e.type === 'S') rows.push([x.seq, e.at.wall, rel, name[e.kind] || e.kind, e.locked ? '(잠김)' : value(e)]);
-      else if (e.type === 'L') rows.push([x.seq, e.at.wall, rel, '위치', e.locked ? '(잠김)' : `${e.lat.toFixed(5)}, ${e.lon.toFixed(5)} (±${Math.round(e.acc || 0)} m)`]);
+      else if (e.type === 'L') rows.push([x.seq, e.at.wall, rel, '위치', e.locked ? '차주만 볼 수 있음' : `${e.lat.toFixed(5)}, ${e.lon.toFixed(5)} (±${Math.round(e.acc || 0)} m)`]);
       else if (e.type === 'E' && e.event === 'TRIGGER') rows.push([x.seq, e.at.wall, rel, '감지', P.TRIGGER[e.trigger] || e.trigger]);
       else if (e.type === 'E' && e.event === 'LEVEL') rows.push([x.seq, e.at.wall, rel, '단계', { NORMAL: '정상', ALERT: '위험 신호', TRIGGERED: '사고 감지' }[e.level] || e.level]);
       else if (e.type === 'E' && e.event === 'ANSWER') rows.push([x.seq, e.at.wall, rel, '운전자 대답', !e.answered ? '대답 없음 (보관)' : e.keep ? '보관' : '보관 안 함']);
-      else if (e.type === 'A' && e.event === 'SPOKE') rows.push([x.seq, e.at.wall, rel, '차의 음성 안내', e.line]);
+      else if (e.type === 'A' && e.event === 'SPOKE') rows.push([x.seq, e.at.wall, rel, '차의 음성 안내', `“${VOICE[e.line] || e.line}”${e.complete ? '' : ' (중단됨)'}`]);
       else if (e.type === 'A' && e.event === 'BEACON') rows.push([x.seq, e.at.wall, rel, '동기화 신호음', `#${e.chirpId}`]);
       else if (e.type === 'R' && e.event === 'SLEPT') rows.push([x.seq, e.at.wall, rel, '기록 공백', `차가 잠들어 있던 ${dur(e.sleptMs)} (시동 꺼짐)`]);
     }
     return rows;
   }
 
-  const WBReport = { interpret, log };
+  const WBReport = { interpret, log, VOICE };
   if (typeof module === 'object' && module.exports) module.exports = WBReport; else root.WBReport = WBReport;
 })(typeof self !== 'undefined' ? self : globalThis);

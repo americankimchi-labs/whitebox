@@ -99,7 +99,7 @@ class LibraryController(
     private suspend fun onSeals(seals: List<CapsuleSeal>) {
         val known = _items.value.associateBy { it.id }
         // A moment re-sealed under a graver trigger (a hard brake that became a crash, a crash whose airbag fired) takes it.
-        var items = _items.value.map { i -> seals.firstOrNull { it.capsule.id == i.id && it.capsule.trigger != i.trigger }?.let { i.copy(trigger = it.capsule.trigger) } ?: i }
+        var items = _items.value.map { i -> seals.firstOrNull { it.capsule.id == i.id && it.capsule.trigger != i.trigger }?.let { i.copy(trigger = it.capsule.trigger, severe = i.severe || it.capsule.trigger.severe) } ?: i }
         val fresh = seals.filter { it.capsule.id !in known }.map { item(it) }.distinctBy { it.id }
         if (fresh.isEmpty()) {
             if (items != _items.value) save(items)

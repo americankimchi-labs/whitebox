@@ -10,6 +10,8 @@ import com.americankimchilabs.whitebox.domain.Retention
 import com.americankimchilabs.whitebox.domain.Tier
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -60,7 +62,6 @@ import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.DriveEvent
 import com.americankimchilabs.whitebox.domain.EscalationLevel
 import com.americankimchilabs.whitebox.domain.GearPosition
-import com.americankimchilabs.whitebox.domain.RecorderPermission
 import com.americankimchilabs.whitebox.domain.TurnSignalState
 import com.americankimchilabs.whitebox.domain.VehicleSignal
 import com.americankimchilabs.whitebox.domain.regrantPromptAllowed
@@ -150,9 +151,8 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
     val parked = live.gear == null || live.gear == GearPosition.PARK
     var open by remember(session) { mutableStateOf<CapsuleSeal?>(null) }
     var tab by remember { mutableIntStateOf(0) }
-    // First run = nothing granted yet. Once started, the flow stays until its done screen even as grants arrive.
-    var setup by rememberSaveable { mutableStateOf(if (context.recorderGrants().isEmpty()) SetupMode.FIRST_RUN else null) }
-    LaunchedEffect(grants) { if (setup == null && grants.isEmpty()) setup = SetupMode.FIRST_RUN }
+    // The first-run setup returns at every start until it is finished (every grant given, the ready screen passed).
+    var setup by rememberSaveable { mutableStateOf(if (!SetupDone.get(context)) SetupMode.FIRST_RUN else null) }
     var regrantLater by remember { mutableStateOf(false) }
 
     val consent by remember(context) { DataConsent.state(context) }.collectAsState()
@@ -163,22 +163,25 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
     LaunchedEffect(session) { session.handover?.openMaps?.collect { openMaps(context) } }
 
     // Setup is parked only.
-    if (parked && setup == SetupMode.FIRST_RUN) {
-        SetupFlow(SetupStep.all(), intro = true, onDone = { setup = null; onGrantsChanged() })
+    if (parked && setup != null) {
+        SetupFlow(
+            firstRun = setup == SetupMode.FIRST_RUN,
+            askConsent = consent == null,
+            onConsent = { DataConsent.set(context, it) },
+            onDone = { if (setup == SetupMode.FIRST_RUN) SetupDone.set(context); setup = null; onGrantsChanged() },
+        )
         return
     }
-    if (parked && setup == SetupMode.REGRANT) {
-        SetupFlow(stepsFor(missing), intro = false, onDone = { setup = null; onGrantsChanged() })
-        return
-    }
-    // Asked once, parked, after setup; never again once answered (changeable on the phone tab).
+    // Asked once, parked (part of the first-run setup); never again once answered (changeable on the phone tab).
     if (parked && consent == null) {
-        ConsentPrompt(onAnswer = { DataConsent.set(context, it) })
+        ConsentScreen(onAnswer = { DataConsent.set(context, it) })
         return
     }
 
     Column(Modifier.fillMaxSize().padding(32.dp)) {
-        StatusHeader(labels, live, level, session.mode)
+        // Handover mode is turned on from here, parked, when it is off (the sheet explains it first).
+        val handoverButton = parked && session.handover != null && handoverPhase == HandoverPhase.OFF && !handoverSheet
+        StatusHeader(labels, live, level, session.mode, onHandover = if (handoverButton) ({ handoverSheet = true }) else null)
         Spacer(Modifier.padding(8.dp))
         if (!parked) {
             // Driving: read-only, nothing to scroll or press (distraction-optimized).
@@ -225,16 +228,10 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
         // Switching the source would stop the real recording: never while a hired driver has the car. A release build
         // has no scripted drive, so no switch either.
         if (TestBuild.REPLAY && handoverPhase == HandoverPhase.OFF) Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(top = 12.dp)) {
-            OutlinedButton(onClick = { onSource(SourceMode.REPLAY) }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.action_replay)) }
-            OutlinedButton(onClick = { onSource(SourceMode.LIVE) }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.action_live)) }
+            OutlinedButton(contentPadding = BigPadding, onClick = { onSource(SourceMode.REPLAY) }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.action_replay)) }
+            OutlinedButton(contentPadding = BigPadding, onClick = { onSource(SourceMode.LIVE) }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.action_live)) }
         }
     }
-}
-
-private fun stepsFor(missing: Set<RecorderPermission>) = buildList {
-    if (RecorderPermission.CAR_SPEED in missing) add(SetupStep.SPEED)
-    if (RecorderPermission.LOCATION in missing) add(SetupStep.LOCATION)
-    if (RecorderPermission.BACKGROUND_LOCATION in missing) add(SetupStep.BACKGROUND)
 }
 
 @Composable
@@ -250,9 +247,9 @@ private fun RegrantBanner(names: String, onAllow: () -> Unit, onLater: () -> Uni
         Modifier.fillMaxWidth().background(Color(0xFFFFF3E0)).padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(stringResource(R.string.regrant_banner, names), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-        Button(onClick = onAllow, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.regrant_action)) }
-        TextButton(onClick = onLater, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.regrant_later)) }
+        Text(stringResource(R.string.regrant_banner, names).bySentence(), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+        Button(contentPadding = BigPadding, onClick = onAllow, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.regrant_action)) }
+        TextButton(contentPadding = BigPadding, onClick = onLater, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.regrant_later)) }
     }
     Spacer(Modifier.padding(6.dp))
 }
@@ -270,14 +267,14 @@ private fun UpdateNotice(base: String?) {
         Modifier.fillMaxWidth().padding(vertical = 4.dp).background(Color(0x141565C0), RoundedCornerShape(8.dp)).padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(stringResource(R.string.update_available, l.name), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-        OutlinedButton(onClick = { if (!UpdateCheck.openMarket(context)) dismissed = true }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.update_open_market)) }
-        TextButton(onClick = { dismissed = true }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.update_later)) }
+        Text(stringResource(R.string.update_available, l.name).bySentence(), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        OutlinedButton(contentPadding = BigPadding, onClick = { if (!UpdateCheck.openMarket(context)) dismissed = true }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.update_open_market)) }
+        TextButton(contentPadding = BigPadding, onClick = { dismissed = true }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.update_later)) }
     }
 }
 
 @Composable
-private fun StatusHeader(labels: Labels, s: LiveState, level: EscalationLevel, mode: SourceMode) {
+private fun StatusHeader(labels: Labels, s: LiveState, level: EscalationLevel, mode: SourceMode, onHandover: (() -> Unit)? = null) {
     val color = when (level) {
         EscalationLevel.NORMAL -> Color(0xFF2E7D32)
         EscalationLevel.ALERT -> Color(0xFFF9A825)
@@ -295,12 +292,16 @@ private fun StatusHeader(labels: Labels, s: LiveState, level: EscalationLevel, m
         Text(stringResource(if (mode == SourceMode.REPLAY) R.string.mode_replay else R.string.mode_live), style = MaterialTheme.typography.titleMedium)
     }
     Spacer(Modifier.padding(6.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(40.dp)) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(40.dp), verticalAlignment = Alignment.CenterVertically) {
         Stat(stringResource(R.string.stat_speed), labels.speed(s.kmh))
         Stat(stringResource(R.string.stat_gear), labels.gear(s.gear))
         Stat(stringResource(R.string.stat_brake), labels.brake(s.brake))
         Stat(stringResource(R.string.stat_turn), labels.turn(s.turn))
         Stat(stringResource(R.string.stat_steering), labels.steering(s.steering))
+        if (onHandover != null) {
+            Spacer(Modifier.weight(1f))
+            HandoverButton(onHandover)
+        }
     }
 }
 
@@ -350,7 +351,7 @@ private fun CapsuleList(
         leftNotice?.let { n ->
             Column(Modifier.fillMaxWidth().padding(8.dp).background(Color(0x14E65100), RoundedCornerShape(8.dp)).padding(12.dp)) {
                 // An older unpaid one, or the new moment itself when every slot is paid: held for an upgrade either way.
-                Text(stringResource(R.string.library_left_notice, labels.trigger(n.trigger), labels.dateTime(n.eventWall)), style = MaterialTheme.typography.bodyLarge)
+                Text(stringResource(R.string.library_left_notice, labels.trigger(n.trigger), labels.dateTime(n.eventWall)).bySentence(), style = MaterialTheme.typography.bodyLarge)
                 Text(
                     stringResource(
                         when (tier) {
@@ -358,33 +359,59 @@ private fun CapsuleList(
                             Tier.PLUS -> R.string.library_left_phone_plus
                             Tier.PRO -> R.string.library_left_phone_pro
                         },
-                    ),
+                    ).bySentence(),
                     style = MaterialTheme.typography.bodyMedium, color = Color.Gray,
                 )
             }
         }
         if (capsules.isEmpty()) {
-            Text(stringResource(R.string.no_capsules), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(16.dp))
+            Text(stringResource(R.string.no_capsules).bySentence(), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(16.dp))
             return@Column
         }
         LazyColumn(Modifier.fillMaxWidth()) {
             items(capsules.reversed(), key = { it.capsule.id }) { s ->
-                Column(Modifier.fillMaxWidth().ccpFocus().clickable { onOpen(s) }.padding(horizontal = 8.dp, vertical = 14.dp)) {
-                    Text(labels.trigger(s.capsule.trigger), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        stringResource(
-                            R.string.capsule_meta,
-                            labels.dateTime(s.sealedAtWallMillis), s.capsule.firstSeq, s.capsule.lastSeq,
-                            stringResource(if (s.final) R.string.capsule_final else R.string.capsule_provisional),
-                        ),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = Color.Gray,
-                    )
-                    byId[s.capsule.id]?.let { item -> Text(keptFor(labels, item, now), style = MaterialTheme.typography.bodyLarge, color = if (item.status(now) == LibraryStatus.KEPT && Retention.warn(item.recordsUntil, now)) Color(0xFFE65100) else Color.Gray) }
+                // A card per record, tinted by kind, with its open button at the end: it reads as something to tap.
+                val tint = cardTint(s.capsule.trigger)
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)
+                        .background(tint.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+                        .border(2.dp, tint.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+                        .ccpFocus(RoundedCornerShape(16.dp)).clickable { onOpen(s) }
+                        .padding(horizontal = 24.dp, vertical = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(labels.trigger(s.capsule.trigger), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(
+                            stringResource(
+                                R.string.capsule_meta,
+                                labels.dateTime(s.sealedAtWallMillis),
+                                stringResource(if (s.final) R.string.capsule_final else R.string.capsule_provisional),
+                            ),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Color.Gray,
+                        )
+                        byId[s.capsule.id]?.let { item -> Text(keptFor(labels, item, now), style = MaterialTheme.typography.bodyLarge, color = if (item.status(now) == LibraryStatus.KEPT && Retention.warn(item.recordsUntil, now)) Color(0xFFE65100) else Color.Gray) }
+                    }
+                    Spacer(Modifier.width(24.dp))
+                    Button(onClick = { onOpen(s) }, contentPadding = PaddingValues(horizontal = 28.dp, vertical = 16.dp)) {
+                        Text(
+                            stringResource(if (s.capsule.trigger == CapsuleTrigger.HANDOVER) R.string.capsule_open_report else R.string.capsule_open),
+                            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+/** 큰 사고 red, 충돌 amber, a 대리 운전 report purple, any other moment blue-grey. */
+private fun cardTint(t: CapsuleTrigger) = when {
+    t.severe -> Color(0xFFC62828)
+    t == CapsuleTrigger.HANDOVER -> Color(0xFF6A1B9A)
+    t.crash -> Color(0xFFE65100)
+    else -> Color(0xFF455A64)
 }
 
 @Composable

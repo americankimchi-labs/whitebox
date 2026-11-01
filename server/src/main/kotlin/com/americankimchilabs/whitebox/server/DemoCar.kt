@@ -85,7 +85,7 @@ fun main(args: Array<String>): Unit = runBlocking {
     val store = FileEventStore(dir, cipher = EpochRecordCipher(ring))
     val seals = SealStore(dir)
     // A test car takes part in improving detection (a real driver is asked once, and it is off unless they agree).
-    val outbox = Outbox(store, seals, channel, dir, consent = { true }, minuteKey = { e, m -> ring.key(e)?.let { RecordCipher.minuteKey(it, m) } })
+    val outbox = Outbox(store, seals, channel, dir, consent = { true }, minuteKey = { e, m -> ring.key(e)?.let { RecordCipher.minuteKey(it, m) } }, placeKey = { e, m -> ring.key(e)?.let { RecordCipher.placeKey(it, m) } })
     val recorder = Recorder(store, seals, signer, clock, outbox::onSeal)
     val work = launch(Dispatchers.Default) { outbox.start(this, recorder) }
     val web = url.replaceFirst("ws", "http").substringBefore("/v1/")

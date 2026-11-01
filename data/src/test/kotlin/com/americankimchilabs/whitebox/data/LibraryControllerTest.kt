@@ -87,6 +87,21 @@ class LibraryControllerTest {
     }
 
     @Test
+    fun aCrashWhoseAirbagFiresBecomesABigCrashAtOnce() = runTest {
+        val car = Car(tier = Tier.FREE)
+        with(car) {
+            go()
+            moment("c", CapsuleTrigger.DELTA_V)
+            assertEquals(LibraryStatus.KEPT, status("c"))
+            // The airbag fires an instant later and takes the open crash capsule over: ten years, outside the slots.
+            recorder.sealRange("c", CapsuleTrigger.AIRBAG, store.head()!!.lastSeq - 4, final = true)
+            runCurrent()
+            assertEquals(LibraryStatus.SEVERE, status("c"))
+            assertEquals(0, library.slotsUsed())
+        }
+    }
+
+    @Test
     fun withOnlyPaidMomentsTheNewOneIsHeldAndAnUpgradeBringsItBack() = runTest {
         val car = Car(tier = Tier.FREE)
         with(car) {
