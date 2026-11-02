@@ -38,6 +38,7 @@ fun Route.phoneRoutes(service: MirrorService, identity: Identity) {
         get("/$script") { call.respondText(resource("web/$script"), ContentType.Text.JavaScript) }
     }
     get("/wb.css") { call.respondText(resource("web/wb.css"), ContentType.Text.CSS) }
+    get("/icon.svg") { call.respondText(resource("web/icon.svg"), ContentType.Image.SVG) }
 
     post("/v1/otp") {
         val p = call.receiveParameters()

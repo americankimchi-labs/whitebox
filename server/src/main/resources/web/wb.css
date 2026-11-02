@@ -1,7 +1,7 @@
 /* White Box phone pages: one look for the owner's, the family's and the evidence pages. Plain words first; the
    technical detail sits behind "자세히". */
-:root{--fg:#111;--muted:#5f6368;--bg:#f6f7f9;--card:#fff;--line:#e3e5e8;--lane:#f1f3f5;--accent:#1565c0;--accent-fg:#fff;--bad:#c62828;--good:#2e7d32;--warn:#e65100;--alert-bg:#fff6ee}
-@media (prefers-color-scheme:dark){:root{--fg:#eceef1;--muted:#a3a9b1;--bg:#111315;--card:#1b1e21;--line:#2c3035;--lane:#24282c;--accent:#7fb2ff;--accent-fg:#0b1a2e;--bad:#ff8a80;--good:#81c995;--warn:#ffb74d;--alert-bg:#2a2017}}
+:root{--fg:#111;--muted:#5f6368;--bg:#f6f7f9;--card:#fff;--line:#e3e5e8;--lane:#f1f3f5;--accent:#6750a4;--accent-fg:#fff;--bad:#c62828;--good:#2e7d32;--warn:#e65100;--alert-bg:#fff6ee}
+@media (prefers-color-scheme:dark){:root{--fg:#eceef1;--muted:#a3a9b1;--bg:#111315;--card:#1b1e21;--line:#2c3035;--lane:#24282c;--accent:#d0bcff;--accent-fg:#381e72;--bad:#ff8a80;--good:#81c995;--warn:#ffb74d;--alert-bg:#2a2017}}
 *{box-sizing:border-box}
 body{font:16px/1.55 system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;margin:0;background:var(--bg);color:var(--fg);-webkit-text-size-adjust:100%;word-break:keep-all;overflow-wrap:anywhere;text-wrap:pretty}
 /* Korean breaks only between words (keep-all), a word too long for the line still breaks (anywhere), and paragraphs

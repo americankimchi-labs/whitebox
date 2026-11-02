@@ -264,7 +264,7 @@ private fun UpdateNotice(base: String?) {
     val l = latest ?: return
     if (dismissed || l.code <= BuildConfig.VERSION_CODE) return
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 4.dp).background(Color(0x141565C0), RoundedCornerShape(8.dp)).padding(12.dp),
+        Modifier.fillMaxWidth().padding(vertical = 4.dp).background(BrandPurple.copy(alpha = 0.08f), RoundedCornerShape(8.dp)).padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(stringResource(R.string.update_available, l.name).bySentence(), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
@@ -409,7 +409,7 @@ private fun CapsuleList(
 /** 큰 사고 red, 충돌 amber, a 대리 운전 report purple, any other moment blue-grey. */
 private fun cardTint(t: CapsuleTrigger) = when {
     t.severe -> Color(0xFFC62828)
-    t == CapsuleTrigger.HANDOVER -> Color(0xFF6A1B9A)
+    t == CapsuleTrigger.HANDOVER -> BrandPurple
     t.crash -> Color(0xFFE65100)
     else -> Color(0xFF455A64)
 }

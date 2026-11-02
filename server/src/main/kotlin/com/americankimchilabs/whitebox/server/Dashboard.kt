@@ -25,15 +25,15 @@ private val TRIGGER = mapOf(
  * behind "자세히". The cards refresh every second without reloading the page, so an opened "자세히" stays open.
  */
 fun dashboard(service: MirrorService, sms: DemoSmsSender? = null): String = """<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>White Box 서버</title>
-<link rel="stylesheet" href="/wb.css">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>화이트박스 서버</title>
+<link rel="stylesheet" href="/wb.css"><link rel="icon" href="/icon.svg">
 <style>
 body{word-break:keep-all;overflow-wrap:anywhere;text-wrap:pretty}
 main{max-width:1100px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
 .cars .card h2{display:flex;gap:8px;align-items:center}.history{max-height:220px;overflow:auto;padding-left:18px}.t{color:var(--muted);font-variant-numeric:tabular-nums}
 </style></head>
 <body><main>
-<h1>White Box 서버</h1>
+<h1>화이트박스 서버</h1>
 <div class="card">
   <p><b>차 안의 기록이 원본이고, 이 서버는 그 사본을 받아 안전하게 보관합니다.</b> 차가 부서지거나 전원이 끊겨도 서버가 받은 데까지는 남습니다.</p>
   <ul class="bullets">

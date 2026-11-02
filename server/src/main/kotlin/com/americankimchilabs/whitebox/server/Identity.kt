@@ -173,7 +173,7 @@ class Identity(private val store: Durable, private val key: ServerKey, private v
         val code = "%06d".format(random.nextInt(1_000_000))
         otps[phone] = Otp(code, now + 5 * 60_000)
         lastOtpMs[phone] = now
-        sms.send(phone, "[White Box] ${purposeText(purpose)} 인증번호 [$code] · 5분 안에 입력해 주세요.")
+        sms.send(phone, "[화이트박스] ${purposeText(purpose)} 인증번호 [$code] · 5분 안에 입력해 주세요.")
         return null
     }
 
@@ -267,7 +267,7 @@ class Identity(private val store: Durable, private val key: ServerKey, private v
         // The car checks the MAC and starts recording under a key nobody holds until this is decided.
         record("PF", device, t, MirrorProtocol.encode(MirrorProtocol.Frame.ClaimPending(t, ecdhKey, mac, maskPhone(phone))))
         owners[current]?.let { o ->
-            sms.send(ownerPhone(o), "[White Box] 다른 휴대폰(${maskPhone(phone)})에서 회원님 차를 연결하려고 합니다. 차를 팔거나 넘기셨다면 승인하고, 아니라면 거절해 주세요. 3일 안에 거절하지 않으면 새 휴대폰으로 넘어갑니다: /me")
+            sms.send(ownerPhone(o), "[화이트박스] 다른 휴대폰(${maskPhone(phone)})에서 회원님 차를 연결하려고 합니다. 차를 팔거나 넘기셨다면 승인하고, 아니라면 거절해 주세요. 3일 안에 거절하지 않으면 새 휴대폰으로 넘어갑니다: /me")
         }
         return ClaimResult.Pending(id, transfers.getValue(t), newSession(OWNER, id))
     }
@@ -278,8 +278,8 @@ class Identity(private val store: Durable, private val key: ServerKey, private v
         record("D", t.deviceId, t.toOwnerId)
         record("TS", t.id, how)
         transferFrames[t.deviceId]?.let { record("PFD", t.deviceId, it.first) } // the CLAIMED frame supersedes it
-        owners[t.fromOwnerId]?.let { sms.send(ownerPhone(it), "[White Box] 차 연결이 ${t.masked} 휴대폰으로 넘어갔습니다. 요청 전까지의 기록은 계속 회원님만 볼 수 있습니다.") }
-        owners[t.toOwnerId]?.let { sms.send(ownerPhone(it), "[White Box] 차가 연결되었습니다. 요청하신 때부터의 기록을 볼 수 있습니다: /me") }
+        owners[t.fromOwnerId]?.let { sms.send(ownerPhone(it), "[화이트박스] 차 연결이 ${t.masked} 휴대폰으로 넘어갔습니다. 요청 전까지의 기록은 계속 회원님만 볼 수 있습니다.") }
+        owners[t.toOwnerId]?.let { sms.send(ownerPhone(it), "[화이트박스] 차가 연결되었습니다. 요청하신 때부터의 기록을 볼 수 있습니다: /me") }
     }
 
     /** The current owner decided; returns the transfer if it now applies. */
@@ -292,7 +292,7 @@ class Identity(private val store: Durable, private val key: ServerKey, private v
         }
         record("TS", t.id, DECLINED)
         record("PF", t.deviceId, t.id, MirrorProtocol.encode(MirrorProtocol.Frame.ClaimDeclined(t.id)))
-        owners[t.toOwnerId]?.let { sms.send(ownerPhone(it), "[White Box] 차주가 연결 요청을 거절했습니다.") }
+        owners[t.toOwnerId]?.let { sms.send(ownerPhone(it), "[화이트박스] 차주가 연결 요청을 거절했습니다.") }
         return null
     }
 

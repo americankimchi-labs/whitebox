@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>White Box · 주행 기록</title>
-<link rel="stylesheet" href="/wb.css">
+<title>화이트박스 · 주행 기록</title>
+<link rel="stylesheet" href="/wb.css"><link rel="icon" href="/icon.svg">
 </head>
 <body><main>
 <p><a href="/me">← 내 차</a></p>
@@ -47,7 +47,7 @@ async function detail(drive, el) {
   const marks = capsules.filter((c) => drive.capsules.includes(c.id))
     .map((c) => `<line x1="${x(c.sealedAtMs)}" x2="${x(c.sealedAtMs)}" y1="6" y2="${h - 14}" stroke="${c.severe ? 'var(--bad,#c62828)' : 'var(--warn,#e65100)'}" stroke-width="2"/>`).join('');
   el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="주행 속도" style="font:10px system-ui"><rect x="4" y="6" width="${w - 8}" height="${h - 20}" fill="var(--lane,#f1f3f5)" rx="3"/>
-    <polyline fill="none" stroke="var(--accent,#1565c0)" stroke-width="1.5" points="${pts.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')}"/>${marks}
+    <polyline fill="none" stroke="var(--accent,#6750a4)" stroke-width="1.5" points="${pts.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')}"/>${marks}
     <text x="8" y="17" fill="var(--muted,#5f6368)">최고 ${Math.max(...pts.map((p) => p.v)).toFixed(0)} km/h</text>
     <text x="4" y="${h - 2}" fill="var(--muted,#5f6368)">${WB.clock(t0)}</text><text x="${w - 50}" y="${h - 2}" fill="var(--muted,#5f6368)">${WB.clock(t1)}</text></svg>
     <p class="msg">속도로 계산한 거리 약 ${km.toFixed(1)} km${drive.odometer.length < 2 ? '' : ' (주행거리계와 다를 수 있음)'}</p>

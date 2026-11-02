@@ -54,7 +54,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private val HandoverColor = Color(0xFF1565C0)
+private val HandoverColor = BrandPurple
 
 /**
  * Brings the car's maps app forward so a destination can be set. Only from the visible screen: Android does not let a

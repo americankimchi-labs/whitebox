@@ -200,11 +200,11 @@
       out.push(`<polyline fill="none" stroke="${color}" stroke-width="1.6" points="${pts.map((p) => `${x(p.atMs).toFixed(1)},${y(p.value).toFixed(1)}`).join(' ')}"/>`);
     };
     const maxSpeed = Math.max(20, ...t.speedKmh.map((p) => p.value));
-    line(t.speedKmh, 0, 0, maxSpeed, 'var(--accent,#1565c0)');
+    line(t.speedKmh, 0, 0, maxSpeed, 'var(--accent,#6750a4)');
     out.push(`<text x="${label + 2}" y="${y0(0) + 10}" fill="var(--muted,#555)">${maxSpeed.toFixed(0)} km/h</text>`);
     const maxSteer = Math.max(30, ...t.steering.map((p) => Math.abs(p.value)));
     out.push(`<line x1="${label}" x2="${label + plotW}" y1="${y0(1) + lane / 2}" y2="${y0(1) + lane / 2}" stroke="#ccc"/>`);
-    line(t.steering, 1, -maxSteer, maxSteer, 'var(--accent,#1565c0)');
+    line(t.steering, 1, -maxSteer, maxSteer, 'var(--accent,#6750a4)');
     out.push(`<text x="${label + 2}" y="${y0(1) + 10}" fill="var(--muted,#555)">±${maxSteer.toFixed(0)}°</text>`);
 
     const steps = (s, i, on, text) => s.forEach((st, k) => {

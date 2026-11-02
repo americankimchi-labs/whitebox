@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Korean cars show and search the Korean name; other languages keep the official name, White Box. -->
+    <string name="app_name">화이트박스</string>
+</resources>

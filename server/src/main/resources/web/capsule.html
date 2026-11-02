@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>White Box · 증거 요약</title>
-<link rel="stylesheet" href="/wb.css">
+<title>화이트박스 · 증거 요약</title>
+<link rel="stylesheet" href="/wb.css"><link rel="icon" href="/icon.svg">
 <style>
 .verdict{display:flex;gap:10px;align-items:center;font-weight:600}
 .verdict .mark{font-size:22px}
@@ -232,7 +232,7 @@ function offerShare(c, data) {
       const link = `${location.origin}/capsule#d=${d}&s=${s}&id=${encodeURIComponent(c.id)}&t=${code}&k=${keys.join(',')}${places.length ? `&p=${places.join(',')}` : ''}`;
       // Shared through the phone's share sheet, or copied; either may be unavailable, the link is shown regardless.
       let copied = false;
-      if (navigator.share) { try { await navigator.share({ title: 'White Box', url: link }); } catch (e) { /* closed */ } }
+      if (navigator.share) { try { await navigator.share({ title: '화이트박스', url: link }); } catch (e) { /* closed */ } }
       else if (navigator.clipboard) { try { await navigator.clipboard.writeText(link); copied = true; } catch (e) { /* not allowed here */ } }
       WB.$('share-msg').innerHTML = `링크를 만들었습니다${copied ? ' (복사됨)' : ''}. 90일 동안 이 기록만 열립니다.<br><a href="${link}" style="word-break:break-all">${esc(link.slice(0, 60))}…</a>`;
     } catch (e) { WB.say('share-msg', e.message, true); }
@@ -289,7 +289,7 @@ function renderTrip(c, data, events, v) {
     const y = (val) => hgt - 14 - (val / vmax) * (hgt - 24);
     const marks = observed.map((o) => `<line x1="${x(o.e.at.wall)}" x2="${x(o.e.at.wall)}" y1="6" y2="${hgt - 14}" stroke="var(--warn,#e65100)" stroke-width="2"/>`).join('');
     WB.$('trip-graph').innerHTML = `<svg viewBox="0 0 ${w} ${hgt}" width="100%" role="img" aria-label="주행 속도와 기록된 운전" style="font:11px system-ui"><rect x="4" y="6" width="${w - 8}" height="${hgt - 20}" fill="var(--lane,#f1f3f5)" rx="3"/>${marks}
-      <polyline fill="none" stroke="var(--accent,#1565c0)" stroke-width="1.5" points="${speeds.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')}"/>
+      <polyline fill="none" stroke="var(--accent,#6750a4)" stroke-width="1.5" points="${speeds.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')}"/>
       <text x="8" y="18" fill="var(--muted,#5f6368)">최고 ${top.toFixed(0)} km/h</text><text x="4" y="${hgt - 2}" fill="var(--muted,#5f6368)">${WB.clock(t0)}</text><text x="${w - 4}" y="${hgt - 2}" text-anchor="end" fill="var(--muted,#5f6368)">${WB.clock(t1)}</text></svg>`;
   }
   WB.$('mark').textContent = v.ok ? '✓' : '✗';
@@ -382,7 +382,7 @@ async function downloadEvidence(c, data) {
   a.href = URL.createObjectURL(new Blob([lines.join('\n') + '\n'], { type: 'text/plain' }));
   a.download = `whitebox-${c.id}.txt`;
   a.click();
-  WB.say('keep-msg', '증거 파일을 내려받았습니다. 이 기록과 그 열쇠가 들어 있으니, 믿을 수 있는 곳에만 보내 주세요. White Box 없이도 검증 도구로 원본임을 확인할 수 있습니다.');
+  WB.say('keep-msg', '증거 파일을 내려받았습니다. 이 기록과 그 열쇠가 들어 있으니, 믿을 수 있는 곳에만 보내 주세요. 화이트박스 없이도 검증 도구로 원본임을 확인할 수 있습니다.');
 }
 
 /** After a picked clip is placed: save it (encrypted here) against the plan's clip slots. */
@@ -493,7 +493,7 @@ function renderReport(c, data, events, t, v, trigger) {
     ['일시', WB.when(causeWall)],
     ['장소', place ? `위도 ${place.e.lat.toFixed(5)}, 경도 ${place.e.lon.toFixed(5)} (±${Math.round(place.e.acc || 0)} m) · <a href="${WB.mapLink(place.e.lat, place.e.lon)}" target="_blank" rel="noopener">지도</a>` : '기록 없음'],
     ['감지', esc(WBPacket.TRIGGER[c.trigger] || c.trigger) + (trigger ? ` (${esc(String(trigger.e.measured.toFixed ? trigger.e.measured.toFixed(1) : trigger.e.measured))}${DELTA_KMH.includes(trigger.e.trigger) ? ' km/h 속도 변화' : ''})` : '')],
-    ['기록 출처', 'White Box (차량 내장 기록 앱)가 차에서 실시간으로 기록하고 봉인한 원본'],
+    ['기록 출처', '화이트박스(차량 내장 기록 앱)가 차에서 실시간으로 기록하고 봉인한 원본'],
   ];
   if (c.answer) facts.push(['운전자의 대답', esc(ANSWER[c.answer])]);
   const el = WB.$('report');

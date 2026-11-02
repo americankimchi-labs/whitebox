@@ -15,7 +15,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
 
 /** The rotary focus ring: high contrast on the light theme, visible at a glance from the driver's seat. */
-private val FocusRing = Color(0xFF1565C0)
+private val FocusRing = BrandPurple
 
 /**
  * Rotary (CCP) support. The platform's rotary service moves focus between focusable elements when the knob turns and

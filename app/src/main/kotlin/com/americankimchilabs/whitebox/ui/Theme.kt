@@ -2,7 +2,9 @@ package com.americankimchilabs.whitebox.ui
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.unit.sp
@@ -39,8 +41,13 @@ private val Automotive = Typography(
 
 val STAT_SIZE = 56.sp
 
+/** The logo's purple. Buttons use it too, so the app and its launcher icon are one colour. */
+val BrandPurple = Color(0xFF6750A4)
+
+private val Colors = lightColorScheme(primary = BrandPurple)
+
 @Composable
-fun WhiteBoxTheme(content: @Composable () -> Unit) = MaterialTheme(typography = Automotive, content = content)
+fun WhiteBoxTheme(content: @Composable () -> Unit) = MaterialTheme(colorScheme = Colors, typography = Automotive, content = content)
 
 /**
  * Starts each sentence of a paragraph on its own line, so a sentence never begins at the end of another's line. Only a
