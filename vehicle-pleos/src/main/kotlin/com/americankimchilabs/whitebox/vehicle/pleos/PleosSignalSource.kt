@@ -96,6 +96,9 @@ class PleosSignalSource(
         val safety = vehicle.getSafety()
 
         brake.registerBrakePedalStatus(brakeListener)
+        // The subscription reports transitions only, so a recorder (re)started with the pedal already down or
+        // released would keep the state from before it stopped. Read the pedal once at start.
+        brake.getCurrentBrakePedalStatus({ p0 -> if (p0 != null) send(VehicleSignal.BrakePedal(p0)) }, { e -> logFailure("brake now", e) })
         turnSignal.registerTurnSignalState(turnListener)
         steering.registerSteeringWheelAngle(steeringListener)
         airbagListeners.forEach { (seat, listener) -> safety.registerSeatAirbagDeployed(seat, listener) }

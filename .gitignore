@@ -41,3 +41,4 @@ server-data/
 
 # Stock clips the dashcam stand-in downloads (tools/virtual-console/dashcam.py fetch)
 tools/virtual-console/.dashcam/
+__pycache__/

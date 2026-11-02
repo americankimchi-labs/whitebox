@@ -1,23 +1,23 @@
-"""A stand-in dashcam video for each demo scenario: a short free stock clip, with the sound a dashcam in the car would
-have recorded of the drive the scenario script just ran (road noise, and the car's inaudible sync chirp at the exact
-moments the car played it).
+"""A stand-in dashcam video for the demo scenarios that have real footage: a real dashcam clip of the same kind of
+moment, with the sound a dashcam in the car would have recorded of the drive the scenario script just ran (road noise,
+and the car's inaudible sync chirp at the exact moments the car played it).
 
-    python3 -I tools/virtual-console/dashcam.py fetch                 # download the clips (once, ≈ 30 MB)
+    python3 -I tools/virtual-console/dashcam.py fetch                 # download and prepare the clips (once, ≈ 15 MB)
     python3 -I tools/virtual-console/dashcam.py make cut-in           # after `scenarios.py cut-in`
     python3 -I tools/virtual-console/dashcam.py make rear-end --data server-data --out ~/Desktop
 
 `make` reads what the mirror server received of the car's live stream (`--data`, the server's data directory; the
 newest car unless `--device` names one): the chirps the car played and the moment the scenario's detection fired.
-It places the clip so that moment falls on the clip's own event (the car cutting in, the impact), puts each chirp
-that falls inside the clip into its sound, names the file the way dashcams do (REC_<local date>_<time>) and stamps
-the same start time in its header. Pick the file on the capsule's phone page under 블랙박스 영상과 맞춰 보기: the
-phone finds the chirp and places the video to the millisecond (by the file's clock alone, to about a second).
+It places the clip so that moment falls on the clip's own event (the impact, the hard brake), puts each chirp that
+falls inside the clip into its sound, names the file the way dashcams do (REC_<local date>_<time>) and stamps the same
+start time in its header. Pick the file on the capsule's phone page under 블랙박스 영상과 맞춰 보기: the phone finds
+the chirp and places the video to the millisecond (by the file's clock alone, to about a second).
 
-Crash clips end at the impact, as a dashcam that loses power with the car would: no free stock footage shows a crash
-from the driver's seat, and none is made up here.
-
-The clips are not part of this repository; they are downloaded from their sources (free licences, credited below)
-into tools/virtual-console/.dashcam/. Building the video needs macOS (AVFoundation, via dashcam_mux.swift) or ffmpeg.
+The clips are real dashcam recordings from Wikimedia Commons, public domain there (automated footage, no human
+author); they are not part of this repository. `fetch` downloads Commons' MP4 copy of each and keeps only the part
+the scenario needs, without the source dashcam's own date and ID strip (it would contradict the demo's clock). The
+garage and night scenarios have no matching free footage, so they get no video rather than a misleading one.
+Preparing and building the videos needs macOS (AVFoundation, via dashcam_prep.swift and dashcam_mux.swift) or ffmpeg.
 """
 import argparse
 import datetime
@@ -29,6 +29,8 @@ import shutil
 import struct
 import subprocess
 import sys
+import time
+import urllib.error
 import urllib.request
 import wave
 
@@ -38,34 +40,30 @@ CACHE = os.path.join(HERE, ".dashcam")
 
 CRASH = ("DELTA_V", "SHORT_DELTA_V", "BRAKED_SPIKE", "REAR_SHOVE")
 
-# event: seconds into the clip where the scenario's detection falls; end: keep the clip only up to here (a crash);
-# anchor: the detections the clip is placed on (the newest one in the stream).
+# source: Commons' MP4 copy; start/seconds: the part kept; top/bottom: pixels cropped off (the source's date strip);
+# event: seconds into the kept part where the scenario's detection falls; anchor: the detections the clip is placed on
+# (the newest one in the stream).
 SCENARIOS = {
-    "lane-change": dict(
-        clip="lane-change.mp4", event=8.3, end=8.3, anchor=CRASH,
-        url="https://videos.pexels.com/video-files/30911642/13223642_1280_720_30fps.mp4",
-        credit="Pexels 30911642 \"Urban Highway Traffic from Vehicle Interior\" (Pexels License)",
-        story="a lane change to the left with the signal on, contact mid-change"),
     "cut-in": dict(
-        clip="cut-in.mp4", event=8.0, end=None, anchor=("HARD_BRAKE",),
-        url="https://assets.mixkit.co/videos/42368/42368-720.mp4",
-        credit="Mixkit 42368 \"Traveling on the highway on a sunny day\" (Mixkit Stock Video Free License)",
-        story="a car cuts in on the highway; a hard brake, then driving on"),
-    "garage": dict(
-        clip="garage.mp4", event=6.0, end=None, anchor=("LURCH",),
-        url="https://videos.pexels.com/video-files/5972195/5972195-hd_1280_720_25fps.mp4",
-        credit="Pexels 5972195 \"Empty Mall Parking\" (Pexels License)",
-        story="a sudden lurch in a parking garage (급발진 pattern)"),
+        clip="cut-in.mp4", start=0.0, seconds=14.0, top=0, bottom=22, event=4.0, anchor=CRASH,
+        url="https://upload.wikimedia.org/wikipedia/commons/transcoded/7/79/The_van_in_front_suddenly_changed_lanes_and_caused_the_vehicle_to_rear-end_collision.webm/"
+            "The_van_in_front_suddenly_changed_lanes_and_caused_the_vehicle_to_rear-end_collision.webm.360p.mpeg4.mov",
+        credit="Wikimedia Commons \"The van in front suddenly changed lanes and caused the vehicle to rear-end "
+               "collision\" (public domain)",
+        story="a car cuts across in front in city traffic; a brake, then contact (충돌)"),
+    "pile-up": dict(
+        clip="pile-up.mp4", start=8.0, seconds=22.0, top=0, bottom=20, event=10.5, anchor=("HARD_BRAKE",),
+        url="https://upload.wikimedia.org/wikipedia/commons/transcoded/b/b1/Multiple_cars_rear-end_collision_on_highway.webm/"
+            "Multiple_cars_rear-end_collision_on_highway.webm.360p.mpeg4.mov",
+        credit="Wikimedia Commons \"Multiple cars rear-end collision on highway\" (public domain)",
+        story="a pile-up ahead on the highway; a hard brake that avoids it, then driving on"),
     "rear-end": dict(
-        clip="rear-end.mp4", event=8.5, end=8.5, anchor=CRASH,
-        url="https://videos.pexels.com/video-files/3602481/3602481-hd_1280_720_60fps.mp4",
-        credit="Pexels 3602481 \"Traffic Footage Taken From The Inside Of A Motor Vehicle\" (Pexels License)",
-        story="a rear-end crash in slow traffic, then the car loses power"),
-    "night": dict(
-        clip="night.mp4", event=4.2, end=None, anchor=("HARD_BRAKE",),
-        url="https://videos.pexels.com/video-files/9010406/9010406-hd_1280_720_30fps.mp4",
-        credit="Pexels 9010406 \"A Person Driving at Night\" (Pexels License)",
-        story="a hired driver at night; a car crosses, a hard brake"),
+        clip="rear-end.mp4", start=8.0, seconds=22.0, top=21, bottom=0, event=13.0, anchor=CRASH,
+        url="https://upload.wikimedia.org/wikipedia/commons/transcoded/b/ba/The_speeding_car_rear-ended_into_the_truck_in_front%2C_and_the_front_hood_was_blown_open.webm/"
+            "The_speeding_car_rear-ended_into_the_truck_in_front%2C_and_the_front_hood_was_blown_open.webm.360p.mpeg4.mov",
+        credit="Wikimedia Commons \"The speeding car rear-ended into the truck in front, and the front hood was blown "
+               "open\" (public domain)",
+        story="at 108 km/h on the highway, a slow truck in the lane; no brake before the impact"),
 }
 
 RATE = 48000
@@ -113,6 +111,37 @@ def write_wav(path, pcm):
         w.writeframes(b"".join(struct.pack("<h", int(max(-1.0, min(1.0, x)) * 32767)) for x in pcm))
 
 
+def prepare(source, out, s):
+    """Keeps the scenario's part of the source and crops its date strip: H.264 video, no sound."""
+    if sys.platform == "darwin" and shutil.which("swift"):
+        cmd = ["swift", os.path.join(HERE, "dashcam_prep.swift"), source, out,
+               str(s["start"]), str(s["seconds"]), str(s["top"]), str(s["bottom"])]
+    elif shutil.which("ffmpeg"):
+        crop = f"crop=iw:ih-{s['top'] + s['bottom']}:0:{s['top']}"
+        cmd = ["ffmpeg", "-loglevel", "error", "-y", "-ss", str(s["start"]), "-t", str(s["seconds"]), "-i", source,
+               "-vf", crop, "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", out]
+    else:
+        sys.exit("preparing the clips needs macOS (swift) or ffmpeg")
+    subprocess.run(cmd, check=True)
+
+
+def download(url, path, tries=6):
+    """Commons answers bursts with 429: wait as asked (or 15 s) and try again."""
+    req = urllib.request.Request(url, headers={"User-Agent": "WhiteBoxDemo/1.0 (dashcam stand-in)"})
+    for attempt in range(tries):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r, open(path + ".part", "wb") as f:
+                shutil.copyfileobj(r, f)
+            os.replace(path + ".part", path)
+            return
+        except urllib.error.HTTPError as e:
+            if e.code != 429 or attempt == tries - 1:
+                raise
+            wait = int(e.headers.get("Retry-After") or 15)
+            print(f"{'':12} busy, retrying in {wait} s")
+            time.sleep(wait)
+
+
 def fetch(_args):
     os.makedirs(CACHE, exist_ok=True)
     for name, s in SCENARIOS.items():
@@ -121,10 +150,10 @@ def fetch(_args):
             print(f"{name:12} already here: {path}")
             continue
         print(f"{name:12} {s['credit']}\n{'':12} {s['url']}")
-        req = urllib.request.Request(s["url"], headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=60) as r, open(path + ".part", "wb") as f:
-            shutil.copyfileobj(r, f)
-        os.replace(path + ".part", path)
+        source = path[:-4] + ".source.mov"
+        download(s["url"], source)
+        prepare(source, path, s)
+        os.remove(source)
 
 
 def stream_dir(data, device):
@@ -205,7 +234,7 @@ def make(args):
         sys.exit(f"no {'/'.join(s['anchor'])} detection in {path}: run `scenarios.py {args.scenario}` first")
     seq, trigger, cause = found[-1]
     event_ms = wall_of(by_seq.get(cause, "")) or wall_of(by_seq[seq])
-    length = s["end"] or clip_seconds(clip)
+    length = clip_seconds(clip)
     start_ms = event_ms - int(s["event"] * 1000)
     inside = [(cid, (at - start_ms) / 1000) for cid, at in chirps if start_ms <= at <= start_ms + length * 1000 - CHIRP_MS]
     when = datetime.datetime.fromtimestamp(start_ms / 1000)
@@ -220,7 +249,7 @@ def make(args):
     print(f"{args.scenario}: {s['story']}")
     print(f"  detection   #{seq} {trigger} at {datetime.datetime.fromtimestamp(event_ms / 1000):%H:%M:%S.%f}"[:-3]
           + f", {s['event']:.1f} s into the clip")
-    print(f"  video       starts {when:%H:%M:%S}, {length:.1f} s" + (" (ends at the impact)" if s["end"] else ""))
+    print(f"  video       starts {when:%H:%M:%S}, {length:.1f} s")
     if inside:
         for cid, at in inside:
             print(f"  chirp #{cid}    at {at:6.3f} s in the video")
@@ -245,7 +274,7 @@ def clip_seconds(path):
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("fetch", help="download the stock clips").set_defaults(run=fetch)
+    sub.add_parser("fetch", help="download and prepare the clips").set_defaults(run=fetch)
     m = sub.add_parser("make", help="build the dashcam video for a scenario just driven")
     m.add_argument("scenario", choices=sorted(SCENARIOS))
     m.add_argument("--data", default=os.path.join(REPO, "server-data"), help="the mirror server's data directory")

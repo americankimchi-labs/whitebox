@@ -6,18 +6,22 @@
     python3 -I tools/virtual-console/scenarios.py cut-in
     python3 -I tools/virtual-console/dashcam.py make cut-in --data server-data
 
-    lane-change  a lane change to the left with the signal on; contact mid-change (충돌), then Park: the car speaks
-                 its post-crash guidance. The evidence summary shows the signal 4.2 s and the brake 1.4 s before.
-    cut-in       highway, a car cuts in: a hard brake, then driving on, so the car asks "방금 상황 보관할까요?".
+    cut-in       city traffic under an overpass: a car cuts across in front, the driver brakes and swerves a little,
+                 contact (충돌); then Park: the car speaks its post-crash guidance. The evidence summary shows the
+                 brake 1.2 s before contact.
+    pile-up      highway at 100 km/h, a pile-up ahead: a hard brake that avoids it, then driving on slowly, so the car
+                 asks "방금 상황 보관할까요?".
     garage       crawling in a parking garage, a stop, then a sudden lurch (급발진 pattern); then say
                  "방금 저장해" (the emulator's microphone is the computer's: `adb emu avd hostmicon`).
-    rear-end     slow traffic, a rear-end crash; on a test build an airbag signal follows (a 큰 사고, marked
-                 as a test), then the car loses power: the mirror seals what it received (10 s) and records it for
-                 the emergency contacts' page (60 s). Release builds have no test airbag: it stays a 충돌.
+    rear-end     highway at 110 km/h, a slow truck in the lane, no brake: the impact at 108 km/h; on a test build an
+                 airbag signal follows (a 큰 사고, marked as a test), then the car loses power: the mirror seals what
+                 it received (10 s) and records it for the emergency contacts' page (60 s). Release builds have no
+                 test airbag: it stays a 충돌.
     night        a hired driver at night (대리 운전 모드 on first): a car crosses, a hard brake, driving on.
 
-The car plays its dashcam sync chirp as it leaves Park and every 15 s after; each scenario puts its moment where the
-dashcam clip has it (dashcam.py) with a chirp inside the clip. Speeds are scripted writes (integer km/h), so each
+The car plays its dashcam sync chirp as it leaves Park and every 15 s after; the scenarios with real dashcam footage
+(cut-in, pile-up, rear-end; dashcam.py) put their moment where the clip has it, with a chirp inside the clip, and follow
+the clip's own speeds. Speeds are scripted writes (integer km/h), so each
 pattern lands exactly; each console write reaches the car about 0.2 s later, so the moments are scripted that much
 early. A crash is a one-sample drop with the brake at most part-way down: a full brake hands the speed to the
 console's own pedal physics, which ramps it instead. Steering: the console's sign is the opposite of the SDK's, so a positive value is a left turn.
@@ -65,35 +69,35 @@ def settle_and_park(rate=8):
     gear("Park")
 
 
-def lane_change():
+def cut_in():
     leave_park()
-    speed(10, to=60, step=0.2, accelerator=25)                       # pull away, 6 km/h/s
-    at(31.0, "left turn signal (4.2 s before contact)")
-    turn("BlinkLeft")
-    at(33.4, "steer left into the next lane")
-    controls(steering=8)
-    at(33.8, "brake (1.4 s before contact)")
-    controls(brake=25, accelerator=0)
-    speed(1.2, to=55, step=0.1, steering=12)
-    say("t+35.0s  contact: 55 -> 30 km/h in one sample (충돌)")
-    controls(speed=30, steering=0)
+    speed(7, to=35, step=0.2, accelerator=20)                        # city traffic under the overpass
+    at(35.8, "a car cuts across in front: brake (1.2 s before contact)")
+    controls(brake=40, accelerator=0)
+    speed(0.5, to=31, step=0.1)
+    at(36.3, "swerve a little to the left")
+    controls(steering=10)
+    speed(0.7, to=28, step=0.1)
+    say("t+37.0s  contact: 28 -> 8 km/h in one sample (충돌)")
+    controls(speed=8, steering=0)
     time.sleep(0.1)
-    turn("Off")
-    speed(2, to=0, brake=100)
+    speed(1.5, to=0, brake=100)
     speed(12, to=0, step=0.5)
     gear("Park")
     say("Park: the car speaks its post-crash guidance")
 
 
-def cut_in():
+def pile_up():
     leave_park()
     speed(16, to=100, step=0.2, accelerator=30)                      # highway speed
-    at(33.0, "a car cuts in: hard brake 100 -> 78 km/h in 1 s")
+    at(33.0, "a pile-up ahead: hard brake 100 -> 78 km/h in 1 s")
     controls(brake=50, accelerator=0)
     speed(1.0, to=78, step=0.1)
-    controls(brake=0, accelerator=20)
-    say("driving on (the keep question comes 5 s after the brake; answer within 10 s, or stay silent to keep it)")
-    speed(20, step=0.2)
+    controls(brake=20)
+    speed(3.0, to=50, step=0.2)
+    controls(brake=0, accelerator=10)
+    say("driving on past it (the keep question comes 5 s after the brake; answer within 10 s, or stay silent to keep it)")
+    speed(20, to=45, step=0.2)
     settle_and_park()
 
 
@@ -115,23 +119,23 @@ def garage():
 
 def rear_end():
     leave_park()
-    speed(5, to=20, step=0.2, accelerator=15)                        # slow traffic
-    for t, kmh in ((12, 12), (18, 22), (24, 15), (30, 20), (34, 24)):
-        steps = max(1, round((t - (time.time() - clock["drive"])) / 0.2))
-        speed(steps * 0.2, to=kmh, step=0.2)
-    at(34.6, "the driver brakes too late")
-    controls(brake=30, accelerator=0)
-    at(35.0, "rear-end: 24 -> 0 km/h in one sample")
-    controls(speed=0)  # a full brake would hand the speed to the console's own pedal physics, which ramps it down
+    speed(18, to=113, step=0.2, accelerator=40)                      # onto the highway
+    at(30.0, "cruising, easing off: 113 -> 108 km/h, no brake")
+    controls(accelerator=0)
+    speed(9.8, to=108, step=0.2)
+    at(40.0, "a slow truck in the lane: impact at 108 km/h, 108 -> 86 in one sample, no brake")
+    controls(speed=86)
     time.sleep(0.15)
     # On a test build the emulator's missing airbag is injected (recorded as a test); a release build ignores it.
     subprocess.run(["adb", "shell", "am", "start", "--user", "10", "-n", f"{PKG}/.MainActivity", "--ez", "test_airbag", "true"],
                    check=False, capture_output=True)
     say("airbag signal (test build), the seal and its keys go out first")
-    time.sleep(1.5)
+    speed(2.2, to=57, step=0.2)
+    controls(brake=30)
+    speed(0.6, to=50, step=0.2)
     subprocess.run(["adb", "shell", "am", "force-stop", "--user", "10", PKG], check=False)
     say("POWER LOSS: the car stops sending; watch the dashboard (server seal +10 s, family page +60 s)")
-    time.sleep(2)
+    speed(5, to=0, step=0.5)
     gear("Park")
 
 
@@ -156,10 +160,13 @@ def night():
     say("end the trip from the owner's phone (지금 끝내기), or leave it parked for 10 minutes")
 
 
-SCENARIOS = {"lane-change": lane_change, "cut-in": cut_in, "garage": garage, "rear-end": rear_end, "night": night}
+SCENARIOS = {"cut-in": cut_in, "pile-up": pile_up, "garage": garage, "rear-end": rear_end, "night": night}
 
 if __name__ == "__main__":
     if len(sys.argv) != 2 or sys.argv[1] not in SCENARIOS:
         sys.exit("usage: scenarios.py " + "|".join(SCENARIOS))
     SCENARIOS[sys.argv[1]]()
-    say(f"done: python3 -I tools/virtual-console/dashcam.py make {sys.argv[1]} --data <server data>")
+    if sys.argv[1] in ("cut-in", "pile-up", "rear-end"):
+        say(f"done: python3 -I tools/virtual-console/dashcam.py make {sys.argv[1]} --data <server data>")
+    else:
+        say("done")
