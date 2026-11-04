@@ -41,6 +41,14 @@ sealed interface ChainEntry {
     data class Handover(val event: HandoverEvent, override val at: Timestamp) : ChainEntry
 
     data class Library(val event: LibraryEvent, override val at: Timestamp) : ChainEntry
+
+    /**
+     * The state a capsule's window started with: [signal] as last recorded before entry [asOfSeq] (the window's first
+     * entry). Signals are written on change, so a seatbelt buckled or a gear chosen long before the window would
+     * otherwise be missing from the capsule; the car writes one of these per state when the capsule opens. Readers
+     * treat it as the state at the start of the window, never as something the driver did in it.
+     */
+    data class Carried(val signal: VehicleSignal, val asOfSeq: Long, override val at: Timestamp) : ChainEntry
 }
 
 enum class EscalationLevel { NORMAL, ALERT, TRIGGERED }

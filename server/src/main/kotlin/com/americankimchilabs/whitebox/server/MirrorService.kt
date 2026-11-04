@@ -73,9 +73,9 @@ class MirrorService(
     private fun levelSeen(stream: StreamId, level: EscalationLevel, atMs: Long) {
         if (lastLevel.put(stream, level) == level) return
         note(stream, atMs, when (level) {
-            EscalationLevel.NORMAL -> "정상 (위험 신호 해제)"
-            EscalationLevel.ALERT -> "위험 신호: 급제동 등 — 기록을 바로바로 받는 중"
-            EscalationLevel.TRIGGERED -> "사고 감지: 충돌 수준 — 차가 기록을 봉인하고 보내는 중"
+            EscalationLevel.NORMAL -> "기록 중 (급제동 감지 해제)"
+            EscalationLevel.ALERT -> "급제동 감지 — 기록을 바로바로 받는 중"
+            EscalationLevel.TRIGGERED -> "기록 보관 — 차가 기록을 봉인하고 보내는 중"
         })
     }
 
@@ -297,13 +297,13 @@ class MirrorService(
             is DeadMan.Action.ConsiderNotice -> {
                 val crash = action.crashSeen || crashSignature(action.stream, action.episodeStartMs)
                 if (!crash) {
-                    note(action.stream, now, "${Tuning.DEADMAN_NOTIFY_SILENCE_S}초째 신호 없음, 충돌 수준 증거 없음")
+                    note(action.stream, now, "${Tuning.DEADMAN_NOTIFY_SILENCE_S}초째 신호 없음, 충격 기록 없음")
                     continue
                 }
                 // Recorded, never texted: the family can open it on their page, but nobody is alarmed by a detector.
                 val attestation = store.log(action.stream, "attested").lastOrNull() ?: attest(action.stream, action.episodeStartMs, now)
                 store.appendLog(action.stream, SEVERE_SILENT, "$now|${attestation.substringBefore("|sig=")}")
-                note(action.stream, now, "충돌 수준 사고 뒤 ${Tuning.DEADMAN_NOTIFY_SILENCE_S}초째 신호 없음 — 서버가 봉인한 기록을 비상 연락처에 저장된 분이 볼 수 있음 (문자는 보내지 않음)")
+                note(action.stream, now, "충격 감지 뒤 ${Tuning.DEADMAN_NOTIFY_SILENCE_S}초째 신호 없음 — 서버가 봉인한 기록을 비상 연락처에 저장된 분이 볼 수 있음 (문자는 보내지 않음)")
                 deadMan.notified(action.stream)
             }
         }

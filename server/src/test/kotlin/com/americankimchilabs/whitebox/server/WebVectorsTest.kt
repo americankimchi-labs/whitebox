@@ -105,6 +105,8 @@ class WebVectorsTest {
         ChainEntry.Library(LibraryEvent.PlanChanged(Tier.FREE, Tier.PRO), ts(18)),
         ChainEntry.Library(LibraryEvent.PlanChanged(Tier.PRO, null), ts(18)),
         ChainEntry.Library(LibraryEvent.Left("C3"), ts(18)),
+        ChainEntry.Carried(VehicleSignal.SeatBelt("ROW_1_LEFT", true), 3, ts(18)),
+        ChainEntry.Carried(VehicleSignal.Gear(GearPosition.DRIVE), 3, ts(18)),
         ChainEntry.Library(LibraryEvent.Returned("C3"), ts(18)),
         ChainEntry.Library(LibraryEvent.Extended("C4", 1_800_000_000_000), ts(18)),
         ChainEntry.Recorder(RecorderEvent.Pruned(120, 1_700_000_000_001, unsent = true), ts(18)),
@@ -156,6 +158,24 @@ class WebVectorsTest {
         }
     }
 
+    /**
+     * Stopped at a light with the brake held since long before the window, then shoved from behind: every state the
+     * window starts with is a carried one, written when the capsule opened (after the cause, in chain order).
+     */
+    private fun carriedCrash(): List<ChainEntry> = buildList {
+        for (i in 0 until 150) {
+            val ms = i * 100L
+            add(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(if (ms >= 12_000) ((ms - 12_000) / 100f).coerceAtMost(8f) / 3.6f else 0f), ts(ms))))
+        }
+        val open = ts(15_050)
+        listOf(
+            VehicleSignal.BrakePedal(true), VehicleSignal.Gear(GearPosition.DRIVE), VehicleSignal.TurnSignal(TurnSignalState.LEFT),
+            VehicleSignal.SteeringAngle(4f), VehicleSignal.SeatBelt("ROW_1_LEFT", true), VehicleSignal.SeatOccupancy("ROW_1_LEFT", true),
+            VehicleSignal.Light(Lamp.LOW_BEAM, true), VehicleSignal.Wiper("FRONT_WINDSHIELD", "CONTINUOUS_LEVEL_1"),
+            VehicleSignal.CruiseControl(CruiseState.ENABLED), VehicleSignal.Door("ROW_1_LEFT", false),
+        ).forEach { add(ChainEntry.Carried(it, 0, open)) }
+    }
+
     @Test
     fun writeVectorsForTheViewer() {
         val ring = MemoryKeyRing()
@@ -197,6 +217,19 @@ class WebVectorsTest {
             "legacy" to legacy,
             "legacyDecoded" to listOf(obj("kind" to "BRAKE_PEDAL", "value" to true), obj("kind" to "STEERING_ANGLE", "value" to 3.5)),
             "minute" to obj("epoch" to ring.current, "minute" to minute, "key" to b64.encodeToString(RecordCipher.minuteKey(ring.key(ring.current)!!, minute))),
+            "carried" to run {
+                val events = carriedCrash().mapIndexed { i, e -> DriveEvent(i.toLong(), e) }
+                val store = FileEventStore(tmp.newFolder(), cipher = EpochRecordCipher(ring) { wall })
+                events.forEach { store.append(it.entry) }
+                val cause = 121L // the first speed sample above standstill
+                val t = EvidenceTimeline.build(events, cause)
+                obj(
+                    "records" to store.records(0, events.size - 1L),
+                    "causeSeq" to cause,
+                    "timeline" to timelineJson(t),
+                    "readings" to EvidenceReadings.of(events, cause, t.context).map { obj("text" to it.text, "note" to it.note) },
+                )
+            },
             "capsule" to obj(
                 "records" to capsuleStore.records(0, last),
                 "causeSeq" to causeSeq,
@@ -230,6 +263,7 @@ class WebVectorsTest {
     /** A chain entry in the shape the browser's codec decodes it to. */
     private fun decodedJson(e: ChainEntry): Json = when (e) {
         is ChainEntry.Signal -> obj("type" to "S", "kind" to e.sample.signal.kind.name, "value" to signalJson(e.sample.signal), "at" to at(e.at), "src" to e.sample.sourceElapsedNanos)
+        is ChainEntry.Carried -> obj("type" to "C", "kind" to e.signal.kind.name, "value" to signalJson(e.signal), "at" to at(e.at), "asOf" to e.asOfSeq)
         is ChainEntry.Location -> with(e.fix) { obj("type" to "L", "lat" to latitude, "lon" to longitude, "acc" to accuracyMeters, "gps" to gpsTimeMillis, "at" to at(e.at)) }
         is ChainEntry.Recorder -> when (val r = e.event) {
             is RecorderEvent.RecordingStarted -> obj(

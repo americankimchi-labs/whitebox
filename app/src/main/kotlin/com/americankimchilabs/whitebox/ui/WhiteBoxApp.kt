@@ -138,6 +138,7 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
     val missing by AppGraph.missingGrants.collectAsState()
 
     val level by recorder.level.collectAsState()
+    val sealing by recorder.sealing.collectAsState()
     val allCapsules by recorder.capsules.collectAsState()
     val libraryItems by (session.library?.items ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList<LibraryItem>()) }).collectAsState()
     val tier by (session.library?.tier ?: remember { kotlinx.coroutines.flow.MutableStateFlow(Entitlements.DEFAULT) }).collectAsState()
@@ -181,7 +182,7 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
     Column(Modifier.fillMaxSize().padding(32.dp)) {
         // Handover mode is turned on from here, parked, when it is off (the sheet explains it first).
         val handoverButton = parked && session.handover != null && handoverPhase == HandoverPhase.OFF && !handoverSheet
-        StatusHeader(labels, live, level, session.mode, onHandover = if (handoverButton) ({ handoverSheet = true }) else null)
+        StatusHeader(labels, live, level, sealing, session.mode, onHandover = if (handoverButton) ({ handoverSheet = true }) else null)
         Spacer(Modifier.padding(8.dp))
         if (!parked) {
             // Driving: read-only, nothing to scroll or press (distraction-optimized).
@@ -274,7 +275,7 @@ private fun UpdateNotice(base: String?) {
 }
 
 @Composable
-private fun StatusHeader(labels: Labels, s: LiveState, level: EscalationLevel, mode: SourceMode, onHandover: (() -> Unit)? = null) {
+private fun StatusHeader(labels: Labels, s: LiveState, level: EscalationLevel, sealing: CapsuleTrigger?, mode: SourceMode, onHandover: (() -> Unit)? = null) {
     val color = when (level) {
         EscalationLevel.NORMAL -> Color(0xFF2E7D32)
         EscalationLevel.ALERT -> Color(0xFFF9A825)
@@ -282,7 +283,7 @@ private fun StatusHeader(labels: Labels, s: LiveState, level: EscalationLevel, m
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
-            labels.level(level),
+            labels.level(level, sealing),
             color = Color.White,
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,

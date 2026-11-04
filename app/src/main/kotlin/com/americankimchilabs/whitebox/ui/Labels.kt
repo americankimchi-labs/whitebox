@@ -71,13 +71,12 @@ class Labels(private val res: Resources) {
 
     fun speed(kmh: Float?) = kmh?.let { res.getString(R.string.speed_kmh, it) } ?: none
 
-    fun level(l: EscalationLevel) = res.getString(
-        when (l) {
-            EscalationLevel.NORMAL -> R.string.level_normal
-            EscalationLevel.ALERT -> R.string.level_alert
-            EscalationLevel.TRIGGERED -> R.string.level_triggered
-        },
-    )
+    /** The status banner; while a moment is sealed it carries that moment's name (the trigger, as its record shows it). */
+    fun level(l: EscalationLevel, sealing: CapsuleTrigger? = null) = when (l) {
+        EscalationLevel.NORMAL -> res.getString(R.string.level_normal)
+        EscalationLevel.ALERT -> res.getString(R.string.level_alert)
+        EscalationLevel.TRIGGERED -> res.getString(R.string.level_triggered, trigger(sealing ?: CapsuleTrigger.DELTA_V))
+    }
 
     fun trigger(t: CapsuleTrigger) = res.getString(
         when (t) {
@@ -226,6 +225,8 @@ class Labels(private val res: Resources) {
             is VehicleSignal.AcceleratorPedal, is VehicleSignal.BrakePressure -> null
         }
         is ChainEntry.Location -> null
+        // The states a capsule's window started with: context for its evidence summary, not news for the timeline.
+        is ChainEntry.Carried -> null
         is ChainEntry.Recorder -> when (val r = e.event) {
             is RecorderEvent.RecordingStarted -> r.gap?.let { res.getString(R.string.row_started_gap, gapCause(it.cause), it.durationMillis / 1000.0) }
                 ?: res.getString(R.string.row_started)
@@ -236,7 +237,8 @@ class Labels(private val res: Resources) {
             is RecorderEvent.Slept -> res.getString(R.string.row_slept, (r.sleptMillis / 1000).let { s -> if (s >= 60) "${s / 60}분 ${s % 60}초" else "${s}초" })
         }
         is ChainEntry.Escalation -> when (val x = e.event) {
-            is EscalationEvent.LevelChanged -> res.getString(R.string.row_level, level(x.level))
+            is EscalationEvent.LevelChanged ->
+                if (x.level == EscalationLevel.TRIGGERED) res.getString(R.string.row_level_triggered) else res.getString(R.string.row_level, level(x.level))
             is EscalationEvent.Triggered -> triggerRow(x)
             is EscalationEvent.IncidentOffered -> res.getString(R.string.row_offered)
             is EscalationEvent.IncidentAnswered -> res.getString(

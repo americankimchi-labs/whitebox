@@ -33,6 +33,12 @@ object EvidenceReadings {
         val s = (ms / 1000.0).roundToInt()
         return if (s >= 60) "${s / 60}분 ${s % 60}초" else "${s}초"
     }
+    /** How long ago a window began, in whole minutes when it is whole ("2분", "1분 30초", "45초"). */
+    private fun ago(ms: Long): String {
+        val s = (ms / 1000.0).roundToInt()
+        return if (s >= 60) "${s / 60}분" + (if (s % 60 != 0) " ${s % 60}초" else "") else "${s}초"
+    }
+
     private fun degrees(d: Double): String {
         val n = d.roundToInt()
         return if (n == 0) "0°" else "${if (n > 0) "+" else ""}$n°"
@@ -71,7 +77,10 @@ object EvidenceReadings {
         val start = events.first().entry.at.wallMillis
         val out = mutableListOf<Reading>()
         fun add(text: String, note: String? = null, weight: Int = 1) { out += Reading(text, note, weight) }
-        val signals = events.mapNotNull { e -> (e.entry as? ChainEntry.Signal)?.let { it.at.wallMillis to it.sample.signal } }
+        // The states the window started with (written when the capsule opened) count as signals just before its start.
+        // Steering is left out: a reading compares its angles over time, and a carried angle has no time of its own.
+        val carried = events.mapNotNull { e -> (e.entry as? ChainEntry.Carried)?.signal?.takeIf { it !is VehicleSignal.SteeringAngle }?.let { start - 1 to it } }
+        val signals = carried + events.mapNotNull { e -> (e.entry as? ChainEntry.Signal)?.let { it.at.wallMillis to it.sample.signal } }
         fun <T> series(pick: (VehicleSignal) -> T?): List<Point<T>> = signals.mapNotNull { (w, s) -> pick(s)?.let { Point(w, it) } }
 
         // Speed: ten seconds before, the start of slowing down, and at the moment.
@@ -109,7 +118,11 @@ object EvidenceReadings {
         val b = stateAt(brake, causeWall) { it }
         val pressedBefore = brake.filter { it.v && it.wall <= causeWall && it.wall >= causeWall - 10_000 }
         when {
-            b != null && b.v -> add("브레이크는 감지 ${sec(causeWall - b.since)}초 전에 밟았고, 감지 순간에도 밟고 있었습니다.", weight = 3)
+            b != null && b.v -> add(
+                if (b.since < start) "브레이크는 감지 ${ago(causeWall - start)} 전에 이미 밟고 있었고, 감지 순간에도 밟고 있었습니다."
+                else "브레이크는 감지 ${sec(causeWall - b.since)}초 전에 밟았고, 감지 순간에도 밟고 있었습니다.",
+                weight = 3,
+            )
             pressedBefore.isNotEmpty() -> add("감지 전 10초 사이에 브레이크를 ${pressedBefore.size}번 밟았고, 감지 순간에는 떼고 있었습니다.", weight = 2)
             brake.isNotEmpty() -> add("감지 전 10초 동안 브레이크를 밟은 기록이 없습니다.", weight = 2)
         }
@@ -138,7 +151,8 @@ object EvidenceReadings {
         // Turn signal.
         val turn = stateAt(series { (it as? VehicleSignal.TurnSignal)?.state?.name }, causeWall) { it }
         if (turn != null && turn.v != "OFF") {
-            add("방향지시등(${if (turn.v == "LEFT") "왼쪽" else "오른쪽"})은 감지 ${sec(causeWall - turn.since)}초 전부터 켜져 있었습니다.", weight = 3)
+            val since = if (turn.since < start) "감지 ${ago(causeWall - start)} 전에 이미" else "감지 ${sec(causeWall - turn.since)}초 전부터"
+            add("방향지시등(${if (turn.v == "LEFT") "왼쪽" else "오른쪽"})은 $since 켜져 있었습니다.", weight = 3)
         } else if (turn != null) {
             add("감지 순간 방향지시등은 꺼져 있었습니다.")
         }

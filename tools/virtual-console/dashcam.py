@@ -42,23 +42,24 @@ CRASH = ("DELTA_V", "SHORT_DELTA_V", "BRAKED_SPIKE", "REAR_SHOVE")
 
 # source: Commons' MP4 copy; start/seconds: the part kept; top/bottom: pixels cropped off (the source's date strip);
 # event: seconds into the kept part where the scenario's detection falls; anchor: the detections the clip is placed on
-# (the newest one in the stream).
+# (the newest one in the stream); watch: the part worth playing when showing it (from about two seconds before the
+# moment to where nothing new happens).
 SCENARIOS = {
     "cut-in": dict(
-        clip="cut-in.mp4", start=0.0, seconds=14.0, top=0, bottom=22, event=4.0, anchor=CRASH,
+        clip="cut-in.mp4", start=0.0, seconds=14.0, top=0, bottom=22, event=4.0, anchor=CRASH, watch=(2.0, 6.5),
         url="https://upload.wikimedia.org/wikipedia/commons/transcoded/7/79/The_van_in_front_suddenly_changed_lanes_and_caused_the_vehicle_to_rear-end_collision.webm/"
             "The_van_in_front_suddenly_changed_lanes_and_caused_the_vehicle_to_rear-end_collision.webm.360p.mpeg4.mov",
         credit="Wikimedia Commons \"The van in front suddenly changed lanes and caused the vehicle to rear-end "
                "collision\" (public domain)",
         story="a car cuts across in front in city traffic; a brake, then contact (충돌)"),
     "pile-up": dict(
-        clip="pile-up.mp4", start=8.0, seconds=22.0, top=0, bottom=20, event=10.5, anchor=("HARD_BRAKE",),
+        clip="pile-up.mp4", start=8.0, seconds=22.0, top=0, bottom=20, event=10.5, anchor=("HARD_BRAKE",), watch=(8.5, 16.0),
         url="https://upload.wikimedia.org/wikipedia/commons/transcoded/b/b1/Multiple_cars_rear-end_collision_on_highway.webm/"
             "Multiple_cars_rear-end_collision_on_highway.webm.360p.mpeg4.mov",
         credit="Wikimedia Commons \"Multiple cars rear-end collision on highway\" (public domain)",
         story="a pile-up ahead on the highway; a hard brake that avoids it, then driving on"),
     "rear-end": dict(
-        clip="rear-end.mp4", start=8.0, seconds=22.0, top=21, bottom=0, event=13.0, anchor=CRASH,
+        clip="rear-end.mp4", start=8.0, seconds=22.0, top=21, bottom=0, event=13.0, anchor=CRASH, watch=(11.0, 16.0),
         url="https://upload.wikimedia.org/wikipedia/commons/transcoded/b/ba/The_speeding_car_rear-ended_into_the_truck_in_front%2C_and_the_front_hood_was_blown_open.webm/"
             "The_speeding_car_rear-ended_into_the_truck_in_front%2C_and_the_front_hood_was_blown_open.webm.360p.mpeg4.mov",
         credit="Wikimedia Commons \"The speeding car rear-ended into the truck in front, and the front hood was blown "
@@ -255,7 +256,7 @@ def make(args):
             print(f"  chirp #{cid}    at {at:6.3f} s in the video")
     else:
         print("  no chirp fell inside this clip: the phone will place it by the file's clock (about a second)")
-    print(f"  written     {out}\n  clip        {s['credit']}")
+    print(f"  written     {out}\n  clip        {s['credit']}\n  watch       {s['watch'][0]:.1f} {s['watch'][1]:.1f} s")
 
 
 def clip_seconds(path):

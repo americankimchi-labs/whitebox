@@ -1,5 +1,6 @@
 package com.americankimchilabs.whitebox.server
 
+import com.americankimchilabs.whitebox.domain.CapsuleTrigger
 import com.americankimchilabs.whitebox.domain.EscalationLevel
 import com.americankimchilabs.whitebox.domain.Tier
 import com.americankimchilabs.whitebox.domain.Tuning
@@ -12,11 +13,11 @@ private val clock = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.syst
 private fun time(ms: Long) = clock.format(Instant.ofEpochMilli(ms))
 
 private val TRIGGER = mapOf(
-    "AIRBAG" to "에어백 전개", "TEST_AIRBAG" to "시험용 에어백 신호", "DELTA_V" to "충격 감지", "SHORT_DELTA_V" to "짧은 충격 감지", "BRAKED_SPIKE" to "제동 중 충격",
-    "REAR_SHOVE" to "후방 충격 (정차·제동 중)", "MANUAL" to "음성으로 보관", "HARD_BRAKE" to "급제동", "EVASIVE_STEER" to "급핸들 (회피)",
-    "BRAKE_SWERVE" to "급제동 + 급핸들", "SHIFT_TO_NEUTRAL" to "주행 중 중립(N) 변속", "BRAKE_SPEED_RISE" to "브레이크를 밟는데 속도 상승",
-    "BRAKE_NO_DECEL" to "브레이크를 밟는데 감속 없음", "BRAKE_PUMPING" to "브레이크 반복 조작", "PARKING_BRAKE_MOVING" to "주행 중 주차 브레이크",
-    "LURCH" to "정차 중 급출발", "HANDOVER" to "대리 운전 리포트", "POST_EVENT_EXIT" to "위험 상황 직후 하차", "ALERT_RESOLVED" to "급제동 후 정차",
+    "AIRBAG" to "에어백 전개", "TEST_AIRBAG" to "시험용 에어백 신호", "DELTA_V" to "충격 감지", "SHORT_DELTA_V" to "충격 감지", "BRAKED_SPIKE" to "제동 중 충격 감지",
+    "REAR_SHOVE" to "후방 추돌 (정차·제동 중)", "MANUAL" to "음성으로 보관", "HARD_BRAKE" to "급제동", "EVASIVE_STEER" to "급핸들",
+    "BRAKE_SWERVE" to "급제동하며 급핸들", "SHIFT_TO_NEUTRAL" to "주행 중 기어 중립(N)", "BRAKE_SPEED_RISE" to "브레이크를 밟았는데 속도 증가",
+    "BRAKE_NO_DECEL" to "브레이크를 밟아도 속도가 안 줄어듦", "BRAKE_PUMPING" to "브레이크를 여러 번 밟음", "PARKING_BRAKE_MOVING" to "주행 중 주차 브레이크 작동",
+    "LURCH" to "급출발", "HANDOVER" to "대리 운전 리포트", "POST_EVENT_EXIT" to "위험 순간 직후 하차", "ALERT_RESOLVED" to "급제동 후 정차",
 )
 
 /**
@@ -75,16 +76,20 @@ fun dashboardCards(service: MirrorService, sms: DemoSmsSender? = null): String {
         val silentS = s.silentForMs?.div(1000)
         val (badge, cls, sentence) = when {
             s.severeSilent.isNotEmpty() && s.level != EscalationLevel.NORMAL ->
-                Triple("사고 뒤 신호 끊김", "bad", "충돌 수준의 사고 뒤 차에서 신호가 없습니다. 서버가 받은 기록을 봉인해 두었습니다.")
-            s.level == EscalationLevel.TRIGGERED -> Triple("사고 감지", "bad", "사고가 감지되어 차가 기록을 봉인하고 바로 보내는 중입니다.")
-            s.level == EscalationLevel.ALERT -> Triple("위험 신호", "warn", "급제동 같은 위험 신호가 있어 기록을 생기는 대로 바로 받고 있습니다.")
+                Triple("충격 뒤 연결 끊김", "bad", "충격이 감지된 뒤 차에서 신호가 없습니다. 서버가 받은 기록을 봉인해 두었습니다.")
+            // The car's banner words: the moment being sealed by its name, then 기록 보관.
+            s.level == EscalationLevel.TRIGGERED -> Triple(
+                "${capsules.filter { c -> CapsuleTrigger.entries.any { it.name == c.trigger && it.crash } }.maxByOrNull { it.firstSeq }?.let { TRIGGER[it.trigger] } ?: "충격 감지"} · 기록 보관", "bad",
+                "차가 기록을 봉인하고 바로 보내는 중입니다.",
+            )
+            s.level == EscalationLevel.ALERT -> Triple("급제동 감지", "warn", "급제동이 감지되어 기록을 생기는 대로 바로 받고 있습니다.")
             silentS != null && silentS < 30 -> Triple("주행 중", "good", "정상적으로 기록을 받고 있습니다.")
             s.records > 0 -> Triple("꺼짐", "", "차가 꺼져 있습니다. 받은 기록은 안전하게 보관하고 있습니다.")
             else -> Triple("기록 없음", "", "아직 받은 기록이 없습니다.")
         }
         val kind = if (s.stream.stream == "replay") "데모 차량" else "실제 차량"
         val moments = capsules.take(5).joinToString("") { c ->
-            val name = if (c.trigger == "SERVER_SEAL") "사고 뒤 신호 끊김 (서버 봉인)" else TRIGGER[c.trigger] ?: c.trigger
+            val name = if (c.trigger == "SERVER_SEAL") "충격 뒤 연결 끊김 (서버 봉인)" else TRIGGER[c.trigger] ?: c.trigger
             val tag = when {
                 c.severe -> "<span class='badge bad'>큰 사고</span>"
                 c.trigger == "HANDOVER" -> "<span class='badge'>대리 운전</span>"

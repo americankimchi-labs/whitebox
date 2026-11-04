@@ -53,7 +53,7 @@ test('without a key the values stay locked, and only markers read', async () => 
   for (const line of V.lines) {
     const r = Codec.parseLine(line);
     const d = await Codec.decode(r.entry, Codec.keyring());
-    if (d.type === 'S' || d.type === 'L') assert.equal(d.locked, true);
+    if (d.type === 'S' || d.type === 'C' || d.type === 'L') assert.equal(d.locked, true);
     else assert.equal(d.locked, undefined);
   }
 });
@@ -112,6 +112,10 @@ test('the evidence timeline is the car\'s, lane for lane', async () => {
   assert.ok(t.lines.length >= 4);
   assert.match(Packet.svg(t), /^<svg/);
   for (const l of t.lines) assert.match(Packet.lineText(l), /초 전|그대로/);
+  // Full screen draws taller lanes on the same time scale (the playhead's place does not move).
+  const tall = Packet.svg(t, { lane: 90 }), h = (svg) => Number(/viewBox="0 0 \d+ (\d+)"/.exec(svg)[1]);
+  assert.ok(h(tall) > h(Packet.svg(t)) * 2);
+  assert.equal(/<line x1="([\d.]+)"[^>]*stroke="var\(--bad/.exec(tall)[1], /<line x1="([\d.]+)"[^>]*stroke="var\(--bad/.exec(Packet.svg(t))[1]);
 });
 
 test('the plain readings are the car\'s, sentence for sentence', async () => {
@@ -123,6 +127,25 @@ test('the plain readings are the car\'s, sentence for sentence', async () => {
   const mine = Report.interpret(events, t.causeWall, t.context).map((r) => ({ text: r.text, note: r.note ?? null }));
   assert.deepEqual(mine, V.capsule.readings);
   assert.ok(mine.length >= 10, `only ${mine.length} readings`);
+});
+
+test('states carried into a capsule\'s window read as held throughout, on the car and the phone alike', async () => {
+  const Report = require(path.join(web, 'report.js'));
+  const ring = Codec.keyring({ roots });
+  const events = [];
+  for (const line of V.carried.records) { const r = Codec.parseLine(line); events.push({ seq: r.seq, e: await Codec.decode(r.entry, ring) }); }
+  const t = Packet.build(events, V.carried.causeSeq);
+  const { pre, post, causeSeq, causeWall, ...mine } = t;
+  close(mine, V.carried.timeline, 'carried timeline');
+  assert.equal(t.gear[0].value, 'DRIVE');
+  assert.equal(t.context.seatBelts.ROW_1_LEFT, true);
+  assert.ok(Packet.contextRows(t.context).length >= 4, 'the state at the moment is shown');
+  for (const l of t.lines.filter((l) => l.type !== 'STEERING_PEAK')) assert.match(Packet.lineText(l), /그대로/);
+  const readings = Report.interpret(events, t.causeWall, t.context).map((r) => ({ text: r.text, note: r.note ?? null }));
+  assert.deepEqual(readings, V.carried.readings);
+  assert.ok(readings.some((r) => /이미 밟고/.test(r.text)), 'the held brake');
+  assert.ok(readings.some((r) => /운전석 안전벨트를 매고/.test(r.text)), 'the belt buckled before the window');
+  assert.ok(Report.log(events, t.causeWall).some((row) => /구간 시작 때/.test(row[3])), 'the log shows them as the starting state');
 });
 
 test('the log quotes the car\'s spoken words, never a code', async () => {
@@ -161,6 +184,18 @@ test('the sync chirp template is the car\'s, sample for sample', () => {
   const c = Sync.chirp(V.chirp.sampleRate);
   assert.equal(c.length, V.chirp.length);
   V.chirp.head.forEach((v, i) => assert.ok(Math.abs(c[i] - v) < 1e-6, `sample ${i}`));
+});
+
+test('full screen, the lanes span the clip itself, and the playhead crosses them', () => {
+  // A 14 s clip that starts 4 s before the moment: the lanes run from −4 s to +10 s around it.
+  const span = Sync.clipSpan(1_000_000 - 4000, 14_000, 1_000_000);
+  assert.deepEqual(span, { pre: 4000, post: 10_000 });
+  const t = { pre: span.pre, post: span.post };
+  assert.ok(Packet.xFraction(t, -4000) < 0.25 && Packet.xFraction(t, 10_000) > 0.97, 'first and last frame at the edges');
+  assert.ok(Math.abs(Packet.msAtFraction(t, Packet.xFraction(t, 2500)) - 2500) < 1e-6);
+  // A clip shorter than a second still gets a readable span.
+  const tiny = Sync.clipSpan(5000, 400, 5000);
+  assert.ok(tiny.pre + tiny.post >= 1000);
 });
 
 test('the chirp is found in a noisy recording to within a millisecond', () => {

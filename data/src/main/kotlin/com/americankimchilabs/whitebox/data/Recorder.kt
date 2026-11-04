@@ -47,6 +47,13 @@ class Recorder(
     private val _level = MutableStateFlow(EscalationLevel.NORMAL)
     val level: StateFlow<EscalationLevel> = _level.asStateFlow()
 
+    /** Capsules whose carried-in states are written (once each, when the capsule first seals). */
+    private val carriedFor = HashSet<String>()
+
+    private val _sealing = MutableStateFlow<CapsuleTrigger?>(null)
+    /** While [level] is TRIGGERED: what is being sealed (the newest crash trigger, e.g. an airbag taking over). */
+    val sealing: StateFlow<CapsuleTrigger?> = _sealing.asStateFlow()
+
     private val _capsules = MutableStateFlow(seals.all())
     val capsules: StateFlow<List<CapsuleSeal>> = _capsules.asStateFlow()
 
@@ -109,10 +116,14 @@ class Recorder(
     private suspend fun handle(event: DriveEvent, outputs: List<EngineOutput>): DriveEvent {
         for (output in outputs) {
             when (output) {
-                is EngineOutput.Append -> append(ChainEntry.Escalation(output.event, clock.now()))
+                is EngineOutput.Append -> {
+                    append(ChainEntry.Escalation(output.event, clock.now()))
+                    (output.event as? EscalationEvent.Triggered)?.trigger?.takeIf { it.crash }?.let { _sealing.value = it }
+                }
                 is EngineOutput.Seal -> {
                     // A crash signature inside the asked-about capsule: it is no longer the driver's to release.
                     if (output.trigger.crash && _incident.value?.id == output.capsuleId) _incident.value = null
+                    if (carriedFor.add(output.capsuleId)) writeCarried(output.firstSeq)
                     seal(IncidentCapsule(output.capsuleId, output.trigger, output.firstSeq, store.head()!!.lastSeq), output.final)
                 }
                 is EngineOutput.IncidentPrompt -> {
@@ -125,6 +136,7 @@ class Recorder(
         }
         expireIncident(event.entry.at.elapsedNanos)
         _level.value = engine.level
+        if (engine.level != EscalationLevel.TRIGGERED) _sealing.value = null
         return event
     }
 
@@ -166,7 +178,36 @@ class Recorder(
             storedSpeed = it.metersPerSecond
             storedSpeedNs = entry.at.elapsedNanos
         }
-        return store.append(entry).also { _events.tryEmit(it) }
+        return store.append(entry).also {
+            _events.tryEmit(it)
+            remember(it)
+        }
+    }
+
+    /** Recent values of every state, newest last: enough to know what each was just before a capsule's window. */
+    private val states = HashMap<String, ArrayDeque<DriveEvent>>()
+
+    private fun remember(event: DriveEvent) {
+        val signal = (event.entry as? ChainEntry.Signal)?.sample?.signal ?: return
+        val key = carriedKey(signal) ?: return
+        val list = states.getOrPut(key) { ArrayDeque() }
+        list.addLast(event)
+        // Keep the one value in force when the oldest window still open could have started, and every one since.
+        val horizon = event.entry.at.elapsedNanos - CARRIED_HORIZON_S * 1_000_000_000L
+        while (list.size >= 2 && list[1].entry.at.elapsedNanos < horizon) list.removeFirst()
+    }
+
+    /**
+     * When a capsule opens: each state as it stood when its window began ([firstSeq]), for the states that were last
+     * recorded before the window and so would be missing from it.
+     */
+    private fun writeCarried(firstSeq: Long) {
+        val at = clock.now()
+        for (list in states.values) {
+            val before = list.lastOrNull { it.seq < firstSeq } ?: continue
+            val signal = (before.entry as ChainEntry.Signal).sample.signal
+            write(ChainEntry.Carried(signal, firstSeq, at))
+        }
     }
 
     private suspend fun seal(capsule: IncidentCapsule, final: Boolean) {
@@ -175,4 +216,25 @@ class Recorder(
         _capsules.value = seals.all()
         onSeal(seal)
     }
+}
+
+/** How far back a state is remembered: longer than any capsule window reaches back from its seal. */
+private const val CARRIED_HORIZON_S = Tuning.CAPSULE_PRE_WINDOW_S * 2L
+
+/**
+ * One key per state a capsule window can start with (per seat, door, lamp, …). Speed is written at least once a second,
+ * so every window has it already.
+ */
+internal fun carriedKey(s: VehicleSignal): String? = when (s) {
+    is VehicleSignal.Speed -> null
+    is VehicleSignal.Door -> "DOOR:${s.area}"
+    is VehicleSignal.SeatBelt -> "SEAT_BELT:${s.seat}"
+    is VehicleSignal.SeatOccupancy -> "SEAT_OCCUPANCY:${s.seat}"
+    is VehicleSignal.Light -> "LIGHT:${s.lamp}"
+    is VehicleSignal.Wiper -> "WIPER:${s.area}"
+    is VehicleSignal.Window -> "WINDOW:${s.area}"
+    is VehicleSignal.AirbagDeployed -> "AIRBAG:${s.seat}"
+    is VehicleSignal.RoadContext -> "ROAD:${s.type}"
+    is VehicleSignal.Telltale -> "TELLTALE:${s.name}"
+    else -> s.kind.name
 }

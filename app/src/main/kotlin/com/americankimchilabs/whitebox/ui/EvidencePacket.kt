@@ -296,8 +296,9 @@ private fun Lanes(labels: Labels, tl: EvidenceTimeline) {
     val measurer = rememberTextMeasurer()
     val axis = MaterialTheme.colorScheme.outline
     val shade = MaterialTheme.colorScheme.surfaceVariant
-    val speedColor = MaterialTheme.colorScheme.primary
-    val steerColor = MaterialTheme.colorScheme.tertiary
+    // The phone's lane colours, clear of the brand purple (its playhead): speed blue, steering green, brake red, turn amber.
+    val speedColor = Color(0xFF1565C0)
+    val steerColor = Color(0xFF2E7D32)
     val text = MaterialTheme.typography.labelLarge.copy(color = MaterialTheme.colorScheme.onSurface)
     val faint = text.copy(color = Color.Gray)
     val left = stringResource(R.string.lane_left)

@@ -90,12 +90,7 @@ class EvidenceTimeline(
             var context = DrivingContext()
             var startedMs: Long? = null
 
-            for (e in events) {
-                val ms = rel(e)
-                if ((e.entry as? ChainEntry.Recorder)?.event is RecorderEvent.RecordingStarted) startedMs = ms
-                val s = (e.entry as? ChainEntry.Signal)?.sample?.signal ?: continue
-                val beforeCause = e.seq <= cause.seq
-                val initial = startedMs?.let { ms - it <= SUBSCRIBE_MS } ?: false
+            fun take(s: VehicleSignal, ms: Long, beforeCause: Boolean, initial: Boolean) {
                 when (s) {
                     is VehicleSignal.Speed -> if (inLanes(ms)) speed += LanePoint(ms, s.metersPerSecond * 3.6f)
                     is VehicleSignal.SteeringAngle -> if (inLanes(ms)) steering += LanePoint(ms, s.degrees)
@@ -116,6 +111,16 @@ class EvidenceTimeline(
                         context = context.with(s)
                     }
                 }
+            }
+
+            // The states the window started with come first (written when the capsule opened, they stand for the
+            // window's start): held throughout unless the window changes them.
+            for (e in events) (e.entry as? ChainEntry.Carried)?.let { take(it.signal, -PRE_MS - 1, beforeCause = true, initial = true) }
+            for (e in events) {
+                val ms = rel(e)
+                if ((e.entry as? ChainEntry.Recorder)?.event is RecorderEvent.RecordingStarted) startedMs = ms
+                val s = (e.entry as? ChainEntry.Signal)?.sample?.signal ?: continue
+                take(s, ms, beforeCause = e.seq <= cause.seq, initial = startedMs?.let { ms - it <= SUBSCRIBE_MS } ?: false)
             }
 
             val lines = buildList {

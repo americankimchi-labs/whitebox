@@ -98,7 +98,8 @@
   }
 
   /**
-   * One record's entry decoded: {type:'S', kind, value, at, src} (signal), {type:'L', lat, lon, acc, gps, at},
+   * One record's entry decoded: {type:'S', kind, value, at, src} (signal), {type:'C', kind, value, at, asOf} (a state
+   * the capsule's window started with), {type:'L', lat, lon, acc, gps, at},
    * {type:'R'|'E'|'A'|'H', event, …, at}. An encrypted value without its key decodes as {…, locked: true}.
    */
   async function decode(entry, ring) {
@@ -110,6 +111,14 @@
         if (!isSealed(f[2])) return { type: 'S', kind: f[1], value: signalValue(f[1], f[2]), at, src };
         const plain = await openField(ring, f[2], `S|${f[1]}|${f[3]}`);
         return plain == null ? { type: 'S', kind: f[1], locked: true, at, src } : { type: 'S', kind: f[1], value: signalValue(f[1], plain), at, src };
+      }
+      // A state the capsule's window started with (as of entry f[4]); its value is sealed like a signal's.
+      case 'C': {
+        const at = ts(f[3]);
+        const asOf = Number(f[4]);
+        if (!isSealed(f[2])) return { type: 'C', kind: f[1], value: signalValue(f[1], f[2]), at, asOf };
+        const plain = await openField(ring, f[2], `C|${f[1]}|${f[3]}`);
+        return plain == null ? { type: 'C', kind: f[1], locked: true, at, asOf } : { type: 'C', kind: f[1], value: signalValue(f[1], plain), at, asOf };
       }
       case 'L': {
         if (!isSealed(f[1])) return { type: 'L', lat: Number(f[1]), lon: Number(f[2]), acc: f[3] === '-' ? null : Number(f[3]), gps: Number(f[4]), at: ts(f[5]) };

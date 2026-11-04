@@ -21,7 +21,9 @@
 
     <string name="level_normal">기록 중</string>
     <string name="level_alert">급제동 감지</string>
-    <string name="level_triggered">사고 감지 · 기록 보관</string>
+    <!-- While a moment is sealed the banner names it, in the same words as its record (e.g. 충격 감지 · 기록 보관). -->
+    <string name="level_triggered">%1$s · 기록 보관</string>
+    <string name="row_level_triggered">▶ 기록 보관</string>
 
     <string name="brake_on">밟음</string>
     <string name="brake_off">뗌</string>
@@ -245,21 +247,21 @@
     <string name="trigger_airbag">에어백 전개</string>
     <string name="trigger_test_airbag">시험용 에어백 신호</string>
     <string name="trigger_delta_v">충격 감지</string>
-    <string name="trigger_short_delta_v">짧은 충격 감지</string>
-    <string name="trigger_braked_spike">제동 중 충격</string>
-    <string name="trigger_rear_shove">후방 충격 (정차·제동 중)</string>
+    <string name="trigger_short_delta_v">충격 감지</string>
+    <string name="trigger_braked_spike">제동 중 충격 감지</string>
+    <string name="trigger_rear_shove">후방 추돌 (정차·제동 중)</string>
     <string name="trigger_alert_resolved">급제동 후 정차 (보관 요청)</string>
     <string name="trigger_manual">음성으로 보관</string>
     <string name="trigger_hard_brake">급제동</string>
-    <string name="trigger_evasive_steer">급핸들 (회피)</string>
-    <string name="trigger_brake_swerve">급제동 + 급핸들</string>
-    <string name="trigger_shift_to_neutral">주행 중 중립(N) 변속</string>
-    <string name="trigger_brake_speed_rise">브레이크를 밟는데 속도 상승</string>
-    <string name="trigger_brake_no_decel">브레이크를 밟는데 감속 없음</string>
-    <string name="trigger_brake_pumping">브레이크 반복 조작</string>
-    <string name="trigger_parking_brake_moving">주행 중 주차 브레이크</string>
-    <string name="trigger_lurch">정차 중 급출발</string>
-    <string name="trigger_post_event_exit">위험 상황 직후 하차</string>
+    <string name="trigger_evasive_steer">급핸들</string>
+    <string name="trigger_brake_swerve">급제동하며 급핸들</string>
+    <string name="trigger_shift_to_neutral">주행 중 기어 중립(N)</string>
+    <string name="trigger_brake_speed_rise">브레이크를 밟았는데 속도 증가</string>
+    <string name="trigger_brake_no_decel">브레이크를 밟아도 속도가 안 줄어듦</string>
+    <string name="trigger_brake_pumping">브레이크를 여러 번 밟음</string>
+    <string name="trigger_parking_brake_moving">주행 중 주차 브레이크 작동</string>
+    <string name="trigger_lurch">급출발</string>
+    <string name="trigger_post_event_exit">위험 순간 직후 하차</string>
     <string name="window_300">0.3초 만에</string>
     <string name="window_200">0.2초 만에</string>
     <string name="window_120">0.1초 만에</string>

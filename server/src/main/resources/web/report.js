@@ -7,6 +7,8 @@
   const sec = (ms) => (Math.abs(ms) / 1000).toFixed(1);
   const kmh = (mps) => mps * 3.6;
   const dur = (ms) => { const s = Math.round(ms / 1000); return s >= 60 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${s}초`; };
+  /** How long ago a window began, in whole minutes when it is whole ("2분", "1분 30초", "45초"). */
+  const ago = (ms) => { const s = Math.round(ms / 1000); return s >= 60 ? `${Math.floor(s / 60)}분${s % 60 ? ` ${s % 60}초` : ''}` : `${s}초`; };
   const AREA = { ROW_1_LEFT: '운전석', ROW_1_RIGHT: '조수석', ROW_2_LEFT: '뒷좌석 왼쪽', ROW_2_RIGHT: '뒷좌석 오른쪽', ROW_2_CENTER: '뒷좌석 가운데', HOOD: '후드', REAR: '트렁크', FRONT_WINDSHIELD: '앞 유리', REAR_WINDSHIELD: '뒤 유리' };
   const area = (a) => AREA[a] || a;
   const LAMP = { LOW_BEAM: '전조등(하향등)', HIGH_BEAM: '상향등', TAIL_LAMP: '미등', HAZARD: '비상등' };
@@ -45,6 +47,11 @@
   function interpret(events, causeWall, context = {}) {
     const out = [];
     const start = events[0].e.at.wall;
+    // The states the window started with (written when the capsule opened) count as signals just before its start.
+    // Steering is left out: a reading compares its angles over time, and a carried angle has no time of its own.
+    events = events.filter((x) => x.e.type === 'C' && !x.e.locked && x.e.kind !== 'STEERING_ANGLE')
+      .map((x) => ({ seq: x.seq, e: { ...x.e, type: 'S', at: { ...x.e.at, wall: start - 1 } } }))
+      .concat(events.filter((x) => x.e.type !== 'C'));
     const add = (text, note) => out.push(note ? { text, note } : { text });
 
     // Speed: ten seconds before, the start of slowing down, and at the moment.
@@ -78,7 +85,7 @@
     const brake = series(events, 'BRAKE_PEDAL');
     const b = stateAt(brake, causeWall, (v) => v);
     const pressedBefore = brake.filter((r) => r.v && r.wall <= causeWall && r.wall >= causeWall - 10000);
-    if (b && b.v) add(`브레이크는 감지 ${sec(causeWall - b.since)}초 전에 밟았고, 감지 순간에도 밟고 있었습니다.`);
+    if (b && b.v) add(b.since < start ? `브레이크는 감지 ${ago(causeWall - start)} 전에 이미 밟고 있었고, 감지 순간에도 밟고 있었습니다.` : `브레이크는 감지 ${sec(causeWall - b.since)}초 전에 밟았고, 감지 순간에도 밟고 있었습니다.`);
     else if (pressedBefore.length) add(`감지 전 10초 사이에 브레이크를 ${pressedBefore.length}번 밟았고, 감지 순간에는 떼고 있었습니다.`);
     else if (brake.length) add('감지 전 10초 동안 브레이크를 밟은 기록이 없습니다.');
 
@@ -96,7 +103,7 @@
 
     // Turn signal.
     const turn = stateAt(series(events, 'TURN_SIGNAL'), causeWall, (v) => v);
-    if (turn && turn.v !== 'OFF') add(`방향지시등(${turn.v === 'LEFT' ? '왼쪽' : '오른쪽'})은 감지 ${sec(causeWall - turn.since)}초 전부터 켜져 있었습니다.`);
+    if (turn && turn.v !== 'OFF') add(`방향지시등(${turn.v === 'LEFT' ? '왼쪽' : '오른쪽'})은 ${turn.since < start ? `감지 ${ago(causeWall - start)} 전에 이미` : `감지 ${sec(causeWall - turn.since)}초 전부터`} 켜져 있었습니다.`);
     else if (turn) add('감지 순간 방향지시등은 꺼져 있었습니다.');
 
     // Gear.
@@ -185,9 +192,10 @@
       const e = x.e;
       const rel = (e.at.wall - causeWall) / 1000;
       if (e.type === 'S') rows.push([x.seq, e.at.wall, rel, name[e.kind] || e.kind, e.locked ? '(잠김)' : value(e)]);
+      else if (e.type === 'C') rows.push([x.seq, e.at.wall, rel, `${name[e.kind] || e.kind} (구간 시작 때)`, e.locked ? '(잠김)' : value(e)]);
       else if (e.type === 'L') rows.push([x.seq, e.at.wall, rel, '위치', e.locked ? '차주만 볼 수 있음' : `${e.lat.toFixed(5)}, ${e.lon.toFixed(5)} (±${Math.round(e.acc || 0)} m)`]);
       else if (e.type === 'E' && e.event === 'TRIGGER') rows.push([x.seq, e.at.wall, rel, '감지', P.TRIGGER[e.trigger] || e.trigger]);
-      else if (e.type === 'E' && e.event === 'LEVEL') rows.push([x.seq, e.at.wall, rel, '단계', { NORMAL: '정상', ALERT: '위험 신호', TRIGGERED: '사고 감지' }[e.level] || e.level]);
+      else if (e.type === 'E' && e.event === 'LEVEL') rows.push([x.seq, e.at.wall, rel, '단계', { NORMAL: '기록 중', ALERT: '급제동 감지', TRIGGERED: '기록 보관' }[e.level] || e.level]);
       else if (e.type === 'E' && e.event === 'ANSWER') rows.push([x.seq, e.at.wall, rel, '운전자 대답', !e.answered ? '대답 없음 (보관)' : e.keep ? '보관' : '보관 안 함']);
       else if (e.type === 'A' && e.event === 'SPOKE') rows.push([x.seq, e.at.wall, rel, '차의 음성 안내', `“${VOICE[e.line] || e.line}”${e.complete ? '' : ' (중단됨)'}`]);
       else if (e.type === 'A' && e.event === 'BEACON') rows.push([x.seq, e.at.wall, rel, '동기화 신호음', `#${e.chirpId}`]);

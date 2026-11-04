@@ -179,14 +179,37 @@
    * picked file once it is placed ({file, offsetMs: its first frame from the detection, how}); [pickNote] replaces the
    * line under the button. Returns {open(blob, name, offsetMs)} for a clip saved earlier.
    */
-  function mount(el, { timeline, causeWall, beacons, Packet, onSynced = null, pickNote = null }) {
+  /**
+   * The lanes' span for a clip, as Packet.build's pre/post around the cause: from the clip's first frame to its last
+   * (a full-screen view follows the clip, so its playhead crosses the whole width while it plays).
+   */
+  function clipSpan(startWall, durationMs, causeWall) {
+    const pre = causeWall - startWall, post = startWall + durationMs - causeWall;
+    return pre + post >= 1000 ? { pre, post } : { pre: pre + 500, post: post + 500 };
+  }
+
+  const FULL_CSS = `
+    .sync-stage.full{position:fixed;inset:0;z-index:1000;margin:0;background:var(--bg,#fff);display:flex;flex-direction:column;overflow:hidden}
+    .sync-stage.full video{border-radius:0!important;flex:0 0 auto;max-height:50vh;object-fit:contain}
+    .sync-stage.full .sync-lanes{flex:1 1 auto;margin:12px 12px 0;min-height:0}
+    .sync-stage.full .sync-status,.sync-stage.full .sync-nudge,.sync-stage.full .sync-enter{display:none}
+    .sync-exit{display:none}
+    .sync-stage.full .sync-exit{display:block;margin:10px 12px 14px}
+    @media (orientation: landscape){.sync-stage.full video{max-height:58vh}.sync-stage.full .sync-exit{margin:6px 12px 8px}}`;
+
+  function mount(el, { timeline, causeWall, beacons, Packet, onSynced = null, pickNote = null, span = null }) {
+    if (typeof document !== 'undefined' && !document.getElementById('sync-full-css')) {
+      const st = document.createElement('style'); st.id = 'sync-full-css'; st.textContent = FULL_CSS; document.head.appendChild(st);
+    }
     el.innerHTML = `
       <div class="sync-pick"><label class="button-like">블랙박스 영상 선택<input type="file" accept="video/*" hidden></label>
         <p class="msg sync-note"></p></div>
       <div class="sync-stage" hidden>
         <video playsinline controls preload="metadata" style="width:100%;border-radius:8px;background:#000"></video>
         <div class="sync-lanes" style="position:relative;touch-action:none"><div class="sync-svg"></div>
-          <div class="sync-head" style="position:absolute;top:0;bottom:0;width:2px;background:var(--fg,#111);pointer-events:none"></div></div>
+          <div class="sync-head" style="position:absolute;top:0;bottom:0;width:3px;margin-left:-1px;border-radius:2px;background:var(--accent,#6750a4);pointer-events:none"></div></div>
+        <button class="wide secondary sync-enter">전체 화면</button>
+        <button class="wide secondary sync-exit">← 돌아가기</button>
         <p class="sync-status msg"></p>
         <div class="sync-nudge"><span class="msg">영상과 그래프가 어긋나 보이면:</span>
           <button class="plain" data-nudge="-1000">−1초</button><button class="plain" data-nudge="-100">−0.1초</button>
@@ -195,20 +218,69 @@
     el.querySelector('.sync-note').textContent = pickNote || '영상은 이 휴대폰 안에서만 열리고, 어디에도 올라가지 않습니다.';
     const input = el.querySelector('input'), stage = el.querySelector('.sync-stage'), video = el.querySelector('video');
     const lanes = el.querySelector('.sync-lanes'), head = el.querySelector('.sync-head'), status = el.querySelector('.sync-status');
-    el.querySelector('.sync-svg').innerHTML = Packet.svg(timeline);
+    const svgEl = el.querySelector('.sync-svg');
+    let tl = timeline; // the lanes shown: the whole capsule, or the clip's own span full screen
+    let opts = {};     // how they are drawn (full screen: taller lanes, or a wider scale when the view is short)
+    svgEl.innerHTML = Packet.svg(tl);
     let startWall = null; // the video's first frame on the car's clock
     const msAt = () => (startWall == null ? null : startWall + video.currentTime * 1000 - causeWall);
     const place = () => {
       const ms = msAt();
-      head.hidden = ms == null || ms < -timeline.pre || ms > timeline.post;
-      if (!head.hidden) head.style.left = `${(Packet.xFraction(timeline, ms) * 100).toFixed(2)}%`;
+      head.hidden = ms == null || ms < -tl.pre || ms > tl.post;
+      if (!head.hidden) head.style.left = `${(Packet.xFraction(tl, ms, opts) * 100).toFixed(2)}%`;
     };
+    // Full screen: the video on top, the lanes of the clip's own span below, filling what is left.
+    const draw = () => {
+      if (!stage.classList.contains('full')) { opts = {}; svgEl.innerHTML = Packet.svg(tl); return place(); }
+      const w = lanes.clientWidth || 1, h = lanes.clientHeight || 1;
+      // Fill the height with taller lanes; a short, wide view (a phone held sideways) widens the scale instead.
+      let lane = ((h * 300) / w - 51) / 5, width = 300;
+      if (lane < 18) { lane = 18; width = Math.round(((51 + 5 * lane) * w) / h); }
+      opts = { lane: Math.min(140, lane), width };
+      svgEl.innerHTML = Packet.svg(tl, opts);
+      place();
+    };
+    // The clip's own span once its length is known (a tap before the metadata loads follows as soon as it does).
+    const clipLanes = () => {
+      if (!stage.classList.contains('full') || !span || startWall == null || !(video.duration > 0)) return;
+      const s = clipSpan(startWall, video.duration * 1000, causeWall);
+      tl = span(s.pre, s.post);
+      draw();
+    };
+    video.addEventListener('loadedmetadata', clipLanes);
+    // Full screen lives on the page itself: a card's own layout would otherwise hold a fixed view to its width.
+    const home = typeof document !== 'undefined' ? document.createComment('sync stage') : null;
+    const enterFull = () => {
+      stage.before(home);
+      document.body.appendChild(stage);
+      stage.classList.add('full');
+      clipLanes();
+      // Native full screen where the browser allows it (a phone hides its own bars and turns sideways, where it can);
+      // the layout is the same without.
+      if (stage.requestFullscreen) {
+        stage.requestFullscreen().then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape')).catch(() => {});
+      }
+      requestAnimationFrame(draw);
+    };
+    const exitFull = () => {
+      if (!stage.classList.contains('full')) return;
+      stage.classList.remove('full');
+      home.replaceWith(stage);
+      tl = timeline;
+      if (typeof screen !== 'undefined' && screen.orientation && screen.orientation.unlock) try { screen.orientation.unlock(); } catch (e) { /* not locked */ }
+      if (typeof document !== 'undefined' && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      draw();
+    };
+    el.querySelector('.sync-enter').onclick = enterFull;
+    el.querySelector('.sync-exit').onclick = exitFull;
+    if (typeof document !== 'undefined') document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) exitFull(); });
+    if (typeof window !== 'undefined') window.addEventListener('resize', () => { if (stage.classList.contains('full')) draw(); });
     video.addEventListener('timeupdate', place);
     video.addEventListener('seeked', place);
     const seekTo = (clientX) => {
       if (startWall == null) return;
       const r = lanes.getBoundingClientRect();
-      const ms = Packet.msAtFraction(timeline, (clientX - r.left) / r.width);
+      const ms = Packet.msAtFraction(tl, (clientX - r.left) / r.width, opts);
       const t = (causeWall + ms - startWall) / 1000;
       if (t >= 0 && (!video.duration || t <= video.duration)) video.currentTime = t;
     };
@@ -258,6 +330,6 @@
     };
   }
 
-  const WBSync = { chirp, findAll, find, videoStartGuess, align, audioOf, mount, fft };
+  const WBSync = { chirp, findAll, find, videoStartGuess, align, audioOf, mount, fft, clipSpan };
   if (typeof module === 'object' && module.exports) module.exports = WBSync; else root.WBSync = WBSync;
 })(typeof self !== 'undefined' ? self : globalThis);

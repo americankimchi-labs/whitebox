@@ -76,6 +76,12 @@ object EntryCodec {
             HandoverEvent.Resumed -> listOf("RESUMED")
             is HandoverEvent.Ended -> listOf("ENDED", v.reason, v.capsuleId)
         }
+        // Like a signal, value encrypted under its own type and time: `C|KIND|v1.…|time|as-of seq`.
+        is ChainEntry.Carried -> {
+            val kind = e.signal.kind.name
+            val value = value(e.signal)
+            listOf("C", kind, cipher?.seal(value, "C|$kind|${ts(e.at)}") ?: value, ts(e.at), e.asOfSeq)
+        }
         is ChainEntry.Library -> listOf("K", ts(e.at)) + when (val v = e.event) {
             is LibraryEvent.PlanChanged -> listOf("PLAN", v.tier, v.previous ?: "-")
             is LibraryEvent.Left -> listOf("LEFT", v.capsuleId)
@@ -91,6 +97,10 @@ object EntryCodec {
             "S" -> {
                 val value = if (RecordCipher.isSealed(f[2])) open(cipher, f[2], "S|${f[1]}|${f[3]}") else f[2]
                 ChainEntry.Signal(SignalSample(signal(SignalKind.valueOf(f[1]), value), ts(f[3]), f[4].takeIf { it != "-" }?.toLong()))
+            }
+            "C" -> {
+                val value = if (RecordCipher.isSealed(f[2])) open(cipher, f[2], "C|${f[1]}|${f[3]}") else f[2]
+                ChainEntry.Carried(signal(SignalKind.valueOf(f[1]), value), f[4].toLong(), ts(f[3]))
             }
             "L" -> if (RecordCipher.isSealed(f[1])) {
                 val v = open(cipher, f[1], "L|${f[2]}").split(";")
@@ -150,7 +160,7 @@ object EntryCodec {
         val f = s.split("|")
         return ts(
             when (f[0]) {
-                "S" -> f[3]
+                "S", "C" -> f[3]
                 "L" -> if (RecordCipher.isSealed(f[1])) f[2] else f[5]
                 else -> f[1]
             },

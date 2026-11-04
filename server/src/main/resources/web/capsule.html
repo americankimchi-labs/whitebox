@@ -582,6 +582,7 @@ function render(c, data, upToCause, events, t, v, trigger) {
   const owner = Object.keys(ownerRoots).length > 0 && !shareCode;
   const player = WBSync.mount(WB.$('sync'), {
     timeline: whole, causeWall, beacons, Packet: WBPacket,
+    span: (pre, post) => WBPacket.build(events, t.causeSeq, { pre, post }),
     pickNote: owner ? '영상은 이 휴대폰에서 맞춥니다. 저장을 누를 때만 이 휴대폰에서 암호화되어 올라가며, 서버는 내용을 볼 수 없습니다.' : null,
     onSynced: owner ? (picked) => offerClipSave(c, data, picked) : null,
   });

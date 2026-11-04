@@ -77,14 +77,8 @@
     let context = { seatBelts: {}, occupancy: {}, doors: {}, windows: {}, lamps: {}, wipers: {}, cruise: null, cruiseTargetMps: null, parkingBrake: null, speedLimitKmh: null, roadAlerts: [] };
     let startedMs = null;
 
-    for (const ev of events) {
-      const ms = rel(ev);
-      if (ev.e.type === 'R' && ev.e.event === 'STARTED') startedMs = ms;
-      if (ev.e.type !== 'S' || ev.e.locked) continue;
-      const v = ev.e.value;
-      const beforeCause = ev.seq <= cause.seq;
-      const initial = startedMs !== null && ms - startedMs <= SUBSCRIBE_MS;
-      switch (ev.e.kind) {
+    const take = (kind, v, ms, beforeCause, initial) => {
+      switch (kind) {
         case 'SPEED': if (inLanes(ms)) speed.push({ atMs: ms, value: v * 3.6 }); break;
         case 'STEERING_ANGLE': if (inLanes(ms)) steering.push({ atMs: ms, value: v }); break;
         case 'BRAKE_PEDAL': brake.add(ms, v); if (beforeCause) brakeChange.report(ms, v, initial); break;
@@ -92,10 +86,19 @@
         case 'GEAR': gear.add(ms, v); if (beforeCause) gearChange.report(ms, v, initial); break;
         default:
           if (beforeCause) {
-            if (ev.e.kind === 'LIGHT' && v.lamp === 'HIGH_BEAM' && (highBeam.length ? highBeam[highBeam.length - 1].value : null) !== v.on) highBeam.push({ atMs: ms, value: v.on });
-            context = withContext(context, ev.e.kind, v);
+            if (kind === 'LIGHT' && v.lamp === 'HIGH_BEAM' && (highBeam.length ? highBeam[highBeam.length - 1].value : null) !== v.on) highBeam.push({ atMs: ms, value: v.on });
+            context = withContext(context, kind, v);
           }
       }
+    };
+    // The states the window started with come first (written when the capsule opened, they stand for the window's
+    // start): held throughout unless the window changes them.
+    for (const ev of events) if (ev.e.type === 'C' && !ev.e.locked) take(ev.e.kind, ev.e.value, -pre - 1, true, true);
+    for (const ev of events) {
+      const ms = rel(ev);
+      if (ev.e.type === 'R' && ev.e.event === 'STARTED') startedMs = ms;
+      if (ev.e.type !== 'S' || ev.e.locked) continue;
+      take(ev.e.kind, ev.e.value, ms, ev.seq <= cause.seq, startedMs !== null && ms - startedMs <= SUBSCRIBE_MS);
     }
 
     const lines = [];
@@ -123,11 +126,11 @@
   // ---- words (the car's own) ----
 
   const TRIGGER = {
-    AIRBAG: '에어백 전개', TEST_AIRBAG: '시험용 에어백 신호', DELTA_V: '충격 감지', SHORT_DELTA_V: '짧은 충격 감지', BRAKED_SPIKE: '제동 중 충격',
-    REAR_SHOVE: '후방 충격 (정차·제동 중)', ALERT_RESOLVED: '급제동 후 정차', MANUAL: '음성으로 보관', HARD_BRAKE: '급제동',
-    EVASIVE_STEER: '급핸들 (회피)', BRAKE_SWERVE: '급제동 + 급핸들', SHIFT_TO_NEUTRAL: '주행 중 중립(N) 변속', BRAKE_SPEED_RISE: '브레이크를 밟는데 속도 상승',
-    BRAKE_NO_DECEL: '브레이크를 밟는데 감속 없음', BRAKE_PUMPING: '브레이크 반복 조작', PARKING_BRAKE_MOVING: '주행 중 주차 브레이크', LURCH: '정차 중 급출발',
-    POST_EVENT_EXIT: '위험 상황 직후 하차', SERVER_SEAL: '사고 뒤 신호 끊김 (서버 봉인)', HANDOVER: '대리 운전 리포트',
+    AIRBAG: '에어백 전개', TEST_AIRBAG: '시험용 에어백 신호', DELTA_V: '충격 감지', SHORT_DELTA_V: '충격 감지', BRAKED_SPIKE: '제동 중 충격 감지',
+    REAR_SHOVE: '후방 추돌 (정차·제동 중)', ALERT_RESOLVED: '급제동 후 정차', MANUAL: '음성으로 보관', HARD_BRAKE: '급제동',
+    EVASIVE_STEER: '급핸들', BRAKE_SWERVE: '급제동하며 급핸들', SHIFT_TO_NEUTRAL: '주행 중 기어 중립(N)', BRAKE_SPEED_RISE: '브레이크를 밟았는데 속도 증가',
+    BRAKE_NO_DECEL: '브레이크를 밟아도 속도가 안 줄어듦', BRAKE_PUMPING: '브레이크를 여러 번 밟음', PARKING_BRAKE_MOVING: '주행 중 주차 브레이크 작동', LURCH: '급출발',
+    POST_EVENT_EXIT: '위험 순간 직후 하차', SERVER_SEAL: '충격 뒤 연결 끊김 (서버 봉인)', HANDOVER: '대리 운전 리포트',
   };
   const GEAR = { PARK: 'P', REVERSE: 'R', NEUTRAL: 'N', DRIVE: 'D', MANUAL: 'M', UNKNOWN: '?' };
   const TURN = { OFF: '꺼짐', LEFT: '좌측 점멸', RIGHT: '우측 점멸' };
@@ -177,8 +180,9 @@
    * The lanes as an SVG string, [width] wide (viewBox units). One time axis for all lanes; the detection line at 0;
    * the "N s before" marks of [t.lines]. [cursorMs] draws a playhead (the dashcam view).
    */
-  function svg(t, { width = LAYOUT.width, cursorMs = null, label = LAYOUT.label } = {}) {
-    const lane = 30, gap = 5, top = 8, plotW = width - label - 6;
+  /** [lane]: each lane's height in svg units (taller to fill a full-screen view; the width keeps the same scale). */
+  function svg(t, { width = LAYOUT.width, cursorMs = null, label = LAYOUT.label, lane = 30 } = {}) {
+    const gap = 5, top = 8, plotW = width - label - 6;
     const x = (ms) => label + ((ms + t.pre) / (t.pre + t.post)) * plotW;
     const names = ['속도', '조향', '브레이크', '방향지시등', '기어'];
     const h = top + names.length * (lane + gap) + 18;
@@ -200,11 +204,12 @@
       out.push(`<polyline fill="none" stroke="${color}" stroke-width="1.6" points="${pts.map((p) => `${x(p.atMs).toFixed(1)},${y(p.value).toFixed(1)}`).join(' ')}"/>`);
     };
     const maxSpeed = Math.max(20, ...t.speedKmh.map((p) => p.value));
-    line(t.speedKmh, 0, 0, maxSpeed, 'var(--accent,#6750a4)');
+    // Lane colours stay clear of the brand purple, which marks the playhead: speed blue, steering green, brake red, turn amber.
+    line(t.speedKmh, 0, 0, maxSpeed, 'var(--lane-speed,#1565c0)');
     out.push(`<text x="${label + 2}" y="${y0(0) + 10}" fill="var(--muted,#555)">${maxSpeed.toFixed(0)} km/h</text>`);
     const maxSteer = Math.max(30, ...t.steering.map((p) => Math.abs(p.value)));
     out.push(`<line x1="${label}" x2="${label + plotW}" y1="${y0(1) + lane / 2}" y2="${y0(1) + lane / 2}" stroke="#ccc"/>`);
-    line(t.steering, 1, -maxSteer, maxSteer, 'var(--accent,#6750a4)');
+    line(t.steering, 1, -maxSteer, maxSteer, 'var(--lane-steer,#2e7d32)');
     out.push(`<text x="${label + 2}" y="${y0(1) + 10}" fill="var(--muted,#555)">±${maxSteer.toFixed(0)}°</text>`);
 
     const steps = (s, i, on, text) => s.forEach((st, k) => {
