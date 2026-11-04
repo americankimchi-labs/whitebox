@@ -128,14 +128,17 @@ fun HandoverSheet(session: ActiveSession, onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(stringResource(R.string.handover_title), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        // Back as on every other screen: the large "← 이전" (the CCP Back key too).
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BackButton(onClose)
+            Text(stringResource(R.string.handover_title), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 24.dp))
+        }
         listOf(R.string.handover_what, R.string.handover_share, R.string.handover_rules, R.string.handover_end, R.string.handover_end_lock, R.string.handover_destination)
             .forEach { Bullet(stringResource(it)) }
         if (!handover.allowed()) {
             // Not in the owner's plan: said plainly, with where to change it; no sales button on the car.
             Text(stringResource(R.string.handover_plan_needed), style = MaterialTheme.typography.titleMedium, color = HandoverColor)
             Text(stringResource(R.string.handover_plan_phone).bySentence(), style = MaterialTheme.typography.bodyLarge, color = Color.Gray)
-            OutlinedButton(contentPadding = BigPadding, onClick = onClose, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.handover_close)) }
             return@Column
         }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -143,7 +146,6 @@ fun HandoverSheet(session: ActiveSession, onClose: () -> Unit) {
                 Text(stringResource(R.string.handover_turn_on), style = MaterialTheme.typography.titleMedium)
             }
             OutlinedButton(contentPadding = BigPadding, onClick = { openMaps(context) }, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.handover_set_destination)) }
-            OutlinedButton(contentPadding = BigPadding, onClick = onClose, modifier = Modifier.ccpFocus(CircleShape)) { Text(stringResource(R.string.handover_close)) }
         }
     }
 }

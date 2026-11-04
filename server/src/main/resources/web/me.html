@@ -55,11 +55,11 @@
 const esc = WB.esc;
 let last = '';
 
-/** Distance driven, from the drive's first and last odometer readings (Korean cars report km); null if none. */
-async function distanceKm(drive, ring) {
-  if (drive.odometer.length < 2) return null;
-  const [a, b] = await Promise.all(drive.odometer.map((o) => WBCodec.decode(o.entry, ring).catch(() => null)));
-  return a && b && !a.locked && !b.locked ? Math.max(0, b.value - a.value) : null;
+/** The moment being sealed, named as its record is (the newest crash-level one), as the car's banner shows it. */
+async function sealingName(device, stream) {
+  const caps = (await WB.get(`/v1/capsules?device=${device}&stream=${stream}`)) || [];
+  const c = caps.filter((x) => x.severe || x.crash).sort((a, b) => b.sealedAtMs - a.sealedAtMs)[0];
+  return (c && WBPacket.TRIGGER[c.trigger]) || '충격 감지';
 }
 
 const ANSWER = { kept: '보관하기로 함', released: '보관하지 않기로 함', unanswered: '대답이 없어 보관' };
@@ -83,9 +83,10 @@ function capsuleRow(dev, stream, c) {
 const TIER = WB.TIER;
 /** The plan: what it includes, how much is used, and the three plans side by side to change. */
 function planCard(plan) {
-  const row = (t) => `<tr><td><b>${TIER[t.tier]}</b><br><small class="nw">${t.monthlyWon ? `월 ${t.monthlyWon.toLocaleString('ko-KR')}원` : '무료'}</small></td>
-    <td>${WB.parts(`주행 기록 ${t.historyDays}일`, `보관 ${t.librarySlots}개`, `영상 ${t.clipSlots}개`, t.handover && '대리 운전', t.accidentReport && '사고 경위서')}</td>
-    <td>${t.tier === plan.tier ? '<span class="badge">지금</span>' : `<button class="${t.monthlyWon > plan.monthlyWon ? '' : 'secondary'}" data-tier="${t.tier}">${t.monthlyWon > plan.monthlyWon ? `${TIER[t.tier]}로 업그레이드` : '바꾸기'}</button>`}</td></tr>`;
+  // Each plan: its name and price on one line with the button, what it includes on the line below.
+  const row = (t) => `<div class="row"><span><b>${TIER[t.tier]}</b>${t.monthlyWon ? ` <span class="nw">· 월 ${t.monthlyWon.toLocaleString('ko-KR')}원</span>` : ''}<br>
+    <span class="sub">${WB.parts(`주행 기록 ${t.historyDays}일`, `보관 ${t.librarySlots}개`, `영상 ${t.clipSlots}개`, t.handover && '대리 운전', t.accidentReport && '사고 경위서')}</span></span>
+    ${t.tier === plan.tier ? '<span class="badge">지금</span>' : `<button class="${t.monthlyWon > plan.monthlyWon ? '' : 'secondary'}" data-tier="${t.tier}">${t.monthlyWon > plan.monthlyWon ? `${TIER[t.tier]}로 업그레이드` : '바꾸기'}</button>`}</div>`;
   const shrinking = plan.previous && plan.historyDays > plan.planHistoryDays
     ? `<p class="warn">요금제를 바꿔 주행 기록 보관 기간이 ${plan.planHistoryDays}일로 줄어듭니다. ${dateOf(plan.changedAtMs + 7 * 86400000)}까지는 지금처럼 ${plan.historyDays}일을 보관합니다. 이미 보관한 기록과 영상은 각자의 기간까지 그대로 남습니다.</p>` : '';
   return `<h2>${TIER[plan.tier]} 요금제</h2>
@@ -96,8 +97,8 @@ function planCard(plan) {
       <div class="stat"><b>10년</b><span>큰 사고(에어백) 무료 보관</span></div></div>
     ${shrinking}
     ${plan.libraryUsed > plan.librarySlots ? `<p class="warn">보관 기록이 ${plan.libraryUsed}개로 ${plan.librarySlots}칸보다 많습니다. 이미 보관한 기록은 각자의 기간까지 그대로 남고, 새 기록이 생기면 연장하지 않은 오래된 기록부터 빠집니다.</p><div class="actions">${WB.upgrades(plan.upgrades, '#plan')}</div>` : ''}
-    <p class="msg">보관 기록과 영상은 사고 시점부터 30일 보관됩니다. 오래 남겨야 하면 기록마다 1년(9,900원)·3년(19,900원) 연장할 수 있습니다. 연장한 기록과 영상도 칸을 차지하지만, 결제한 기간까지 보관함에서 빠지지 않습니다. 보관함이 가득 차면 연장하지 않은 오래된 기록부터 빠지고(모두 연장한 기록이면 새 기록이 빠짐), 빠진 기록은 사고 시점부터 30일 안에 업그레이드하면 다시 돌아옵니다. 에어백이 터진 큰 사고는 어느 요금제든 10년 동안 무료로 보관되고 칸을 차지하지 않습니다.</p>
-    <table>${plan.tiers.map(row).join('')}</table>
+    <p class="msg">보관 기록과 영상은 감지 시점부터 30일 보관됩니다. 오래 남겨야 하면 기록마다 1년(9,900원)·3년(19,900원) 연장할 수 있습니다. 연장한 기록과 영상도 칸을 차지하지만, 결제한 기간까지 보관함에서 빠지지 않습니다. 보관함이 가득 차면 연장하지 않은 오래된 기록부터 빠지고(모두 연장한 기록이면 새 기록이 빠짐), 빠진 기록은 감지 시점부터 30일 안에 업그레이드하면 다시 돌아옵니다. 에어백이 터진 큰 사고는 어느 요금제든 10년 동안 무료로 보관되고 칸을 차지하지 않습니다.</p>
+    <div class="tiers">${plan.tiers.map(row).join('')}</div>
     ${plan.paymentNotice ? `<p class="msg">${esc(plan.paymentNotice)}</p>` : ''}<p class="msg" id="plan-msg"></p>`;
 }
 
@@ -169,8 +170,8 @@ async function render(force = false) {
     const live = withData.find((s) => s.stream === 'live') || withData[0];
     const status = !dev.current ? '다른 휴대폰으로 넘어간 차입니다 <small>(그때까지의 기록)</small>'
       : !live ? '아직 기록이 올라오지 않았습니다'
-      : live.level === 'TRIGGERED' ? '<span class="bad">사고가 감지되었습니다</span>'
-      : live.level === 'ALERT' ? '<span class="warn">위험 신호가 감지되었습니다</span>'
+      : live.level === 'TRIGGERED' ? `<span class="bad">${esc(await sealingName(dev.id, live.stream))} · 기록 보관</span>`
+      : live.level === 'ALERT' ? '<span class="warn">급제동 감지</span>'
       : live.silentForMs != null && live.silentForMs < 30000 ? '<span class="good">기록 중</span>' : '차가 꺼져 있습니다';
     let body = '';
     if (!dev.wraps.length) body = '<p class="msg">차에서 연결을 확인하는 중입니다. 차가 켜져 있고 인터넷에 연결되어 있어야 합니다.</p>';
@@ -181,11 +182,11 @@ async function render(force = false) {
         const loc = (await WB.get(`/v1/records?device=${dev.id}&stream=${live.stream}&kind=L&last=1`)) || [];
         const spd = (await WB.get(`/v1/records?device=${dev.id}&stream=${live.stream}&kind=S&last=40`)) || [];
         const l = loc.length ? await WBCodec.decode(loc[0].entry, ring).catch(() => null) : null;
-        if (l && !l.locked) rows.push(`<div class="row"><span>마지막 위치<br><span class="sub">${WB.when(l.at.wall)}</span></span><a href="${WB.mapLink(l.lat, l.lon)}" target="_blank" rel="noopener">지도에서 보기</a></div>`);
+        if (l && !l.locked) rows.push(`<div class="row"><span>마지막 위치<br><span class="sub nw">${WB.recent(l.at.wall)}</span></span><a href="${WB.mapLink(l.lat, l.lon)}" target="_blank" rel="noopener">지도에서 보기</a></div>`);
         const speeds = [];
         for (const r of spd) if (r.entry.startsWith('S|SPEED|')) speeds.push(r);
         const s = speeds.length ? await WBCodec.decode(speeds[speeds.length - 1].entry, ring).catch(() => null) : null;
-        if (s && !s.locked) rows.push(`<div class="row"><span>마지막 속도<br><span class="sub">${WB.when(s.at.wall)}</span></span><b>${Math.round(s.value * 3.6)} km/h</b></div>`);
+        if (s && !s.locked) rows.push(`<div class="row"><span>마지막 속도<br><span class="sub nw">${WB.recent(s.at.wall)}</span></span><b>${Math.round(s.value * 3.6)} km/h</b></div>`);
         body += rows.join('');
       }
       // Risky moments: the owner sees every one; without a key on this phone, the severe ones still open.
@@ -198,28 +199,34 @@ async function render(force = false) {
         const soon = kept.filter((c) => c.warn);
         if (soon.length) alerts.push(`<div class="card alert"><h2>${soon.length}건의 기록이 7일 안에 삭제됩니다</h2><p>필요하면 기록을 열어 연장하거나, 증거 파일을 무료로 내려받아 두세요.</p>${soon.map((c) => capsuleRow(dev.id, live.stream, c)).join('')}</div>`);
         const out = caps.filter((c) => c.status === 'LEFT');
-        if (out.length) alerts.push(`<div class="card alert"><h2>보관함이 가득 차 ${out.length}건이 빠졌습니다</h2><p>빠진 기록은 사고 시점부터 30일까지 보관해 두었다가 지웁니다.${me.plan && me.plan.upgrades.length ? ' 그 전에 업그레이드하면 자리가 있는 만큼 다시 돌아옵니다.' : ' 그 전에 기록을 열어 증거 파일을 내려받아 둘 수 있습니다.'}</p>${out.slice(0, 3).map((c) => capsuleRow(dev.id, live.stream, c)).join('')}${me.plan ? `<div class="actions">${WB.upgrades(me.plan.upgrades, '#plan')}</div>` : ''}</div>`);
+        if (out.length) alerts.push(`<div class="card alert"><h2>보관함이 가득 차 ${out.length}건이 빠졌습니다</h2><p>빠진 기록은 감지 시점부터 30일까지 보관해 두었다가 지웁니다.${me.plan && me.plan.upgrades.length ? ' 그 전에 업그레이드하면 자리가 있는 만큼 다시 돌아옵니다.' : ' 그 전에 기록을 열어 증거 파일을 내려받아 둘 수 있습니다.'}</p>${out.slice(0, 3).map((c) => capsuleRow(dev.id, live.stream, c)).join('')}${me.plan ? `<div class="actions">${WB.upgrades(me.plan.upgrades, '#plan')}</div>` : ''}</div>`);
       }
       if (mine) {
         const drives = (await WB.get(`/v1/drives?device=${dev.id}&stream=${live.stream}`)) || [];
         const month = new Date(); month.setDate(1); month.setHours(0, 0, 0, 0);
-        const now = drives.filter((d) => d.startMs >= month.getTime());
+        // Only what was driven counts: a stretch with the power on that never left P is not a drive.
+        const now = [];
+        for (const d of drives.filter((x) => x.startMs >= month.getTime())) { const span = await WB.driven(d, ring); if (span) now.push({ d, span }); }
         let km = 0, known = 0;
-        for (const d of now) { const k = await distanceKm(d, ring); if (k != null) { km += k; known++; } }
-        const minutes = now.reduce((a, d) => a + (d.endMs - d.startMs) / 60000, 0);
-        const risky = caps.filter((c) => c.sealedAtMs >= month.getTime() && c.trigger !== 'MANUAL').length;
-        const saved = caps.filter((c) => c.sealedAtMs >= month.getTime() && c.trigger === 'MANUAL').length;
+        for (const { d } of now) { const k = await WB.odometerKm(d, ring); if (k != null) { km += k; known++; } }
+        const minutes = now.reduce((a, { span }) => a + (span.endMs - span.startMs) / 60000, 0);
+        // The month's kept records, and what they were (a line only when there is something to tell apart).
+        const month_ = kept.filter((c) => c.sealedAtMs >= month.getTime());
+        const kinds = [['큰 사고', month_.filter((c) => c.severe).length], ['충돌', month_.filter((c) => !c.severe && c.crash).length],
+          ['위험 순간', month_.filter((c) => !c.severe && !c.crash && !['MANUAL', 'HANDOVER'].includes(c.trigger)).length],
+          ['음성 보관', month_.filter((c) => c.trigger === 'MANUAL').length], ['대리 운전', month_.filter((c) => c.trigger === 'HANDOVER').length]]
+          .filter(([, n]) => n > 0);
         body += `<h3>이번 달</h3><div class="stats">
           <div class="stat"><b>${now.length}회</b><span>주행</span></div>
           <div class="stat"><b>${minutes >= 60 ? `${Math.floor(minutes / 60)}시간 ${Math.round(minutes % 60)}분` : `${Math.round(minutes)}분`}</b><span>운전 시간</span></div>
           <div class="stat"><b>${known ? `${km.toFixed(1)} km` : '–'}</b><span>거리${known && known < now.length ? ' (일부)' : ''}</span></div>
-          <div class="stat"><b>${risky}건 · ${saved}건</b><span>위험 순간 · 음성 보관</span></div></div>
+          <div class="stat"><b>${month_.length}건</b><span>보관 기록${kinds.length ? `<br>${WB.parts(...kinds.map(([k, n]) => `${k} ${n}`))}` : ''}</span></div></div>
           <a class="button-like secondary wide" style="text-align:center" href="/drives#d=${dev.id}&s=${live.stream}">주행 기록 모두 보기</a>`;
       }
     }
     if (dev.current && dev.wraps.length) body += handoverCard(dev, me.plan);
-    cars.push(`<div class="card"><h2>${dev.current ? '내 차' : '이전에 연결했던 차'}</h2><p class="big">${status}</p>${dev.current && live && live.silentForMs != null ? `<p class="msg" data-age="${live.silentForMs}" data-at="${Date.now()}">마지막 수신 ${WB.ago(live.silentForMs)}</p>` : ''}${body}</div>`);
-    tech.push(`차량 기기 ID ${dev.id}`, `이 휴대폰이 가진 차량 열쇠: ${dev.wraps.map((w) => w.epoch).join(', ') || '없음'}번`, ...(dev.current ? dev.streams.map((s) => `${s.stream}: 기록 ${s.records}건, 단계 ${s.level || '-'}`) : []));
+    cars.push(`<div class="card">${dev.current ? '' : '<h2>이전에 연결했던 차</h2>'}<p class="big">${status}</p>${dev.current && live && live.silentForMs != null ? `<p class="msg" data-age="${live.silentForMs}" data-at="${Date.now()}">마지막 수신 ${WB.ago(live.silentForMs)}</p>` : ''}${body}</div>`);
+    tech.push(`차량 기기 ID ${dev.id}`, `이 휴대폰이 가진 차량 열쇠: ${dev.wraps.map((w) => w.epoch).join(', ') || '없음'}번`, ...(dev.current ? dev.streams.map((s) => `${s.stream}: 데이터 ${s.records.toLocaleString('ko-KR')}개, 단계 ${s.level || '-'}`) : []));
   }
   WB.$('cars').innerHTML = cars.join('') || (me.transfersOut.length ? '' : '<div class="card"><p>연결된 차가 없습니다. 차 화면의 <b>휴대폰</b> 탭에서 QR을 찍으면 연결됩니다.</p></div>');
   WB.$('alerts').innerHTML = alerts.join('');

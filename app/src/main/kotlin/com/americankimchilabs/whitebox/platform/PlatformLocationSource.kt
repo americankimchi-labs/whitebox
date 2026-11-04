@@ -21,8 +21,10 @@ private const val TAG = "WhiteBox/Location"
 private const val INTERVAL_MS = 1_000L
 
 /**
- * Platform GPS behind [LocationSource]: the fallback behind the same port as the Pleos FusedLocation SDK.
- * Needs ACCESS_FINE_LOCATION, granted at first run while parked; without it the flow completes empty.
+ * The car's position from the platform GPS, behind [LocationSource]. Pleos FusedLocation would fit the same port, but
+ * its runtime permission reaches the driver as an unnamed action ("알 수 없는 작업") in Android's prompt, which first-run
+ * setup does not ask anyone to accept. Needs ACCESS_FINE_LOCATION, granted at first run while parked; without it the
+ * flow completes empty.
  */
 class PlatformLocationSource(
     context: Context,

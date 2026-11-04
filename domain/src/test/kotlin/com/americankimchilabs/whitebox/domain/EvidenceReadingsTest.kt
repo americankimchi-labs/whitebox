@@ -27,6 +27,7 @@ class EvidenceReadingsTest {
         assertTrue(top[0].text, top[0].text.startsWith("감지 10초 전에는 시속 60 km였고"))
         assertTrue(top[1].text, top[1].text.startsWith("브레이크는 감지"))
         assertTrue(top[2].text, top[2].text.startsWith("방향지시등(왼쪽)은 감지 5.0초 전부터"))
-        assertTrue(all.any { it.text == "전조등은 꺼져 있었습니다." && it.note == "낮이었을 가능성이 높습니다." })
+        // Lamps off says nothing about the hour (a driver may forget them at night): no daylight guess.
+        assertTrue(all.any { it.text == "전조등은 꺼져 있었습니다." && it.note == null })
     }
 }

@@ -39,6 +39,43 @@ def say(msg):
 def controls(**kw):
     state.update(kw)
     put("/vehicle/controls?" + "&".join(f"{k}={v}" for k, v in state.items()))
+    odometer.start()
+
+
+class Odometer:
+    """The emulator's odometer never moves on its own: while a script drives, this adds up the speed it set and moves
+    the console's odometer in 0.1 km steps, as a real car's would (the app reads it as the drive's distance)."""
+
+    STEP_KM, TICK_S = 0.1, 0.5
+
+    def __init__(self):
+        self.thread = None
+
+    def start(self):
+        if self.thread:
+            return
+        import threading
+        now = json.load(urllib.request.urlopen(BASE + "/vehicle/state", timeout=5))["odometer"]
+        self.km = self.shown = float(now["traveled_distance_km"])
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
+
+    def run(self):
+        last = time.time()
+        while True:
+            time.sleep(self.TICK_S)
+            t = time.time()
+            self.km += state["speed"] * (t - last) / 3600
+            last = t
+            if self.km - self.shown >= self.STEP_KM:
+                self.shown = round(self.km, 1)
+                try:
+                    put(f"/vehicle/odometer?traveled_distance_km={self.shown:.1f}")
+                except OSError:
+                    pass  # the next step tries again
+
+
+odometer = Odometer()
 
 
 def gear(g):

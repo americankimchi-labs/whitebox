@@ -176,6 +176,22 @@ class WebVectorsTest {
         ).forEach { add(ChainEntry.Carried(it, 0, open)) }
     }
 
+    /**
+     * Cruising at 40 km/h (a speed record each second), then braking: the speed falls in steps that each repeat once
+     * (samples arrive faster than it changes), then drops sharply at the moment. People in the seats are reported out
+     * of seat order.
+     */
+    private fun steppedFall(): List<ChainEntry> = buildList {
+        add(ChainEntry.Recorder(RecorderEvent.RecordingStarted(StartReason.BOOT, null, 0), ts(0)))
+        listOf("ROW_2_RIGHT", "ROW_1_RIGHT", "ROW_1_LEFT").forEachIndexed { i, seat -> add(ChainEntry.Signal(SignalSample(VehicleSignal.SeatOccupancy(seat, true), ts(100L + i)))) }
+        add(ChainEntry.Signal(SignalSample(VehicleSignal.Gear(GearPosition.DRIVE), ts(200))))
+        for (sec in 1..18) add(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(40f / 3.6f), ts(sec * 1_000L))))
+        add(ChainEntry.Signal(SignalSample(VehicleSignal.BrakePedal(true), ts(18_550))))
+        for (i in 1..14) add(ChainEntry.Signal(SignalSample(VehicleSignal.Speed((40f - ((i + 1) / 2) * 1.5f) / 3.6f), ts(18_000L + i * 100))))
+        add(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(8f / 3.6f), ts(19_500))))
+        for (i in 1..30) add(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(8f / 3.6f), ts(19_500L + i * 100))))
+    }
+
     @Test
     fun writeVectorsForTheViewer() {
         val ring = MemoryKeyRing()
@@ -222,6 +238,19 @@ class WebVectorsTest {
                 val store = FileEventStore(tmp.newFolder(), cipher = EpochRecordCipher(ring) { wall })
                 events.forEach { store.append(it.entry) }
                 val cause = 121L // the first speed sample above standstill
+                val t = EvidenceTimeline.build(events, cause)
+                obj(
+                    "records" to store.records(0, events.size - 1L),
+                    "causeSeq" to cause,
+                    "timeline" to timelineJson(t),
+                    "readings" to EvidenceReadings.of(events, cause, t.context).map { obj("text" to it.text, "note" to it.note) },
+                )
+            },
+            "fall" to run {
+                val events = steppedFall().mapIndexed { i, e -> DriveEvent(i.toLong(), e) }
+                val store = FileEventStore(tmp.newFolder(), cipher = EpochRecordCipher(ring) { wall })
+                events.forEach { store.append(it.entry) }
+                val cause = events.first { (it.entry as? ChainEntry.Signal)?.sample?.signal.let { s -> s is VehicleSignal.Speed && s.metersPerSecond * 3.6f < 10f } }.seq
                 val t = EvidenceTimeline.build(events, cause)
                 obj(
                     "records" to store.records(0, events.size - 1L),

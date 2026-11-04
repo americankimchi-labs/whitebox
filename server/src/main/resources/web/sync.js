@@ -1,10 +1,10 @@
 // Dashcam sync on the phone: the driver picks their dashcam's video; it never leaves the phone. The car plays a short
-// inaudible sweep (20–22 kHz) every few seconds and records the instant it played; finding that sweep in the video's
+// inaudible sweep (21–22 kHz) every few seconds and records the instant it played; finding that sweep in the video's
 // sound pins the video to the record within a millisecond. Without it (a dashcam whose microphone or file cannot
 // carry that band), the file's own clock or name places it to about a second, and the driver can nudge it by eye.
 // The view stacks like a video editor: the video on top, the signal lanes below on one playhead.
 (function (root) {
-  const LOW_HZ = 20000, HIGH_HZ = 22000, CHIRP_MS = 100, FADE_MS = 15, AMPLITUDE = 0.3;
+  const LOW_HZ = 21000, HIGH_HZ = 22000, CHIRP_MS = 100, FADE_MS = 15, AMPLITUDE = 0.3;
   const RATE = 48000;
 
   /** The sweep, generated exactly as the car generates it. */
@@ -195,7 +195,10 @@
     .sync-stage.full .sync-status,.sync-stage.full .sync-nudge,.sync-stage.full .sync-enter{display:none}
     .sync-exit{display:none}
     .sync-stage.full .sync-exit{display:block;margin:10px 12px 14px}
-    @media (orientation: landscape){.sync-stage.full video{max-height:58vh}.sync-stage.full .sync-exit{margin:6px 12px 8px}}`;
+    @media (orientation: landscape){
+      .sync-stage.full video{max-height:50vh}
+      .sync-stage.full .sync-lanes{margin:6px 10px 8px}
+      .sync-stage.full .sync-exit{position:absolute;top:8px;right:8px;width:auto;margin:0;padding:6px 12px;opacity:.9}}`;
 
   function mount(el, { timeline, causeWall, beacons, Packet, onSynced = null, pickNote = null, span = null }) {
     if (typeof document !== 'undefined' && !document.getElementById('sync-full-css')) {
@@ -235,7 +238,7 @@
       const w = lanes.clientWidth || 1, h = lanes.clientHeight || 1;
       // Fill the height with taller lanes; a short, wide view (a phone held sideways) widens the scale instead.
       let lane = ((h * 300) / w - 51) / 5, width = 300;
-      if (lane < 18) { lane = 18; width = Math.round(((51 + 5 * lane) * w) / h); }
+      if (lane < 24) { lane = 24; width = Math.round(((51 + 5 * lane) * w) / h); }  // a bar must hold its label
       opts = { lane: Math.min(140, lane), width };
       svgEl.innerHTML = Packet.svg(tl, opts);
       place();

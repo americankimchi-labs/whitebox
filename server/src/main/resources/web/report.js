@@ -11,12 +11,14 @@
   const ago = (ms) => { const s = Math.round(ms / 1000); return s >= 60 ? `${Math.floor(s / 60)}분${s % 60 ? ` ${s % 60}초` : ''}` : `${s}초`; };
   const AREA = { ROW_1_LEFT: '운전석', ROW_1_RIGHT: '조수석', ROW_2_LEFT: '뒷좌석 왼쪽', ROW_2_RIGHT: '뒷좌석 오른쪽', ROW_2_CENTER: '뒷좌석 가운데', HOOD: '후드', REAR: '트렁크', FRONT_WINDSHIELD: '앞 유리', REAR_WINDSHIELD: '뒤 유리' };
   const area = (a) => AREA[a] || a;
+  /** Seats as people name them: front first, driver first. */
+  const SEAT_ORDER = ['ROW_1_LEFT', 'ROW_1_RIGHT', 'ROW_2_LEFT', 'ROW_2_CENTER', 'ROW_2_RIGHT'];
   const LAMP = { LOW_BEAM: '전조등(하향등)', HIGH_BEAM: '상향등', TAIL_LAMP: '미등', HAZARD: '비상등' };
   const GEAR = { PARK: 'P(주차)', REVERSE: 'R(후진)', NEUTRAL: 'N(중립)', DRIVE: 'D(주행)', MANUAL: 'M(수동)' };
   // The words of each line the car speaks, as the car's own timeline quotes them.
   const VOICE = {
     KEEP_QUESTION: '방금 상황 보관할까요?', KEPT: '보관 완료', RELEASED: '보관 취소',
-    CRASH_GUIDANCE: '사고 기록 완료. 과실 인정은 피하고, 현장을 촬영하세요.', BOOKMARKED: '보관 완료',
+    CRASH_GUIDANCE: '기록 보관 완료. 과실 인정은 피하고, 현장을 촬영하세요.', BOOKMARKED: '보관 완료',
     HANDOVER_STARTED: '대리 운전 모드입니다. 주행이 기록됩니다.', HANDOVER_SET_DESTINATION: '목적지를 설정해 주세요.',
     HANDOVER_SLOW_DOWN: '속도를 줄여 주세요.', HANDOVER_DRIVE_SAFELY: '안전 운전 부탁드립니다.',
     HANDOVER_CHECK_ROUTE: '경로를 확인해 주세요.', LIBRARY_FULL: '보관함이 가득 차 기록 하나가 빠졌습니다.',
@@ -60,10 +62,16 @@
     const now = at(causeWall), before = at(causeWall - 10000);
     if (now) {
       const v = kmh(now.v);
-      let slowFrom = null;
+      // Back from the moment while the speed was falling: a repeated value inside the fall (samples arrive faster
+      // than the speed changes) does not end it; rising, or holding for over a second, does.
+      let slowFrom = null, flatMs = 0;
       for (let i = speed.length - 1; i > 0; i--) {
         if (speed[i].wall > causeWall) continue;
-        if (speed[i].v < speed[i - 1].v - 0.05) slowFrom = speed[i - 1]; else if (slowFrom) break;
+        const earlier = speed[i - 1], later = speed[i];
+        if (earlier.v > later.v + 0.05) { slowFrom = earlier; flatMs = 0; }
+        else if (!slowFrom) continue;
+        else if (earlier.v < later.v - 0.05) break;
+        else { flatMs += later.wall - earlier.wall; if (flatMs > 1000) break; }
       }
       // The fastest in the ten seconds before, when it is clearly above both ends (sped up, then slowed down).
       const top = speed.filter((r) => r.wall >= causeWall - 10000 && r.wall <= causeWall).reduce((a, r) => (!a || r.v > a.v ? r : a), null);
@@ -137,7 +145,7 @@
     const lamps = (name) => events.filter((x) => x.e.type === 'S' && x.e.kind === 'LIGHT' && !x.e.locked && x.e.value.lamp === name).map((x) => ({ wall: x.e.at.wall, v: x.e.value.on }));
     const low = stateAt(lamps('LOW_BEAM'), causeWall, (v) => v);
     if (low && low.k) add('전조등이 켜져 있었습니다.', '해가 진 뒤였거나 터널·비 등으로 어두웠을 가능성이 있습니다.');
-    else if (low) add('전조등은 꺼져 있었습니다.', '낮이었을 가능성이 높습니다.');
+    else if (low) add('전조등은 꺼져 있었습니다.');
     const flashes = lamps('HIGH_BEAM').filter((r) => r.v && r.wall <= causeWall && r.wall >= causeWall - 10000);
     if (flashes.length) add(`감지 ${sec(causeWall - flashes[0].wall)}초 전 상향등을 켰습니다.`, '상대에게 보내는 경고 신호였을 가능성이 있습니다.');
     const hazard = lamps('HAZARD').find((r) => r.v && r.wall > causeWall);
@@ -149,7 +157,8 @@
     if ('ROW_1_LEFT' in belts) add(belts.ROW_1_LEFT ? '운전석 안전벨트를 매고 있었습니다.' : '운전석 안전벨트를 매지 않은 것으로 기록되어 있습니다.');
     const seats = {};
     for (const x of events) if (x.e.type === 'S' && x.e.kind === 'SEAT_OCCUPANCY' && !x.e.locked && x.e.at.wall <= causeWall) seats[x.e.value.seat] = x.e.value.occupied;
-    const taken = Object.entries(seats).filter(([, v]) => v).map(([k]) => area(k));
+    const rank = (k) => (SEAT_ORDER.indexOf(k) < 0 ? SEAT_ORDER.length : SEAT_ORDER.indexOf(k));
+    const taken = Object.entries(seats).filter(([, v]) => v).map(([k]) => k).sort((a, b) => rank(a) - rank(b)).map(area);
     if (taken.length) add(`사람이 앉아 있던 좌석: ${taken.join(', ')}.`);
 
     // Cruise control.

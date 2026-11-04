@@ -147,9 +147,10 @@ object Tuning {
     /** Post-crash guidance is spoken when the car is put in P within this long after a crash-level trigger. */
     const val GUIDANCE_WINDOW_S = 600
 
-    // Dashcam sync chirp: above human hearing (≥ 20 kHz), inside the 48 kHz output path. Dashcams that low-pass their
-    // audio below this will not record it; sync then falls back to GPS time and the recorded spoken lines.
-    const val CHIRP_LOW_HZ = 20_000
+    // Dashcam sync chirp: 21–22 kHz, above what anyone hears at a car's volume, and still inside a 44.1 kHz recording
+    // (it holds nothing above 22.05 kHz) as well as the 48 kHz output path. Dashcams that low-pass their audio below
+    // this will not record it; sync then falls back to the video file's clock.
+    const val CHIRP_LOW_HZ = 21_000
     const val CHIRP_HIGH_HZ = 22_000
     const val CHIRP_MS = 100
 

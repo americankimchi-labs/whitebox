@@ -29,6 +29,9 @@ object DemoDrive {
     /** Absolute time (ms from start) of the crash-profile sample, for tests and the narration. */
     const val IMPACT_AT_MS = 52_500L
 
+    /** Where the car's odometer stands when the drive begins (km). */
+    private const val ODOMETER_START_KM = 12_480.0
+
     fun signals(): List<ScriptStep> = build().signals
 
     fun locations(): List<LocationStep> = build().locations
@@ -38,6 +41,9 @@ object DemoDrive {
         val speedTrack = mutableListOf<Pair<Long, Float>>() // (abs ms, km/h)
         var t = 0L
         var kmh = 0f
+        // The odometer, as a real car reports it: in 0.1 km steps as the distance adds up.
+        var km = ODOMETER_START_KM
+        var shownKm = ODOMETER_START_KM
 
         fun now(s: VehicleSignal) {
             timed += t to s
@@ -52,6 +58,11 @@ object DemoDrive {
                 kmh = from + (to - from) * i / steps
                 speedTrack += t to kmh
                 timed += t to VehicleSignal.Speed(kmh / 3.6f)
+                km += kmh * 0.1 / 3_600
+                if (km - shownKm >= 0.1) {
+                    shownKm = Math.round(km * 10) / 10.0
+                    timed += t to VehicleSignal.Odometer(shownKm.toFloat())
+                }
             }
         }
 
@@ -92,6 +103,7 @@ object DemoDrive {
     }
 
     private fun build() = Builder().apply {
+        now(VehicleSignal.Odometer(ODOMETER_START_KM.toFloat()))
         now(VehicleSignal.Gear(GearPosition.PARK))
         now(VehicleSignal.BrakePedal(true))
         now(VehicleSignal.TurnSignal(TurnSignalState.OFF))

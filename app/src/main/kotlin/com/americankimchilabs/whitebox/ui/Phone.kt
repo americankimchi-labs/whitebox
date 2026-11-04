@@ -39,7 +39,16 @@ import com.google.zxing.qrcode.QRCodeWriter
 @Composable
 fun PhoneTab(claim: ClaimClient?, webBase: String?, consent: Boolean, handoverOn: Boolean = false, onConsent: (Boolean) -> Unit) {
     Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // The phone first; the data choice below it.
+        PhoneLink(claim, webBase, handoverOn)
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
         ConsentRow(consent, onConsent)
+    }
+}
+
+@Composable
+private fun PhoneLink(claim: ClaimClient?, webBase: String?, handoverOn: Boolean) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (claim == null || webBase == null) {
             Text(stringResource(R.string.phone_no_mirror), style = MaterialTheme.typography.titleLarge)
             return@Column
@@ -95,7 +104,6 @@ private fun ConsentRow(consent: Boolean, onConsent: (Boolean) -> Unit) {
             Text(stringResource(if (consent) R.string.consent_stop else R.string.consent_start))
         }
     }
-    HorizontalDivider()
 }
 
 /** A QR code of [text], [size] pixels square (ZXing's encoder; nothing leaves the car to make it). */

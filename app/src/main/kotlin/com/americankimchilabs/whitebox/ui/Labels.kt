@@ -12,6 +12,7 @@ import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.CruiseState
 import com.americankimchilabs.whitebox.domain.EscalationEvent
 import com.americankimchilabs.whitebox.domain.EscalationLevel
+import com.americankimchilabs.whitebox.domain.EvidenceTimeline
 import com.americankimchilabs.whitebox.domain.GapCause
 import com.americankimchilabs.whitebox.domain.GearPosition
 import com.americankimchilabs.whitebox.domain.HandoverEndReason
@@ -70,6 +71,8 @@ class Labels(private val res: Resources) {
     }
 
     fun speed(kmh: Float?) = kmh?.let { res.getString(R.string.speed_kmh, it) } ?: none
+
+    fun duration(ms: Long): String = humanDuration(ms)
 
     /** The status banner; while a moment is sealed it carries that moment's name (the trigger, as its record shows it). */
     fun level(l: EscalationLevel, sealing: CapsuleTrigger? = null) = when (l) {
@@ -228,13 +231,13 @@ class Labels(private val res: Resources) {
         // The states a capsule's window started with: context for its evidence summary, not news for the timeline.
         is ChainEntry.Carried -> null
         is ChainEntry.Recorder -> when (val r = e.event) {
-            is RecorderEvent.RecordingStarted -> r.gap?.let { res.getString(R.string.row_started_gap, gapCause(it.cause), it.durationMillis / 1000.0) }
+            is RecorderEvent.RecordingStarted -> r.gap?.let { res.getString(R.string.row_started_gap, gapCause(it.cause), duration(it.durationMillis)) }
                 ?: res.getString(R.string.row_started)
             RecorderEvent.RecordingStopped -> res.getString(R.string.row_stopped)
             is RecorderEvent.PermissionDegraded -> res.getString(R.string.row_degraded, permission(r.permission))
             is RecorderEvent.PermissionRestored -> res.getString(R.string.row_restored, permission(r.permission))
             is RecorderEvent.Pruned -> res.getString(if (r.unsent) R.string.row_pruned_unsent else R.string.row_pruned, dateTime(r.throughWall))
-            is RecorderEvent.Slept -> res.getString(R.string.row_slept, (r.sleptMillis / 1000).let { s -> if (s >= 60) "${s / 60}분 ${s % 60}초" else "${s}초" })
+            is RecorderEvent.Slept -> res.getString(R.string.row_slept, duration(r.sleptMillis))
         }
         is ChainEntry.Escalation -> when (val x = e.event) {
             is EscalationEvent.LevelChanged ->
@@ -310,6 +313,17 @@ class Labels(private val res: Resources) {
     )
 }
 
+/** A length of time as people say it: "0.8초", "12분 3초", "1시간 42분", "2일 3시간". */
+fun humanDuration(ms: Long): String {
+    val s = ms / 1000
+    return when {
+        ms < 60_000 -> "%.1f초".format(ms / 1000.0)
+        s < 3_600 -> if (s % 60 == 0L) "${s / 60}분" else "${s / 60}분 ${s % 60}초"
+        s < 86_400 -> if (s / 60 % 60 == 0L) "${s / 3_600}시간" else "${s / 3_600}시간 ${s / 60 % 60}분"
+        else -> if (s / 3_600 % 24 == 0L) "${s / 86_400}일" else "${s / 86_400}일 ${s / 3_600 % 24}시간"
+    }
+}
+
 /** The words of each line the car speaks (also what the timeline quotes). */
 fun voiceLineText(line: VoiceLine): Int = when (line) {
     VoiceLine.KEEP_QUESTION -> R.string.voice_keep_question
@@ -327,13 +341,28 @@ fun voiceLineText(line: VoiceLine): Int = when (line) {
 
 /**
  * Display-only dedupe: on subscribe the SDK re-sends current values, so a vehicle-state row
- * that repeats the last shown value of its kind is hidden. The chain keeps every raw record.
+ * that repeats the last shown value of its kind is hidden. The doors, belts, lamps, wipers, cruise and parking
+ * brake the car reports right after recording starts are its starting state: the start row says they were
+ * recorded ("차량 상태 기록") instead of listing each. The chain keeps every raw record.
  */
 class RowFilter {
     private val last = mutableMapOf<String, VehicleSignal>()
+    private var startedAt = Long.MIN_VALUE
 
     fun shows(e: ChainEntry): Boolean {
+        if ((e as? ChainEntry.Recorder)?.event is RecorderEvent.RecordingStarted) startedAt = e.at.elapsedNanos
         val s = (e as? ChainEntry.Signal)?.sample?.signal ?: return true
+        val starting = (e.at.elapsedNanos - startedAt) / 1_000_000 in 0..EvidenceTimeline.SUBSCRIBE_MS
+        if (starting && (s is VehicleSignal.Door || s is VehicleSignal.SeatBelt || s is VehicleSignal.Light || s is VehicleSignal.Wiper ||
+                s is VehicleSignal.CruiseControl || s is VehicleSignal.ParkingBrake)) {
+            rememberShown(s)
+            return false
+        }
+        return rememberShown(s)
+    }
+
+    /** Records [s] as the last shown of its kind; false when it only repeats it. */
+    private fun rememberShown(s: VehicleSignal): Boolean {
         val key = when (s) {
             is VehicleSignal.BrakePedal, is VehicleSignal.TurnSignal, is VehicleSignal.Gear, is VehicleSignal.ParkingBrake,
             is VehicleSignal.CruiseControl -> s.kind.name

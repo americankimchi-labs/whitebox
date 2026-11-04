@@ -49,12 +49,6 @@ table.log{font-size:12px;font-variant-numeric:tabular-nums}table.log td{padding:
     <div class="verdict"><span class="mark" id="mark"></span><span id="verdict"></span></div>
     <p class="msg" id="verdict-sub"></p>
   </div>
-  <div class="card" id="keep-card" hidden>
-    <h2>보관</h2>
-    <p id="keep-text"></p>
-    <div class="actions noprint" id="keep-actions"></div>
-    <p class="msg" id="keep-msg"></p>
-  </div>
   <div class="card" id="trip-card" hidden>
     <h2 id="trip-events-title"></h2>
     <div id="trip-events"></div>
@@ -78,6 +72,13 @@ table.log{font-size:12px;font-variant-numeric:tabular-nums}table.log td{padding:
   <div class="card noprint">
     <button class="wide secondary" id="print" onclick="print()">증거 요약 인쇄 · PDF로 저장</button>
     <p class="msg">한 장짜리 요약으로 인쇄됩니다. 원본은 차와 서버에 봉인된 그대로 남습니다.</p>
+  </div>
+  <!-- How long it is kept and the paid extensions: after the evidence, never before it. -->
+  <div class="card" id="keep-card" hidden>
+    <h2>보관</h2>
+    <p id="keep-text"></p>
+    <div class="actions noprint" id="keep-actions"></div>
+    <p class="msg" id="keep-msg"></p>
   </div>
   <details class="card" id="log-card" hidden><summary id="log-title">상세 기록</summary>
     <h3>감지 순간의 차량 상태</h3>
@@ -103,7 +104,7 @@ const { d, s = 'live', id, t: shareCode, k: shareKeys, p: sharePlaces } = WB.par
 const KIND = (c) => c.trigger === 'MANUAL' ? '운전자가 음성으로 보관한 순간'
   : c.trigger === 'TEST_AIRBAG' ? '큰 사고 (시험용 에어백 신호 · 실제 사고 아님)'
   : c.trigger === 'SERVER_SEAL' ? '큰 사고 (충돌 뒤 차 신호가 끊겨 서버가 봉인)'
-  : c.severe ? '큰 사고 (에어백 전개)' : c.crash ? '충돌 (충돌 수준의 충격)' : '위험 순간 (아찔했던 상황)';
+  : c.severe ? '큰 사고 (에어백 전개)' : c.crash ? '충돌 (에어백은 터지지 않음)' : '위험 순간';
 const ANSWER = { kept: '운전자가 보관하겠다고 답했습니다.', released: '운전자가 보관하지 않겠다고 답했습니다. 기록 자체는 봉인된 채 남아 있습니다.', unanswered: '운전자가 대답하지 않아 보관되었습니다.' };
 
 async function load() {
@@ -295,8 +296,8 @@ function renderTrip(c, data, events, v) {
   WB.$('mark').textContent = v.ok ? '✓' : '✗';
   WB.$('mark').className = 'mark ' + (v.ok ? 'good' : 'bad');
   WB.$('verdict').textContent = v.ok ? '원본 그대로입니다 · 변조 없음' : '원본과 다릅니다';
-  WB.$('verdict-sub').textContent = v.ok ? `기록 ${v.chain.checked}건이 차의 해시 체인, 서명과 맞는지 이 휴대폰에서 직접 확인했습니다.` : `확인 결과: ${v.chain.reason || '서명이 맞지 않음'}.`;
-  WB.$('tech').innerHTML = [`리포트 ${c.id} · 기록 #${c.firstSeq}–#${c.lastSeq} (${events.length}건)`, `체인: ${v.chain.ok ? `해시·연결 ${v.chain.checked}건 확인` : `#${v.chain.brokenAt} ${v.chain.reason}`}`].map(esc).join('<br>');
+  WB.$('verdict-sub').textContent = v.ok ? `데이터 ${v.chain.checked}개가 차의 해시 체인, 서명과 맞는지 이 휴대폰에서 직접 확인했습니다.` : `확인 결과: ${v.chain.reason || '서명이 맞지 않음'}.`;
+  WB.$('tech').innerHTML = [`리포트 ${c.id} · 데이터 #${c.firstSeq}–#${c.lastSeq} (${events.length}개)`, `체인: ${v.chain.ok ? `해시·연결 ${v.chain.checked}개 확인` : `#${v.chain.brokenAt} ${v.chain.reason}`}`].map(esc).join('<br>');
 }
 function noKey() { WB.show('loading', false); WB.show('nokey'); }
 
@@ -319,7 +320,7 @@ function offerKeep(c, data) {
   const clipLine = clips.length ? ` 저장한 블랙박스 영상은 ${dateOf(c.clipUntilMs)}까지 보관됩니다.` : '';
   const text = {
     SEVERE: `${c.trigger === 'TEST_AIRBAG' ? '시험용 에어백 신호로 만든 큰 사고 기록이라' : c.trigger === 'SERVER_SEAL' ? '충돌 뒤 차 신호가 끊긴 큰 사고 기록이라' : '에어백이 터진 큰 사고 기록이라'} ${dateOf(c.keptUntilMs)}까지 10년 동안 무료로 보관됩니다.${clipLine}`,
-    KEPT: `${dateOf(c.keptUntilMs)}에 삭제됩니다 (사고 시점부터 30일 보관, ${daysLeft(c.keptUntilMs)}일 남음).${clipLine} 분쟁이 길어질 것 같으면 연장해 두세요.`,
+    KEPT: `${dateOf(c.keptUntilMs)}에 삭제됩니다 (감지 시점부터 30일 보관, ${daysLeft(c.keptUntilMs)}일 남음).${clipLine} 분쟁이 길어질 것 같으면 연장해 두세요.`,
     EXTENDED: `${dateOf(c.keptUntilMs)}까지 보관합니다 (연장함).${clipLine}`,
     LEFT: `보관함이 가득 차 이 기록이 보관함에서 빠졌습니다. ${dateOf(c.keptUntilMs)}에 삭제됩니다.${plan && plan.upgrades.length ? ' 그 전에 업그레이드하면 자리가 있는 만큼 다시 돌아옵니다.' : ' 그 전에 증거 파일을 내려받아 둘 수 있습니다.'}`,
     RELEASED: `운전자가 보관하지 않겠다고 답한 기록입니다. 주행 기록 보관 기간이 지나면 삭제됩니다. ${full ? '보관함이 가득 차 지금은 연장할 수 없습니다. 업그레이드하면 연장해 보관할 수 있습니다.' : '연장하면 보관됩니다.'}`,
@@ -388,7 +389,7 @@ async function downloadEvidence(c, data) {
 /** After a picked clip is placed: save it (encrypted here) against the plan's clip slots. */
 function offerClipSave(c, data, picked) {
   const el = WB.$('clips');
-  el.innerHTML = `<div class="actions"><button id="clip-save">이 영상 저장하기</button></div><p class="msg" id="clip-msg">저장하면 사고 시점부터 30일 동안 보관됩니다 (연장 가능).</p>`;
+  el.innerHTML = `<div class="actions"><button id="clip-save">이 영상 저장하기</button></div><p class="msg" id="clip-msg">저장하면 감지 시점부터 30일 동안 보관됩니다 (연장 가능).</p>`;
   WB.$('clip-save').onclick = () => saveClip(c, data, picked, null);
 }
 
@@ -478,7 +479,7 @@ function offerReport(c, data, events, t, v, trigger) {
   box.innerHTML = plan && plan.accidentReport
     ? '<button class="wide" id="open-report">보험·경찰 제출용 사고 경위서</button><p class="msg">기록을 해석한 사고 경위와 당사자 기재란, 맨 아래에 상세 기록이 들어간 인쇄용 문서입니다.</p>'
     : `<button class="wide secondary" disabled>보험·경찰 제출용 사고 경위서</button><p class="msg">프로 요금제에서 쓸 수 있습니다.</p><div class="actions">${WB.upgrades(['PRO'])}</div>`;
-  WB.$('keep-card').after(box);
+  WB.$('sync-card').after(box);
   const open = WB.$('open-report');
   if (open) open.onclick = () => renderReport(c, data, events, t, v, trigger);
 }
@@ -504,11 +505,11 @@ function renderReport(c, data, events, t, v, trigger) {
     <div class="card"><h2>기록으로 본 사고 경위</h2><ol class="bullets reading">${readings.map((r) => `<li>${esc(r.text)}${r.note ? `<small>${esc(r.note)}</small>` : ''}</li>`).join('') || '<li>해석할 기록이 없습니다.</li>'}</ol>
       <p class="msg">기록된 값만으로 쓴 문장입니다. "가능성"은 기록이 그렇게 보일 근거가 있다는 뜻이며, 단정이 아닙니다.</p></div>
     <div class="card"><h2>감지 직전 운전자의 조작</h2><ul class="bullets">${t.lines.map((l) => `<li>${esc(WBPacket.lineText(l))}</li>`).join('') || '<li>감지 직전 바뀐 조작이 없습니다.</li>'}</ul>${WBPacket.svg(t)}</div>
-    <div class="card"><h2>기록의 신뢰성</h2><p>${v.ok ? '✓ 원본 그대로입니다.' : '✗ 원본과 다릅니다.'} 기록 ${v.chain.checked}건의 해시 체인, 차량 서명${v.anchors.length ? ', 서버 서명' : ''}을 확인했습니다.</p>
-      <p class="msg">기록은 차에서 생기는 즉시 한 건씩 앞 기록과 이어져 봉인되고, 사본이 서버에 보관됩니다. 한 글자만 바뀌어도 검증이 실패합니다. 원본 대조가 필요하면 증거 요약의 공유 링크나 증거 파일을 함께 제출해 주세요.</p></div>
+    <div class="card"><h2>기록의 신뢰성</h2><p>${v.ok ? '✓ 원본 그대로입니다.' : '✗ 원본과 다릅니다.'} 데이터 ${v.chain.checked}개의 해시 체인, 차량 서명${v.anchors.length ? ', 서버 서명' : ''}을 확인했습니다.</p>
+      <p class="msg">데이터는 차에서 생기는 즉시 하나씩 앞 데이터와 이어져 봉인되고, 사본이 서버에 보관됩니다. 한 글자만 바뀌어도 검증이 실패합니다. 원본 대조가 필요하면 증거 요약의 공유 링크나 증거 파일을 함께 제출해 주세요.</p></div>
     <div class="card"><h2>당사자 기재란</h2><table class="blank">
       ${['상대 차량 번호', '상대 운전자 이름·연락처', '상대 보험사·접수번호', '목격자', '사고 경위 (직접 작성)', '', '작성일', '작성자 서명'].map((k) => `<tr><td>${k}</td><td></td></tr>`).join('')}</table></div>
-    <div class="card"><h2>상세 기록 (${rows.length}건)</h2><p class="msg">이 사고 구간에 차가 기록한 모든 값입니다. 시간은 감지 순간 기준(초)입니다.</p>
+    <div class="card"><h2>상세 데이터 (${rows.length}개)</h2><p class="msg">이 구간에 차가 기록한 모든 값입니다. 시간은 감지 순간 기준(초)입니다.</p>
       <table class="log"><tr><td>#</td><td>시각</td><td>감지 기준</td><td>항목</td><td>값</td></tr>${rows.map(([seq, wall, rel, what, val]) => `<tr><td>${seq}</td><td>${hms(wall)}</td><td>${rel > 0 ? '+' : ''}${rel.toFixed(1)}</td><td>${esc(what)}</td><td>${esc(val)}</td></tr>`).join('')}</table></div>
     <div class="card noprint actions"><button onclick="print()">인쇄 · PDF로 저장</button><button class="secondary" id="report-back">증거 요약으로 돌아가기</button></div>`;
   WB.show('packet', false);
@@ -555,7 +556,7 @@ function render(c, data, upToCause, events, t, v, trigger) {
   WB.$('mark').className = 'mark ' + (v.ok ? 'good' : 'bad');
   WB.$('verdict').textContent = v.ok ? '원본 그대로입니다 · 변조 없음' : '원본과 다릅니다';
   WB.$('verdict-sub').textContent = v.ok
-    ? `기록 ${v.chain.checked}건이 차의 해시 체인, 서명과 맞는지 이 휴대폰에서 직접 확인했습니다.`
+    ? `데이터 ${v.chain.checked}개가 차의 해시 체인, 서명과 맞는지 이 휴대폰에서 직접 확인했습니다.`
     : `확인 결과: ${v.chain.reason || v.seals.find((x) => !x.ok)?.reason || '서버 서명이 맞지 않음'}. 원본은 차에 그대로 있습니다.`;
 
   WB.$('lines').innerHTML = t.lines.map((l) => `<li>${esc(WBPacket.lineText(l))}</li>`).join('') || '<li>감지 직전 바뀐 조작이 없습니다.</li>';
@@ -567,7 +568,7 @@ function render(c, data, upToCause, events, t, v, trigger) {
   const ctx = WBPacket.contextRows(t.context);
   const rows = WBReport.log(events, causeWall);
   WB.show('log-card');
-  WB.$('log-title').textContent = `상세 기록 (${rows.length}건)`;
+  WB.$('log-title').textContent = `상세 데이터 (${rows.length}개)`;
   WB.$('context').innerHTML = ctx.map(([k, val]) => `<tr><td>${esc(k)}</td><td>${esc(val)}</td></tr>`).join('') || '<tr><td>기록 없음</td></tr>';
   WB.$('log').innerHTML = '<tr><td>#</td><td>시각</td><td>감지 기준</td><td>항목</td><td>값</td></tr>'
     + rows.map(([seq, wall, rel, what, val]) => `<tr><td>${seq}</td><td>${hms(wall)}</td><td>${rel > 0 ? '+' : ''}${rel.toFixed(1)}</td><td>${esc(what)}</td><td>${esc(val)}</td></tr>`).join('');
@@ -589,8 +590,8 @@ function render(c, data, upToCause, events, t, v, trigger) {
   showSavedClips(c, data, player);
 
   const tech = [
-    `캡슐 ${c.id} · 기록 #${c.firstSeq}–#${c.lastSeq} (${events.length}건 열람)`,
-    `체인: ${v.chain.ok ? `해시·연결 ${v.chain.checked}건 확인` : `#${v.chain.brokenAt} ${v.chain.reason}`}`,
+    `기록 ${c.id} · 데이터 #${c.firstSeq}–#${c.lastSeq} (${events.length}개 열람)`,
+    `체인: ${v.chain.ok ? `해시·연결 ${v.chain.checked}개 확인` : `#${v.chain.brokenAt} ${v.chain.reason}`}`,
     ...v.seals.map((x) => x.seal ? `차량 봉인 ${x.seal.final ? '최종' : '임시'} · ${WB.when(x.seal.at)} · ${x.ok ? '서명 유효' : x.reason} · 마지막 해시 ${x.seal.head.slice(0, 16)}…` : `봉인: ${x.reason}`),
     ...v.anchors.map((a) => `서버 서명 기록 #${a.head} · ${WB.when(a.at)} · ${a.signed ? '서버 서명 유효' : '서명 오류'}${a.agrees === false ? ' · 해시 불일치' : ''}`),
     ...(v.attestation ? [`서버 봉인 (차 신호 끊김) · ${v.attestation.signed ? '서버 서명 유효' : '서명 오류'}`] : []),

@@ -76,11 +76,13 @@
     const brakeChange = lastChange(), turnChange = lastChange(), gearChange = lastChange();
     let context = { seatBelts: {}, occupancy: {}, doors: {}, windows: {}, lamps: {}, wipers: {}, cruise: null, cruiseTargetMps: null, parkingBrake: null, speedLimitKmh: null, roadAlerts: [] };
     let startedMs = null;
+    // The last continuous value before the lanes begin: it still held when they did.
+    let speedBefore = null, steeringBefore = null;
 
     const take = (kind, v, ms, beforeCause, initial) => {
       switch (kind) {
-        case 'SPEED': if (inLanes(ms)) speed.push({ atMs: ms, value: v * 3.6 }); break;
-        case 'STEERING_ANGLE': if (inLanes(ms)) steering.push({ atMs: ms, value: v }); break;
+        case 'SPEED': if (inLanes(ms)) speed.push({ atMs: ms, value: v * 3.6 }); else if (ms < -pre) speedBefore = v * 3.6; break;
+        case 'STEERING_ANGLE': if (inLanes(ms)) steering.push({ atMs: ms, value: v }); else if (ms < -pre) steeringBefore = v; break;
         case 'BRAKE_PEDAL': brake.add(ms, v); if (beforeCause) brakeChange.report(ms, v, initial); break;
         case 'TURN_SIGNAL': turn.add(ms, v); if (beforeCause) turnChange.report(ms, v, initial); break;
         case 'GEAR': gear.add(ms, v); if (beforeCause) gearChange.report(ms, v, initial); break;
@@ -116,9 +118,19 @@
     if (flash) lines.push({ type: 'HIGH_BEAM_FLASH', beforeMs: -flash.atMs });
 
     const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+    const endMs = clamp(rel(events[events.length - 1]), 0, post);
+    // A continuous lane across the whole kept span: values are written when they change, so the one before the
+    // lanes begin still held at −pre, and the last one holds to the end.
+    const held = (points, before) => {
+      const out = before !== null && (points.length ? points[0].atMs : Infinity) > -pre ? [{ atMs: -pre, value: before }] : [];
+      out.push(...points);
+      const last = out[out.length - 1];
+      if (last && last.atMs < endMs) out.push({ atMs: endMs, value: last.value });
+      return out;
+    };
     return {
-      speedKmh: speed, steering, brake: brake.steps(), turn: turn.steps(), gear: gear.steps(), lines, context,
-      startMs: clamp(rel(events[0]), -pre, 0), endMs: clamp(rel(events[events.length - 1]), 0, post), pre, post,
+      speedKmh: held(speed, speedBefore), steering: held(steering, steeringBefore), brake: brake.steps(), turn: turn.steps(), gear: gear.steps(), lines, context,
+      startMs: clamp(rel(events[0]), -pre, 0), endMs, pre, post,
       causeSeq: cause.seq, causeWall: cause.e.at.wall,
     };
   }
@@ -204,23 +216,24 @@
       out.push(`<polyline fill="none" stroke="${color}" stroke-width="1.6" points="${pts.map((p) => `${x(p.atMs).toFixed(1)},${y(p.value).toFixed(1)}`).join(' ')}"/>`);
     };
     const maxSpeed = Math.max(20, ...t.speedKmh.map((p) => p.value));
-    // Lane colours stay clear of the brand purple, which marks the playhead: speed blue, steering green, brake red, turn amber.
-    line(t.speedKmh, 0, 0, maxSpeed, 'var(--lane-speed,#1565c0)');
+    // Lane colours stay clear of the red detection line and the purple playhead, and apart from each other for
+    // colour-blind eyes: speed blue, steering bluish green, brake slate, turn signal amber (as a blinker).
+    line(t.speedKmh, 0, 0, maxSpeed, 'var(--lane-speed,#0072b2)');
     out.push(`<text x="${label + 2}" y="${y0(0) + 10}" fill="var(--muted,#555)">${maxSpeed.toFixed(0)} km/h</text>`);
     const maxSteer = Math.max(30, ...t.steering.map((p) => Math.abs(p.value)));
     out.push(`<line x1="${label}" x2="${label + plotW}" y1="${y0(1) + lane / 2}" y2="${y0(1) + lane / 2}" stroke="#ccc"/>`);
-    line(t.steering, 1, -maxSteer, maxSteer, 'var(--lane-steer,#2e7d32)');
+    line(t.steering, 1, -maxSteer, maxSteer, 'var(--lane-steer,#009e73)');
     out.push(`<text x="${label + 2}" y="${y0(1) + 10}" fill="var(--muted,#555)">±${maxSteer.toFixed(0)}°</text>`);
 
-    const steps = (s, i, on, text) => s.forEach((st, k) => {
+    const steps = (s, i, on, text, ink = '#fff') => s.forEach((st, k) => {
       const a = x(st.atMs), b = x(k + 1 < s.length ? s[k + 1].atMs : Math.min(t.endMs, t.post));
       if (b <= a) return;
       if (on(st.value)) out.push(`<rect x="${a.toFixed(1)}" y="${y0(i) + 6}" width="${(b - a).toFixed(1)}" height="${lane - 12}" fill="${on(st.value)}" rx="2"/>`);
       const tx = text(st.value);
-      if (tx && b - a > 14) out.push(`<text x="${(a + 3).toFixed(1)}" y="${y0(i) + lane / 2 + 3}" fill="${on(st.value) ? '#fff' : 'var(--fg,#111)'}">${esc(tx)}</text>`);
+      if (tx && b - a > 14) out.push(`<text x="${(a + 3).toFixed(1)}" y="${y0(i) + lane / 2 + 3}" fill="${on(st.value) ? ink : 'var(--fg,#111)'}">${esc(tx)}</text>`);
     });
-    steps(t.brake, 2, (v) => v && 'var(--bad,#c62828)', (v) => v ? '밟음' : '');
-    steps(t.turn, 3, (v) => v !== 'OFF' && 'var(--warn,#ef6c00)', (v) => v === 'LEFT' ? '좌' : v === 'RIGHT' ? '우' : '');
+    steps(t.brake, 2, (v) => v && 'var(--lane-brake,#37474f)', (v) => v ? '밟음' : '', 'var(--lane-brake-fg,#fff)');
+    steps(t.turn, 3, (v) => v !== 'OFF' && 'var(--lane-turn,#e69f00)', (v) => v === 'LEFT' ? '좌' : v === 'RIGHT' ? '우' : '', 'var(--lane-turn-fg,#111)');
     steps(t.gear, 4, () => null, (v) => GEAR[v] || v);
 
     // The detection line and the "N s before" marks.

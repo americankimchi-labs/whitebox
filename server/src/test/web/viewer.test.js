@@ -148,6 +148,22 @@ test('states carried into a capsule\'s window read as held throughout, on the ca
   assert.ok(Report.log(events, t.causeWall).some((row) => /구간 시작 때/.test(row[3])), 'the log shows them as the starting state');
 });
 
+test('a fall with repeated speeds starts where the speed began to fall; lanes reach both edges; seats in order', async () => {
+  const Report = require(path.join(web, 'report.js'));
+  const ring = Codec.keyring({ roots });
+  const events = [];
+  for (const line of V.fall.records) { const r = Codec.parseLine(line); events.push({ seq: r.seq, e: await Codec.decode(r.entry, ring) }); }
+  const t = Packet.build(events, V.fall.causeSeq);
+  const { pre, post, causeSeq, causeWall, ...mine } = t;
+  close(mine, V.fall.timeline, 'fall timeline');
+  assert.equal(t.speedKmh[0].atMs, -10000, 'the speed lane starts at the window edge');
+  assert.equal(t.speedKmh[t.speedKmh.length - 1].atMs, t.endMs, 'and runs to the end of what was kept');
+  const readings = Report.interpret(events, t.causeWall, t.context).map((r) => ({ text: r.text, note: r.note ?? null }));
+  assert.deepEqual(readings, V.fall.readings);
+  assert.ok(readings.some((r) => /감지 1\.\d초 전부터 속도가 줄기 시작했습니다/.test(r.text)), readings.map((r) => r.text).join(' / '));
+  assert.ok(readings.some((r) => r.text === '사람이 앉아 있던 좌석: 운전석, 조수석, 뒷좌석 오른쪽.'), 'seats front first, driver first');
+});
+
 test('the log quotes the car\'s spoken words, never a code', async () => {
   const Report = require(path.join(web, 'report.js'));
   for (const line of V.voiceLines) assert.ok(Report.VOICE[line], `no words for ${line}`);

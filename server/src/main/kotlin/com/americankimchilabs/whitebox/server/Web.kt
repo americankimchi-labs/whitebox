@@ -355,6 +355,7 @@ fun Route.phoneRoutes(service: MirrorService, identity: Identity) {
             obj(
                 "firstSeq" to d.firstSeq, "lastSeq" to d.lastSeq, "startMs" to d.startMs, "endMs" to d.endMs, "records" to d.records,
                 "odometer" to d.odometer.map { (seq, entry) -> obj("seq" to seq, "entry" to entry) },
+                "gears" to d.gears.map { (seq, entry) -> obj("seq" to seq, "entry" to entry) },
                 "capsules" to d.capsules, "bookmarks" to d.bookmarks, "hardBrakes" to d.hardBrakes,
             )
         })

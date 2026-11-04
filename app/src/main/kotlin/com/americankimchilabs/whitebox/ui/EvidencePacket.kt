@@ -94,11 +94,14 @@ private fun buildPacket(seal: CapsuleSeal, session: ActiveSession): Packet {
         ?: escalations.filterIsInstance<EscalationEvent.LevelChanged>().firstOrNull { it.level == EscalationLevel.ALERT }?.causeSeq
         ?: seal.capsule.lastSeq
     val upToCause = events.filter { it.seq <= causeSeq }
-    var state = LiveState()
+    // The states the window started with (written when it sealed, so after the cause): a lamp or signal set long before.
+    var start = LiveState()
+    events.forEach { e -> (e.entry as? ChainEntry.Carried)?.let { start = start.with(it.signal) } }
+    var state = start
     upToCause.forEach { state = state.with(it.entry) }
     val after = state.kmh
     val causeWall = upToCause.last().entry.at.wallMillis
-    var earlier = LiveState()
+    var earlier = start
     upToCause.filter { it.entry.at.wallMillis <= causeWall - 10_000 }.forEach { earlier = earlier.with(it.entry) }
     val timeline = EvidenceTimeline.build(events, causeSeq)
     return Packet(
@@ -235,11 +238,16 @@ private fun Details(labels: Labels, seal: CapsuleSeal, p: Packet) {
             // Never the place itself on the car: anyone using the car could see where the owner went.
             stringResource(if (p.location != null) R.string.packet_location_owner else R.string.packet_no_location),
         )
-        Field(stringResource(R.string.packet_records), stringResource(R.string.packet_records_value, seal.capsule.firstSeq, seal.capsule.lastSeq, p.eventCount))
+        // How much was kept, and (once checked) that nothing in between is missing; the numbers are for whoever checks.
+        Field(
+            stringResource(R.string.packet_records),
+            stringResource(if (p.check == CapsuleCheck.Verified) R.string.packet_records_value else R.string.packet_records_count, p.eventCount),
+        )
         Field(
             stringResource(R.string.packet_seal),
             stringResource(if (seal.final) R.string.packet_seal_final else R.string.packet_seal_provisional, labels.dateTime(seal.sealedAtWallMillis)),
         )
+        Field(stringResource(R.string.packet_seq), stringResource(R.string.packet_seq_value, seal.capsule.firstSeq, seal.capsule.lastSeq), mono = true)
         Field(stringResource(R.string.packet_hash), seal.headHash.hex().take(32) + "…", mono = true)
         Field(stringResource(R.string.packet_key), fingerprint(seal.publicKey), mono = true)
     }
@@ -273,8 +281,11 @@ private fun Field(label: String, value: String, mono: Boolean = false, labelWidt
 }
 
 private val LANE_LABEL = 150.dp
-private val BrakeColor = Color(0xFFC62828)
-private val TurnColor = Color(0xFFF9A825)
+// The phone's lane colours: apart from the red detection line and the purple playhead, and from each other for
+// colour-blind eyes (speed blue, steering bluish green, brake slate, turn signal amber).
+private val DetectionColor = Color(0xFFC62828)
+private val BrakeColor = Color(0xFF37474F)
+private val TurnColor = Color(0xFFE69F00)
 
 /** Window position of [ms] (relative to the cause) across a lane [width] px wide. */
 private fun x(ms: Long, width: Float) =
@@ -296,9 +307,8 @@ private fun Lanes(labels: Labels, tl: EvidenceTimeline) {
     val measurer = rememberTextMeasurer()
     val axis = MaterialTheme.colorScheme.outline
     val shade = MaterialTheme.colorScheme.surfaceVariant
-    // The phone's lane colours, clear of the brand purple (its playhead): speed blue, steering green, brake red, turn amber.
-    val speedColor = Color(0xFF1565C0)
-    val steerColor = Color(0xFF2E7D32)
+    val speedColor = Color(0xFF0072B2)
+    val steerColor = Color(0xFF009E73)
     val text = MaterialTheme.typography.labelLarge.copy(color = MaterialTheme.colorScheme.onSurface)
     val faint = text.copy(color = Color.Gray)
     val left = stringResource(R.string.lane_left)
@@ -315,7 +325,7 @@ private fun Lanes(labels: Labels, tl: EvidenceTimeline) {
                 if (tl.endMs < EvidenceTimeline.POST_MS) drawRect(shade, Offset(x(tl.endMs, w), 0f), Size(w - x(tl.endMs, w), size.height))
                 drawLine(axis, Offset(0f, size.height), Offset(w, size.height), strokeWidth = 1f)
                 draw()
-                drawLine(BrakeColor, Offset(x(0, w), 0f), Offset(x(0, w), size.height), strokeWidth = 3f)
+                drawLine(DetectionColor, Offset(x(0, w), 0f), Offset(x(0, w), size.height), strokeWidth = 3f)
             }
         }
     }

@@ -118,6 +118,37 @@ const WB = (() => {
   const when = (ms) => new Date(ms).toLocaleString('ko-KR');
   const day = (ms) => new Date(ms).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
   const clock = (ms) => new Date(ms).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' });
+  /**
+   * When a drive was actually driven: from the first shift out of P to the last shift back into P (or its end), read
+   * from its gear records with this phone's keys. Null when it never left P (the car only sat with the power on).
+   * A drive whose gears this phone cannot open counts whole.
+   */
+  async function driven(drive, ring) {
+    const gears = [];
+    for (const g of drive.gears || []) {
+      const e = await WBCodec.decode(g.entry, ring).catch(() => null);
+      if (!e || e.locked) return { startMs: drive.startMs, endMs: drive.endMs };
+      gears.push({ at: e.at.wall, v: e.value });
+    }
+    const out = gears.find((g) => g.v !== 'PARK');
+    if (!out) return gears.length ? null : { startMs: drive.startMs, endMs: drive.endMs };
+    const back = gears.filter((g) => g.at > out.at && g.v === 'PARK').pop();
+    return { startMs: out.at, endMs: back ? back.at : drive.endMs };
+  }
+  /** Distance driven by the car's odometer (Korean cars report km); null when it did not move or was not read. */
+  async function odometerKm(drive, ring) {
+    if (!drive.odometer || drive.odometer.length < 2) return null;
+    const [a, b] = await Promise.all(drive.odometer.map((o) => WBCodec.decode(o.entry, ring).catch(() => null)));
+    return a && b && !a.locked && !b.locked && b.value > a.value ? b.value - a.value : null;
+  }
+  /** A recent moment as people say it: "오늘 오후 10:46", "어제 오후 9:02", else "11월 4일 오후 10:46". */
+  const recent = (ms, now = Date.now()) => {
+    const d = new Date(ms), today = new Date(now);
+    today.setHours(0, 0, 0, 0);
+    const days = Math.floor((today.getTime() - new Date(d).setHours(0, 0, 0, 0)) / 86400000);
+    const dayWord = days === 0 ? '오늘' : days === 1 ? '어제' : d.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' });
+    return `${dayWord} ${clock(ms)}`;
+  };
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   /** `#d=…&s=…&id=…` → {d, s, id}: page parameters travel in the fragment, which never reaches a server log. */
   const params = () => Object.fromEntries(new URLSearchParams(location.hash.slice(1)));
@@ -167,5 +198,5 @@ const WB = (() => {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
   }
 
-  return { parts, newPhoneKey, phoneKey, unwrap, unwrapAll, ownerKeys, ownerRoots, claimMac, checkCode, post, get, $, show, say, ago, when, day, clock, esc, params, mapLink, secure, b64, unb64, TIER, upgrades };
+  return { parts, newPhoneKey, phoneKey, unwrap, unwrapAll, ownerKeys, ownerRoots, claimMac, checkCode, post, get, $, show, say, ago, when, recent, driven, odometerKm, day, clock, esc, params, mapLink, secure, b64, unb64, TIER, upgrades };
 })();

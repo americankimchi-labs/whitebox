@@ -83,9 +83,9 @@ fun dashboardCards(service: MirrorService, sms: DemoSmsSender? = null): String {
                 "차가 기록을 봉인하고 바로 보내는 중입니다.",
             )
             s.level == EscalationLevel.ALERT -> Triple("급제동 감지", "warn", "급제동이 감지되어 기록을 생기는 대로 바로 받고 있습니다.")
-            silentS != null && silentS < 30 -> Triple("주행 중", "good", "정상적으로 기록을 받고 있습니다.")
-            s.records > 0 -> Triple("꺼짐", "", "차가 꺼져 있습니다. 받은 기록은 안전하게 보관하고 있습니다.")
-            else -> Triple("기록 없음", "", "아직 받은 기록이 없습니다.")
+            silentS != null && silentS < 30 -> Triple("기록 중", "good", "정상적으로 데이터를 받고 있습니다.")
+            s.records > 0 -> Triple("꺼짐", "", "차가 꺼져 있습니다. 받은 데이터는 안전하게 보관하고 있습니다.")
+            else -> Triple("기록 없음", "", "아직 받은 데이터가 없습니다.")
         }
         val kind = if (s.stream.stream == "replay") "데모 차량" else "실제 차량"
         val moments = capsules.take(5).joinToString("") { c ->
@@ -100,7 +100,7 @@ fun dashboardCards(service: MirrorService, sms: DemoSmsSender? = null): String {
         }.ifEmpty { "<p class='msg'>보관된 기록이 없습니다.</p>" }
         val history = s.events.asReversed().joinToString("") { (at, text) -> "<li><span class='t'>${time(at)}</span> ${esc(text)}</li>" }
         val seals = s.seals.takeLast(4).joinToString("<br>") { l -> l.split("|").let { f -> esc("${f[0]} ${f[1]} #${f[2]}–#${f[3]} ${if (f[5] == "true") "최종" else "임시"}") } }
-        val attested = s.attested.takeLast(3).joinToString("<br>") { l -> l.substringBefore("|sig=").split("|").let { f -> esc("${time(f.last().toLong())} #${f[2]}–#${f[3]} 빠진 기록 ${f[6]}건") } }
+        val attested = s.attested.takeLast(3).joinToString("<br>") { l -> l.substringBefore("|sig=").split("|").let { f -> esc("${time(f.last().toLong())} #${f[2]}–#${f[3]} 빠진 데이터 ${f[6]}개") } }
         val key = esc("${s.stream.deviceId}-${s.stream.stream}")
         val owner = service.identity?.ownerOf(s.stream.deviceId)
         val plans = service.plans
@@ -120,14 +120,14 @@ fun dashboardCards(service: MirrorService, sms: DemoSmsSender? = null): String {
   <h2><span class="badge $cls">$badge</span> $kind</h2>
   <p>$sentence ${silentS?.let { "<span class='msg'>마지막 수신 ${it}초 전</span>" } ?: ""}</p>
   <div class="stats">
-    <div class="stat"><b>${s.records}건</b><span>받은 기록</span></div>
+    <div class="stat"><b>${"%,d".format(s.records)}개</b><span>받은 데이터</span></div>
     <div class="stat"><b>${capsules.size}건</b><span>보관 기록</span></div>
   </div>
   $planRow
   <h3>보관 기록</h3>$moments
   <details data-key="$key"><summary>자세히</summary><div class="tech">
     기기 ${esc(s.stream.deviceId)} · 스트림 ${esc(s.stream.stream)} · 단계 ${s.level ?: "-"}<br>
-    #0부터 #${s.contiguousHead}까지 빠짐없이 받았거나 보관 기간이 지나 정리됨 · 최고 #${s.highestSeq} · 변조 의심으로 거부 ${s.conflicts}건<br>
+    #0부터 #${s.contiguousHead}까지 빠짐없이 받았거나 보관 기간이 지나 정리됨 · 최고 #${s.highestSeq} · 변조 의심으로 거부 ${s.conflicts}개<br>
     차량 봉인 (차량 키 서명 확인됨):<br>${seals.ifEmpty { "없음" }}<br>
     서버 봉인 (데드맨 스위치):<br>${attested.ifEmpty { "없음" }}<br>
     마지막 서버 서명: ${esc(s.lastAnchor?.substringBefore("|sig=") ?: "없음")}

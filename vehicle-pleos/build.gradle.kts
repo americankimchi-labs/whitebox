@@ -29,7 +29,9 @@ dependencies {
     implementation(libs.navihelper.sdk)
     implementation(libs.stt.sdk)
     implementation(libs.tts.sdk)
-    implementation(libs.fusedlocation.sdk)
+    // FusedLocation is not used by the app (it records the platform's GPS); debug builds keep the SDK for on-device
+    // checks, so the release APK carries neither the library nor the permissions its manifest adds.
+    debugImplementation(libs.fusedlocation.sdk)
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
 }

@@ -90,11 +90,11 @@
     <string name="road_traffic_light">신호 위반 단속</string>
     <string name="road_lane_change">끼어들기·차선 변경 단속</string>
     <string name="road_speed_camera">과속 단속</string>
-    <string name="row_started">기록 시작</string>
-    <string name="row_started_gap">기록 시작 · %1$s %2$.1f초 동안 기록 없음</string>
+    <string name="row_started">기록 시작 · 차량 상태 기록</string>
+    <string name="row_started_gap">기록 시작 · 차량 상태 기록 · 그전 %2$s 동안 %1$s 기록 없음</string>
     <string name="row_stopped">기록 정상 종료</string>
     <string name="row_degraded">권한 꺼짐: %1$s (주차하면 다시 요청)</string>
-    <string name="row_restored">권한 다시 켜짐: %1$s</string>
+    <string name="row_restored">권한 허용됨: %1$s</string>
     <string name="row_level">▶ %1$s</string>
     <string name="row_trigger">■ %1$s · %2$+.1f km/h</string>
     <string name="row_trigger_kmh">■ %1$s · %2$.0f km/h</string>
@@ -114,9 +114,9 @@
     <string name="consent_protect">누구의 차인지 알 수 없게 암호화해 사고 감지를 고치는 데에만 씁니다. 광고나 보험료 산정에는 쓰지 않습니다.</string>
     <string name="consent_undo_title">언제든 그만둘 수 있습니다</string>
     <string name="consent_undo">휴대폰 탭에서 언제든 그만둘 수 있고, 그만두면 이미 보낸 자료도 지웁니다.</string>
-    <string name="consent_safety_note">참여하지 않아도 기록과 사고 보관은 모두 그대로 동작합니다.</string>
+    <string name="consent_safety_note">참여하지 않아도 기록과 보관은 모두 그대로 동작합니다.</string>
     <string name="consent_yes">함께할게요</string>
-    <string name="consent_no">다음에 할게요</string>
+    <string name="consent_no">참여하지 않을게요</string>
     <string name="consent_row_on">사고 감지 개선에 함께하고 있습니다. 감사합니다.</string>
     <string name="consent_row_off">사고 감지 개선에 참여하지 않습니다.</string>
     <string name="consent_stop">그만하기</string>
@@ -145,7 +145,7 @@
     <string name="voice_keep_question">방금 상황 보관할까요?</string>
     <string name="voice_kept">보관 완료</string>
     <string name="voice_released">보관 취소</string>
-    <string name="voice_crash_guidance">사고 기록 완료. 과실 인정은 피하고, 현장을 촬영하세요.</string>
+    <string name="voice_crash_guidance">기록 보관 완료. 과실 인정은 피하고, 현장을 촬영하세요.</string>
     <string name="voice_bookmarked">보관 완료</string>
     <!-- Handover mode: to the hired driver, polite and short. -->
     <string name="voice_handover_started">대리 운전 모드입니다. 주행이 기록됩니다.</string>
@@ -191,7 +191,6 @@
     <string name="handover_destination">목적지를 미리 설정해 두면 경로 이탈과 도착도 기록됩니다.</string>
     <string name="handover_turn_on">켜기</string>
     <string name="handover_set_destination">목적지 설정</string>
-    <string name="handover_close">닫기</string>
     <string name="handover_cancel">취소</string>
     <string name="handover_armed">대리 운전 대기 중 · 출발하면 기록을 시작합니다</string>
     <string name="handover_active_parked">대리 운전 중 · 차주 휴대폰에서만 끌 수 있습니다</string>
@@ -227,9 +226,9 @@
     <string name="library_kind_moment">위험 순간 · %1$s</string>
     <string name="library_extended">%1$s까지 보관 (연장)</string>
     <string name="library_left_notice">보관함이 가득 차 %1$s 기록(%2$s)이 보관함에서 빠졌습니다.</string>
-    <string name="library_left_phone_free">사고 시점부터 30일 안에 휴대폰에서 플러스나 프로로 업그레이드하면 다시 돌아옵니다.</string>
-    <string name="library_left_phone_plus">사고 시점부터 30일 안에 휴대폰에서 프로로 업그레이드하면 다시 돌아옵니다.</string>
-    <string name="library_left_phone_pro">사고 시점부터 30일까지는 휴대폰에서 증거 파일을 내려받을 수 있습니다.</string>
+    <string name="library_left_phone_free">감지 시점부터 30일 안에 휴대폰에서 플러스나 프로로 업그레이드하면 다시 돌아옵니다.</string>
+    <string name="library_left_phone_plus">감지 시점부터 30일 안에 휴대폰에서 프로로 업그레이드하면 다시 돌아옵니다.</string>
+    <string name="library_left_phone_pro">감지 시점부터 30일까지는 휴대폰에서 증거 파일을 내려받을 수 있습니다.</string>
     <string name="handover_plan_needed">대리 운전 모드는 플러스 요금제부터 쓸 수 있습니다.</string>
     <string name="handover_plan_phone">휴대폰에서 요금제를 바꿀 수 있습니다.</string>
     <string name="phone_handover_blocked">대리 운전 모드 중에는 휴대폰을 새로 연결할 수 없습니다.</string>
@@ -290,8 +289,11 @@
     <string name="packet_speed_up">시속 %1$.0f km → %2$.0f km (%3$s%4$.0f km 늘어남)</string>
     <string name="packet_speed_at">감지 순간 시속 %1$.0f km</string>
     <string name="packet_speed_at_before">감지 순간 시속 %1$.0f km (10초 전 시속 %2$.0f km)</string>
-    <string name="packet_records">기록 번호</string>
-    <string name="packet_records_value">#%1$d–#%2$d · %3$d건</string>
+    <string name="packet_records">데이터 개수</string>
+    <string name="packet_records_value">%1$d개 · 빠짐없음</string>
+    <string name="packet_records_count">%1$d개</string>
+    <string name="packet_seq">데이터 번호</string>
+    <string name="packet_seq_value">#%1$d–#%2$d</string>
     <string name="packet_details_open">자세히 보기 ▾</string>
     <string name="packet_details_close">접기 ▴</string>
     <string name="duration_s">%1$d초</string>
@@ -302,8 +304,8 @@
     <string name="packet_range">보관한 구간</string>
     <string name="packet_range_value">감지 %1$s 전부터 %2$s 뒤까지</string>
     <string name="packet_seal">봉인</string>
-    <string name="packet_seal_final">최종 · %1$s</string>
-    <string name="packet_seal_provisional">임시 · %1$s</string>
+    <string name="packet_seal_final">확정 · %1$s</string>
+    <string name="packet_seal_provisional">확정 전 · %1$s (보관 구간이 끝나면 확정)</string>
     <string name="packet_hash">체인 해시</string>
     <string name="packet_key">기기 서명 키</string>
     <string name="packet_qr_hint">휴대폰 카메라로 찍으면 이 증거 요약이 열립니다.</string>

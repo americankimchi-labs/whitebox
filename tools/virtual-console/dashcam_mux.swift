@@ -3,7 +3,7 @@
 //     swift tools/virtual-console/dashcam_mux.swift <video> <audio.wav> <out.mov> <seconds>
 //
 // The first <seconds> of the video are kept unchanged (passthrough) and the WAV becomes its audio track, also
-// unchanged: uncompressed PCM, as many dashcams record it, so the 20–22 kHz chirp survives (an AAC encoder would
+// unchanged: uncompressed PCM, as many dashcams record it, so the 21–22 kHz chirp survives (an AAC encoder would
 // cut that band). macOS only (AVFoundation); dashcam.py falls back to ffmpeg elsewhere.
 import AVFoundation
 

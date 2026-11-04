@@ -281,7 +281,7 @@ class MirrorService(
 
 
     private fun conflicts(stream: StreamId, result: PutResult, now: Long) {
-        if (result.conflicts.isNotEmpty()) note(stream, now, "기존 기록과 어긋나는 기록 ${result.conflicts.size}건 거부 (변조 의심)")
+        if (result.conflicts.isNotEmpty()) note(stream, now, "기존 데이터와 어긋나는 데이터 ${result.conflicts.size}개 거부 (변조 의심)")
     }
 
     /** One dead-man step; the server calls it about twice a second. */
@@ -458,7 +458,7 @@ class MirrorService(
         if (through < 0) return 0
         val keep = all.filter { library(stream, it).let { i -> i.visible(now) || i.status(now) == LibraryStatus.LEFT } }.map { it.firstSeq..it.lastSeq }
         val n = store.remove(stream, through, keep, "${days}일 지난 주행 기록", now)
-        if (n > 0) note(stream, now, "${days}일이 지난 주행 기록 ${n}건 삭제 (보관 중인 기록은 그대로)")
+        if (n > 0) note(stream, now, "${days}일이 지난 주행 데이터 ${n}개 삭제 (보관 기록은 그대로)")
         return n
     }
 
@@ -503,7 +503,10 @@ class MirrorService(
             runCatching { seq to key.decryptAtRest(line.substringAfter('|'), "copy|$stream|$seq") }.getOrNull()
         }.distinctBy { it.first }
 
-    /** One continuous stretch of recording. [odometer]: its first and last odometer records (encrypted). */
+    /**
+     * One continuous stretch of recording. [odometer]: its first and last odometer records; [gears]: every gear record
+     * (a few per drive), from which the owner's phone tells when the car was actually driven. Both stay encrypted.
+     */
     data class Drive(
         val firstSeq: Long,
         val lastSeq: Long,
@@ -511,6 +514,7 @@ class MirrorService(
         val endMs: Long,
         val records: Int,
         val odometer: List<Pair<Long, String>>,
+        val gears: List<Pair<Long, String>>,
         val capsules: List<String>,
         val bookmarks: Int,
         val hardBrakes: Int,
@@ -545,6 +549,7 @@ class MirrorService(
             val last = d.last().first
             out += Drive(
                 first, last, times.min(), times.max(), d.size, listOfNotNull(odo.firstOrNull(), odo.lastOrNull()).distinct(),
+                d.filter { it.second.startsWith("S|GEAR|") },
                 capsulesBySeq.filter { it.firstSeq in first..last }.map { it.id },
                 d.count { it.second.contains("|TRIGGER|MANUAL|") }, d.count { it.second.contains("|TRIGGER|HARD_BRAKE|") },
             ) to epochs

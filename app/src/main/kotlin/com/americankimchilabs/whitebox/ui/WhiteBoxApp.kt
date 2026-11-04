@@ -82,7 +82,9 @@ data class LiveState(
     val turn: TurnSignalState? = null,
     val steering: Float? = null,
 ) {
-    fun with(e: ChainEntry): LiveState = when (val s = (e as? ChainEntry.Signal)?.sample?.signal) {
+    fun with(e: ChainEntry): LiveState = (e as? ChainEntry.Signal)?.sample?.signal?.let { with(it) } ?: this
+
+    fun with(s: VehicleSignal): LiveState = when (s) {
         is VehicleSignal.Gear -> copy(gear = s.position)
         is VehicleSignal.Speed -> copy(kmh = s.metersPerSecond * 3.6f)
         is VehicleSignal.BrakePedal -> copy(brake = s.pressed)
@@ -322,7 +324,6 @@ private fun Timeline(labels: Labels, rows: List<DriveEvent>) {
         items(rows) {
             Row(Modifier.fillMaxWidth().ccpRow().padding(vertical = 6.dp)) {
                 Text(labels.time(it.entry.at.wallMillis), color = Color.Gray, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(170.dp))
-                Text("#${it.seq}", color = Color.Gray, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(100.dp))
                 Text(labels.row(it.entry) ?: "", style = MaterialTheme.typography.titleMedium)
             }
         }

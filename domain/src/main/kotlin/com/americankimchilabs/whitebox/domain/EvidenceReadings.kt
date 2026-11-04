@@ -24,6 +24,8 @@ object EvidenceReadings {
     private val GEAR = mapOf("PARK" to "P(주차)", "REVERSE" to "R(후진)", "NEUTRAL" to "N(중립)", "DRIVE" to "D(주행)", "MANUAL" to "M(수동)")
 
     private fun area(a: String) = AREA[a] ?: a
+    /** Seats as people name them: front first, driver first. */
+    private val SEAT_ORDER = listOf("ROW_1_LEFT", "ROW_1_RIGHT", "ROW_2_LEFT", "ROW_2_CENTER", "ROW_2_RIGHT")
     /** As JavaScript's toFixed: the exact binary value rounded half up, so the car and the phone print the same digits. */
     private fun fixed(x: Double, digits: Int) = BigDecimal(x).setScale(digits, RoundingMode.HALF_UP).toPlainString()
     private fun sec(ms: Long) = fixed(abs(ms) / 1000.0, 1)
@@ -90,11 +92,19 @@ object EvidenceReadings {
         val before = at(causeWall - 10_000)
         if (now != null) {
             val v = kmh(now.v)
+            // Back from the moment while the speed was falling: a repeated value inside the fall (samples arrive
+            // faster than the speed changes) does not end it; rising, or holding for over a second, does.
             var slowFrom: Point<Double>? = null
+            var flatMs = 0L
             for (i in speed.indices.reversed()) {
                 if (i == 0) break
                 if (speed[i].wall > causeWall) continue
-                if (speed[i].v < speed[i - 1].v - 0.05) slowFrom = speed[i - 1] else if (slowFrom != null) break
+                val earlier = speed[i - 1]
+                val later = speed[i]
+                if (earlier.v > later.v + 0.05) { slowFrom = earlier; flatMs = 0 }
+                else if (slowFrom == null) continue
+                else if (earlier.v < later.v - 0.05) break
+                else { flatMs += later.wall - earlier.wall; if (flatMs > 1_000) break }
             }
             // The fastest in the ten seconds before, when it is clearly above both ends (sped up, then slowed down).
             val top = speed.filter { it.wall in (causeWall - 10_000)..causeWall }.fold<Point<Double>, Point<Double>?>(null) { a, r -> if (a == null || r.v > a.v) r else a }
@@ -205,7 +215,7 @@ object EvidenceReadings {
         fun lamps(lamp: Lamp) = series { s -> (s as? VehicleSignal.Light)?.takeIf { it.lamp == lamp }?.on }
         val low = stateAt(lamps(Lamp.LOW_BEAM), causeWall) { it }
         if (low != null && low.v) add("전조등이 켜져 있었습니다.", "해가 진 뒤였거나 터널·비 등으로 어두웠을 가능성이 있습니다.")
-        else if (low != null) add("전조등은 꺼져 있었습니다.", "낮이었을 가능성이 높습니다.")
+        else if (low != null) add("전조등은 꺼져 있었습니다.")
         lamps(Lamp.HIGH_BEAM).firstOrNull { it.v && it.wall <= causeWall && it.wall >= causeWall - 10_000 }
             ?.let { add("감지 ${sec(causeWall - it.wall)}초 전 상향등을 켰습니다.", "상대에게 보내는 경고 신호였을 가능성이 있습니다.", weight = 3) }
         lamps(Lamp.HAZARD).firstOrNull { it.v && it.wall > causeWall }?.let { add("감지 ${sec(it.wall - causeWall)}초 뒤 비상등을 켰습니다.", weight = 2) }
@@ -219,7 +229,7 @@ object EvidenceReadings {
             if (s is VehicleSignal.SeatOccupancy) seats[s.seat] = s.occupied
         }
         belts["ROW_1_LEFT"]?.let { add(if (it) "운전석 안전벨트를 매고 있었습니다." else "운전석 안전벨트를 매지 않은 것으로 기록되어 있습니다.", weight = if (it) 1 else 2) }
-        val taken = seats.filter { it.value }.keys.map(::area)
+        val taken = seats.filter { it.value }.keys.sortedBy { SEAT_ORDER.indexOf(it).let { i -> if (i < 0) SEAT_ORDER.size else i } }.map(::area)
         if (taken.isNotEmpty()) add("사람이 앉아 있던 좌석: ${taken.joinToString(", ")}.")
 
         // Cruise control.

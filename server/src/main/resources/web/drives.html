@@ -22,13 +22,7 @@ let ring, capsules = [];
 
 const minutes = (ms) => { const m = Math.max(1, Math.round(ms / 60000)); return m >= 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분` : `${m}분`; };
 
-async function odometerKm(drive) {
-  if (drive.odometer.length < 2) return null;
-  const [a, b] = await Promise.all(drive.odometer.map((o) => WBCodec.decode(o.entry, ring).catch(() => null)));
-  return a && b && !a.locked && !b.locked ? Math.max(0, b.value - a.value) : null;
-}
-
-/** The drive's speed over time (one reading every 2 s) and the distance it adds up to. */
+/** The drive's speed over time (one reading every 2 s) and the moments kept during it. */
 async function detail(drive, el) {
   el.innerHTML = '<p class="msg">불러오는 중…</p>';
   const recs = (await WB.get(`/v1/records?device=${d}&stream=${s}&from=${drive.firstSeq}&to=${drive.lastSeq}&every=2000`)) || [];
@@ -36,11 +30,9 @@ async function detail(drive, el) {
   for (const r of recs) {
     if (!r.entry.startsWith('S|SPEED|')) continue;
     const e = await WBCodec.decode(r.entry, ring).catch(() => null);
-    if (e && !e.locked) pts.push({ t: e.at.wall, v: e.value * 3.6 });
+    if (e && !e.locked && e.at.wall >= drive.span.startMs && e.at.wall <= drive.span.endMs) pts.push({ t: e.at.wall, v: e.value * 3.6 });
   }
   if (!pts.length) { el.innerHTML = '<p class="msg">이 휴대폰에서 열 수 있는 속도 기록이 없습니다.</p>'; return; }
-  let km = 0;
-  for (let i = 1; i < pts.length; i++) km += ((pts[i - 1].v + pts[i].v) / 2) * ((pts[i].t - pts[i - 1].t) / 3600000);
   const w = 360, h = 90, t0 = pts[0].t, t1 = pts[pts.length - 1].t || t0 + 1, vmax = Math.max(30, ...pts.map((p) => p.v));
   const x = (t) => 4 + ((t - t0) / Math.max(1, t1 - t0)) * (w - 8);
   const y = (v) => h - 14 - (v / vmax) * (h - 24);
@@ -48,9 +40,8 @@ async function detail(drive, el) {
     .map((c) => `<line x1="${x(c.sealedAtMs)}" x2="${x(c.sealedAtMs)}" y1="6" y2="${h - 14}" stroke="${c.severe ? 'var(--bad,#c62828)' : 'var(--warn,#e65100)'}" stroke-width="2"/>`).join('');
   el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="주행 속도" style="font:10px system-ui"><rect x="4" y="6" width="${w - 8}" height="${h - 20}" fill="var(--lane,#f1f3f5)" rx="3"/>
     <polyline fill="none" stroke="var(--accent,#6750a4)" stroke-width="1.5" points="${pts.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')}"/>${marks}
-    <text x="8" y="17" fill="var(--muted,#5f6368)">최고 ${Math.max(...pts.map((p) => p.v)).toFixed(0)} km/h</text>
+    <text x="${w / 2}" y="${h - 2}" text-anchor="middle" fill="var(--muted,#5f6368)">최고 ${Math.max(...pts.map((p) => p.v)).toFixed(0)} km/h</text>
     <text x="4" y="${h - 2}" fill="var(--muted,#5f6368)">${WB.clock(t0)}</text><text x="${w - 50}" y="${h - 2}" fill="var(--muted,#5f6368)">${WB.clock(t1)}</text></svg>
-    <p class="msg">속도로 계산한 거리 약 ${km.toFixed(1)} km${drive.odometer.length < 2 ? '' : ' (주행거리계와 다를 수 있음)'}</p>
     ${capsules.filter((c) => drive.capsules.includes(c.id)).map((c) => `<a class="row" href="/capsule#d=${d}&s=${s}&id=${encodeURIComponent(c.id)}"><span>${esc(WBPacket.TRIGGER[c.trigger] || c.trigger)}<br><span class="sub">${WB.when(c.sealedAtMs)}</span></span><span class="badge ${c.crash ? 'bad' : 'warn'}">${c.severe ? '큰 사고' : c.crash ? '충돌' : '위험 순간'}</span></a>`).join('')}`;
 }
 
@@ -60,21 +51,27 @@ async function load() {
   ring = await WB.ownerKeys(me, d);
   if (me.plan) WB.$('window').textContent = `최근 ${me.plan.historyDays}일의 주행을 보관합니다 (${WB.TIER[me.plan.tier]} 요금제). 보관 기록은 따로 남습니다.`;
   if (ring.isEmpty()) { WB.$('list').innerHTML = '<div class="card"><p>이 휴대폰에는 기록을 여는 열쇠가 없습니다. 차 화면의 <b>휴대폰</b> 탭에서 QR을 다시 찍어 주세요.</p></div>'; return; }
-  const drives = (await WB.get(`/v1/drives?device=${d}&stream=${s}`)) || [];
+  // Only what was driven is a drive: a stretch with the power on that never left P is left out.
+  const drives = [];
+  for (const dr of (await WB.get(`/v1/drives?device=${d}&stream=${s}`)) || []) { const span = await WB.driven(dr, ring); if (span) drives.push({ ...dr, span }); }
   capsules = (await WB.get(`/v1/capsules?device=${d}&stream=${s}`)) || [];
   if (!drives.length) { WB.$('list').innerHTML = '<div class="card"><p class="msg">아직 주행 기록이 없습니다.</p></div>'; return; }
   const byDay = new Map();
-  for (const dr of drives) { const k = WB.day(dr.startMs); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(dr); }
+  for (const dr of drives) { const k = WB.day(dr.span.startMs); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(dr); }
   const cards = [];
   let i = 0;
   for (const [dayName, list] of byDay) {
     const rows = [];
     for (const dr of list) {
-      const km = await odometerKm(dr);
-      const risky = dr.capsules.length;
+      const km = await WB.odometerKm(dr, ring);
+      // The kept moments of the drive by what they were, named as the records are.
+      const kept = capsules.filter((c) => dr.capsules.includes(c.id));
+      const kinds = [['큰 사고', 'bad', kept.filter((c) => c.severe).length], ['충돌', 'bad', kept.filter((c) => !c.severe && c.crash).length],
+        ['위험 순간', 'warn', kept.filter((c) => !c.severe && !c.crash && !['MANUAL', 'HANDOVER'].includes(c.trigger)).length],
+        ['음성 보관', '', kept.filter((c) => c.trigger === 'MANUAL').length]].filter(([, , n]) => n > 0);
       rows.push(`<div class="row" style="display:block"><button class="plain" style="width:100%;text-align:left;color:inherit" data-i="${i}">
-        <b>${WB.clock(dr.startMs)}–${WB.clock(dr.endMs)}</b> · ${minutes(dr.endMs - dr.startMs)}${km != null ? ` · ${km.toFixed(1)} km` : ''}
-        ${risky ? `<span class="badge warn">위험 순간 ${risky}</span>` : ''}${dr.bookmarks ? ` <span class="badge">음성 보관 ${dr.bookmarks}</span>` : ''}</button>
+        <b>${WB.clock(dr.span.startMs)}–${WB.clock(dr.span.endMs)}</b> · ${minutes(dr.span.endMs - dr.span.startMs)}${km != null ? ` · ${km.toFixed(1)} km` : ''}
+        ${kinds.length ? `<br>${kinds.map(([k, tone, n]) => `<span class="badge ${tone}">${k} ${n}</span>`).join(' ')}` : ''}</button>
         <div id="detail-${i}" hidden></div></div>`);
       list[list.indexOf(dr)].index = i++;
     }

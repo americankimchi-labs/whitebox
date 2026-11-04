@@ -89,11 +89,14 @@ class EvidenceTimeline(
             val highBeam = mutableListOf<LaneStep<Boolean>>()
             var context = DrivingContext()
             var startedMs: Long? = null
+            // The last continuous value before the lanes begin: it still held when they did.
+            var speedBefore: Float? = null
+            var steeringBefore: Float? = null
 
             fun take(s: VehicleSignal, ms: Long, beforeCause: Boolean, initial: Boolean) {
                 when (s) {
-                    is VehicleSignal.Speed -> if (inLanes(ms)) speed += LanePoint(ms, s.metersPerSecond * 3.6f)
-                    is VehicleSignal.SteeringAngle -> if (inLanes(ms)) steering += LanePoint(ms, s.degrees)
+                    is VehicleSignal.Speed -> if (inLanes(ms)) speed += LanePoint(ms, s.metersPerSecond * 3.6f) else if (ms < -PRE_MS) speedBefore = s.metersPerSecond * 3.6f
+                    is VehicleSignal.SteeringAngle -> if (inLanes(ms)) steering += LanePoint(ms, s.degrees) else if (ms < -PRE_MS) steeringBefore = s.degrees
                     is VehicleSignal.BrakePedal -> {
                         brake.add(ms, s.pressed)
                         if (beforeCause) brakeChange.report(ms, s.pressed, initial)
@@ -134,10 +137,22 @@ class EvidenceTimeline(
                     .lastOrNull { (on, off) -> on.value && !off.value && off.atMs - on.atMs <= FLASH_MAX_MS && on.atMs >= -PRE_MS }
                     ?.let { (on, _) -> add(ControlLine.HighBeamFlash(-on.atMs)) }
             }
+            val startMs = rel(events.first()).coerceIn(-PRE_MS, 0)
+            val endMs = rel(events.last()).coerceIn(0, POST_MS)
             return EvidenceTimeline(
-                speed, steering, brake.steps(), turn.steps(), gear.steps(), lines, context,
-                startMs = rel(events.first()).coerceIn(-PRE_MS, 0), endMs = rel(events.last()).coerceIn(0, POST_MS),
+                held(speed, speedBefore, endMs), held(steering, steeringBefore, endMs), brake.steps(), turn.steps(), gear.steps(), lines, context,
+                startMs = startMs, endMs = endMs,
             )
+        }
+
+        /**
+         * A continuous lane across the whole kept span: values are written when they change, so the one before the lanes
+         * begin still held at −[PRE_MS], and the last one holds to [endMs].
+         */
+        private fun held(points: List<LanePoint>, before: Float?, endMs: Long): List<LanePoint> = buildList {
+            if (before != null && (points.firstOrNull()?.atMs ?: Long.MAX_VALUE) > -PRE_MS) add(LanePoint(-PRE_MS, before))
+            addAll(points)
+            lastOrNull()?.let { if (it.atMs < endMs) add(LanePoint(endMs, it.value)) }
         }
     }
 }
