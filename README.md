@@ -270,6 +270,11 @@ python3 -I tools/virtual-console/dashcam.py make cut-in --data server-data
   ```bash
   adb shell am start --user 10 -n com.americankimchilabs.whitebox/.MainActivity --ez test_airbag true
   ```
+  앱 화면을 띄우지 않고 넣으려면(내비게이션 등 다른 화면을 그대로 둔 채, `scenarios.py rear-end`가 쓰는 방법) 방송으로도 보낼 수 있습니다. 이것도 테스트 빌드에서만 받습니다.
+  ```bash
+  adb shell am broadcast --user 10 -a com.americankimchilabs.whitebox.TEST_AIRBAG -p com.americankimchilabs.whitebox
+  ```
+- **착석 신호가 반대로 옴**: 이 에뮬레이터에서는 Vehicle SDK가 좌석 착석을 거꾸로 알려 줍니다(콘솔에서 비운 좌석이 '있음', 사람이 앉은 운전석이 '없음'으로 도착; 콘솔이 보내는 VHAL 값은 정상인 비어 있음 1 / 앉음 2). 실차가 어느 쪽으로 알려 주는지 확인될 때까지 증거 요약은 착석을 문장이나 차량 상태로 보여 주지 않고, 값은 그대로 기록만 합니다. 안전벨트는 콘솔에 조절 항목이 없어 늘 '매지 않음'으로 기록됩니다.
 - **ABS 경고등은 읽을 수 없음**: 경고등 조회는 실행 시 `PRIVATE_CAR_SAFETY` 권한을 요구합니다(인터페이스 문서의 `CAR_SAFETY`와 다름). 그래서 트리거에 쓰지 않습니다.
 - **콘솔 페달만으로는 충격 감지가 되지 않음**: 콘솔의 제동 물리 모델은 최대 42 km/h/s(약 1.2 g)로, 실제 최대 제동과 같은 수준이라 일부러 사고 기준(16 km/h/300 ms)에 못 미칩니다. 시연 스크립트는 콘솔 API로 속도 급감을 직접 주입합니다. 콘솔의 `speed` 값은 **정수 km/h**만 받습니다.
 - **설치 직후 재부팅은 70초 이상 기다릴 것**: 설치 직후의 앱은 'stopped' 상태라 부팅 브로드캐스트를 받지 못하고, 첫 실행으로 풀린 상태가 저장되기까지 시간이 걸립니다(7.8초 뒤 재부팅 시 재현, 70초 뒤에는 정상). '강제 종료'한 경우에도 앱을 다시 열 때까지 자동 시작되지 않으며, 그 공백은 다음 기록 시작 시 체인에 남습니다.

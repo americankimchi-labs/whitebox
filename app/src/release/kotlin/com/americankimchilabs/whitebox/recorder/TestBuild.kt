@@ -1,5 +1,6 @@
 package com.americankimchilabs.whitebox.recorder
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import com.americankimchilabs.whitebox.core.Clock
@@ -21,6 +22,8 @@ internal object TestBuild {
     fun tier(saved: String?): Tier? = null
 
     fun airbag(intent: Intent?, clock: Clock): ChainEntry? = null
+
+    fun listen(context: Context, clock: Clock, deliver: (ChainEntry) -> Unit): (() -> Unit)? = null
 
     fun take(intent: Intent): Bundle? = null
 }

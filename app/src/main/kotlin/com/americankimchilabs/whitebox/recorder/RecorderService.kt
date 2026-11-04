@@ -89,6 +89,9 @@ class RecorderService : LifecycleService() {
 
     private var mode: SourceMode? = null
     private var inbox = Channel<ChainEntry>(Channel.UNLIMITED)
+
+    /** A test build's broadcast test signals, while the service runs (none in a release build). */
+    private var testSignals: (() -> Unit)? = null
     private var jobs = mutableListOf<Job>()
     private var sourceJob: Job? = null
     private var closeSource: Closeable? = null
@@ -166,10 +169,12 @@ class RecorderService : LifecycleService() {
             guardGrants()
         }
         TestBuild.airbag(intent, AndroidClock)?.let { inbox.trySend(it) }
+        if (testSignals == null) testSignals = TestBuild.listen(this, AndroidClock) { inbox.trySend(it) }
         return START_STICKY
     }
 
     override fun onDestroy() {
+        testSignals?.invoke()
         stopSession()
         listOf(pleosVoice, platformVoice, answerListener, offlineListener, beacon).forEach { runCatching { it.close() } }
         super.onDestroy()

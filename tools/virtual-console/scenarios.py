@@ -126,8 +126,9 @@ def rear_end():
     at(40.0, "a slow truck in the lane: impact at 108 km/h, 108 -> 86 in one sample, no brake")
     controls(speed=86)
     time.sleep(0.15)
-    # On a test build the emulator's missing airbag is injected (recorded as a test); a release build ignores it.
-    subprocess.run(["adb", "shell", "am", "start", "--user", "10", "-n", f"{PKG}/.MainActivity", "--ez", "test_airbag", "true"],
+    # On a test build the emulator's missing airbag is injected (recorded as a test); a release build ignores it. A
+    # broadcast, so whatever is on the car's screen stays there.
+    subprocess.run(["adb", "shell", "am", "broadcast", "--user", "10", "-a", f"{PKG}.TEST_AIRBAG", "-p", PKG],
                    check=False, capture_output=True)
     say("airbag signal (test build), the seal and its keys go out first")
     speed(2.2, to=57, step=0.2)

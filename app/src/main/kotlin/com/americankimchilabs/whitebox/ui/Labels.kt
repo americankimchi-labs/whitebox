@@ -201,7 +201,7 @@ class Labels(private val res: Resources) {
             is VehicleSignal.BrakePedal -> res.getString(R.string.row_brake, brake(s.pressed))
             is VehicleSignal.TurnSignal -> res.getString(R.string.row_turn, turn(s.state))
             is VehicleSignal.Gear -> res.getString(R.string.row_gear, gear(s.position))
-            is VehicleSignal.AirbagDeployed -> if (s.deployed) res.getString(if (s.test) R.string.row_airbag_test else R.string.row_airbag, s.seat) else null
+            is VehicleSignal.AirbagDeployed -> if (s.deployed) res.getString(if (s.test) R.string.row_airbag_test else R.string.row_airbag, area(s.seat)) else null
             is VehicleSignal.Door -> res.getString(
                 if (s.area == "HOOD" || s.area == "REAR") R.string.row_lid else R.string.row_door, // hood and trunk are not doors
                 area(s.area), res.getString(if (s.open) R.string.state_open else R.string.state_closed),

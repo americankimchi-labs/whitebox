@@ -1,6 +1,9 @@
 package com.americankimchilabs.whitebox.recorder
 
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Bundle
 import com.americankimchilabs.whitebox.core.Clock
 import com.americankimchilabs.whitebox.domain.ChainEntry
@@ -10,6 +13,7 @@ import com.americankimchilabs.whitebox.domain.VehicleSignal
 import com.americankimchilabs.whitebox.vehicle.fake.DemoDrive
 import com.americankimchilabs.whitebox.vehicle.fake.ScriptedLocationSource
 import com.americankimchilabs.whitebox.vehicle.fake.ScriptedSignalSource
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -44,6 +48,21 @@ internal object TestBuild {
             null
         }
 
+    /**
+     * The same test airbag signal as a broadcast (`adb shell am broadcast -a com.americankimchilabs.whitebox.TEST_AIRBAG
+     * -p com.americankimchilabs.whitebox`), for a demonstration where the car's own screen stays in front: starting the
+     * app's screen with `--ez test_airbag true` would bring it forward. Returns how to undo the registration.
+     */
+    fun listen(context: Context, clock: Clock, deliver: (ChainEntry) -> Unit): (() -> Unit)? {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, i: Intent) {
+                deliver(ChainEntry.Signal(SignalSample(VehicleSignal.AirbagDeployed("ROW_1_LEFT", deployed = true, test = true), clock.now())))
+            }
+        }
+        ContextCompat.registerReceiver(context, receiver, IntentFilter(ACTION_TEST_AIRBAG), ContextCompat.RECEIVER_EXPORTED)
+        return { context.unregisterReceiver(receiver) }
+    }
+
     /** The test-only extras of a launch, removed from it so a later recreation of the activity does not repeat them. */
     fun take(intent: Intent): Bundle? {
         val out = Bundle()
@@ -56,4 +75,5 @@ internal object TestBuild {
 
     private const val EXTRA_TIER = "tier"
     private const val EXTRA_TEST_AIRBAG = "test_airbag"
+    private const val ACTION_TEST_AIRBAG = "com.americankimchilabs.whitebox.TEST_AIRBAG"
 }

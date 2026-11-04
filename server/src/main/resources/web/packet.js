@@ -4,6 +4,11 @@
 // check it against timelines the car's own code produced.
 (function (root) {
   const PRE_MS = 10000;
+  /**
+   * Whether seat occupancy is put into words (the car's EvidenceReadings.SEATS_READ): not yet, as the emulator's Vehicle
+   * SDK reports it inverted and a real car's way is unconfirmed. The values are recorded all the same.
+   */
+  const SEATS_READ = false;
   /** The lanes' drawing size in viewBox units: narrow enough that the text stays legible on a phone. */
   const LAYOUT = { width: 300, label: 60 };
   const POST_MS = 5000;
@@ -171,7 +176,7 @@
     const rows = [];
     const items = (m, f) => Object.entries(m).map(([k, v]) => `${area(k)} ${f(v)}`).join(' · ');
     if (Object.keys(c.seatBelts).length) rows.push(['안전벨트', items(c.seatBelts, (v) => v ? '착용' : '해제')]);
-    if (Object.keys(c.occupancy).length) rows.push(['착석', Object.entries(c.occupancy).filter(([, v]) => v).map(([k]) => area(k)).join(' · ') || '없음']);
+    if (SEATS_READ && Object.keys(c.occupancy).length) rows.push(['착석', Object.entries(c.occupancy).filter(([, v]) => v).map(([k]) => area(k)).join(' · ') || '없음']);
     if (Object.keys(c.doors).length) { const open = Object.entries(c.doors).filter(([, v]) => v).map(([k]) => area(k)); rows.push(['문', open.length ? `열림: ${open.join(' · ')}` : '모두 닫힘']); }
     // Raw positions: the vehicle's range per window is not documented, so no open/closed reading is claimed.
     if (Object.keys(c.windows).length) rows.push(['창문 위치', items(c.windows, String)]);
@@ -264,6 +269,6 @@
     return ((frac * width - label) / (width - label - 6)) * (t.pre + t.post) - t.pre;
   }
 
-  const WBPacket = { build, svg, xFraction, msAtFraction, lineText, contextRows, degrees, TRIGGER, GEAR, TURN, PRE_MS, POST_MS };
+  const WBPacket = { SEATS_READ, build, svg, xFraction, msAtFraction, lineText, contextRows, degrees, TRIGGER, GEAR, TURN, PRE_MS, POST_MS };
   if (typeof module === 'object' && module.exports) module.exports = WBPacket; else root.WBPacket = WBPacket;
 })(typeof self !== 'undefined' ? self : globalThis);

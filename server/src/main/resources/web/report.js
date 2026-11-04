@@ -159,7 +159,7 @@
     for (const x of events) if (x.e.type === 'S' && x.e.kind === 'SEAT_OCCUPANCY' && !x.e.locked && x.e.at.wall <= causeWall) seats[x.e.value.seat] = x.e.value.occupied;
     const rank = (k) => (SEAT_ORDER.indexOf(k) < 0 ? SEAT_ORDER.length : SEAT_ORDER.indexOf(k));
     const taken = Object.entries(seats).filter(([, v]) => v).map(([k]) => k).sort((a, b) => rank(a) - rank(b)).map(area);
-    if (taken.length) add(`사람이 앉아 있던 좌석: ${taken.join(', ')}.`);
+    if (P.SEATS_READ && taken.length) add(`사람이 앉아 있던 좌석: ${taken.join(', ')}.`);
 
     // Cruise control.
     const cruise = stateAt(series(events, 'CRUISE_CONTROL'), causeWall, (v) => v);
@@ -192,7 +192,7 @@
         case 'WINDOW': return `${area(v.area)} ${v.position}`;
         case 'CRUISE_TARGET_SPEED': return `${kmh(v).toFixed(0)} km/h`;
         case 'ROAD_CONTEXT': return `${v.type} ${v.value}`;
-        case 'AIRBAG': return `${v.seat} ${v.deployed ? (v.test ? '시험용 신호' : '전개') : '정상'}`;
+        case 'AIRBAG': return `${area(v.seat)} ${v.deployed ? (v.test ? '시험용 신호' : '전개') : '정상'}`;
         default: return typeof v === 'object' ? JSON.stringify(v) : String(v);
       }
     };

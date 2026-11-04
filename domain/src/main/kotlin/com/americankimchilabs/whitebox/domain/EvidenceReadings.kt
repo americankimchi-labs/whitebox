@@ -24,6 +24,13 @@ object EvidenceReadings {
     private val GEAR = mapOf("PARK" to "P(주차)", "REVERSE" to "R(후진)", "NEUTRAL" to "N(중립)", "DRIVE" to "D(주행)", "MANUAL" to "M(수동)")
 
     private fun area(a: String) = AREA[a] ?: a
+    /**
+     * Whether seat occupancy is put into words. Not yet: on the v2.1.0 emulator the Vehicle SDK reports it inverted (a
+     * seat set empty arrives as occupied), and which way a real car reports it is unconfirmed. The values are recorded
+     * all the same.
+     */
+    const val SEATS_READ = false
+
     /** Seats as people name them: front first, driver first. */
     private val SEAT_ORDER = listOf("ROW_1_LEFT", "ROW_1_RIGHT", "ROW_2_LEFT", "ROW_2_CENTER", "ROW_2_RIGHT")
     /** As JavaScript's toFixed: the exact binary value rounded half up, so the car and the phone print the same digits. */
@@ -230,7 +237,7 @@ object EvidenceReadings {
         }
         belts["ROW_1_LEFT"]?.let { add(if (it) "운전석 안전벨트를 매고 있었습니다." else "운전석 안전벨트를 매지 않은 것으로 기록되어 있습니다.", weight = if (it) 1 else 2) }
         val taken = seats.filter { it.value }.keys.sortedBy { SEAT_ORDER.indexOf(it).let { i -> if (i < 0) SEAT_ORDER.size else i } }.map(::area)
-        if (taken.isNotEmpty()) add("사람이 앉아 있던 좌석: ${taken.joinToString(", ")}.")
+        if (SEATS_READ && taken.isNotEmpty()) add("사람이 앉아 있던 좌석: ${taken.joinToString(", ")}.")
 
         // Cruise control.
         stateAt(series { (it as? VehicleSignal.CruiseControl)?.state?.name }, causeWall) { it }
