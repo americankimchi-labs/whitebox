@@ -100,6 +100,9 @@ class PleosSignalSource(
         // released would keep the state from before it stopped. Read the pedal once at start.
         brake.getCurrentBrakePedalStatus({ p0 -> if (p0 != null) send(VehicleSignal.BrakePedal(p0)) }, { e -> logFailure("brake now", e) })
         turnSignal.registerTurnSignalState(turnListener)
+        // Same for the turn signal: without its state at start, a lane change could not be told apart from one
+        // made without signalling.
+        turnSignal.getCurrentTurnSignalState({ p0 -> if (p0 != null) send(VehicleSignal.TurnSignal(p0.toDomain())) }, { e -> logFailure("turn signal now", e) })
         steering.registerSteeringWheelAngle(steeringListener)
         airbagListeners.forEach { (seat, listener) -> safety.registerSeatAirbagDeployed(seat, listener) }
         val contextOff = contextSignals.register(::send)

@@ -204,7 +204,7 @@
       else if (e.type === 'C') rows.push([x.seq, e.at.wall, rel, `${name[e.kind] || e.kind} (구간 시작 때)`, e.locked ? '(잠김)' : value(e)]);
       else if (e.type === 'L') rows.push([x.seq, e.at.wall, rel, '위치', e.locked ? '차주만 볼 수 있음' : `${e.lat.toFixed(5)}, ${e.lon.toFixed(5)} (±${Math.round(e.acc || 0)} m)`]);
       else if (e.type === 'E' && e.event === 'TRIGGER') rows.push([x.seq, e.at.wall, rel, '감지', P.TRIGGER[e.trigger] || e.trigger]);
-      else if (e.type === 'E' && e.event === 'LEVEL') rows.push([x.seq, e.at.wall, rel, '단계', { NORMAL: '기록 중', ALERT: '급제동 감지', TRIGGERED: '기록 보관' }[e.level] || e.level]);
+      else if (e.type === 'E' && e.event === 'LEVEL') rows.push([x.seq, e.at.wall, rel, '단계', { NORMAL: '기록 중', ALERT: '위험 감지', TRIGGERED: '기록 보관' }[e.level] || e.level]);
       else if (e.type === 'E' && e.event === 'ANSWER') rows.push([x.seq, e.at.wall, rel, '운전자 대답', !e.answered ? '대답 없음 (보관)' : e.keep ? '보관' : '보관 안 함']);
       else if (e.type === 'A' && e.event === 'SPOKE') rows.push([x.seq, e.at.wall, rel, '차의 음성 안내', `“${VOICE[e.line] || e.line}”${e.complete ? '' : ' (중단됨)'}`]);
       else if (e.type === 'A' && e.event === 'BEACON') rows.push([x.seq, e.at.wall, rel, '동기화 신호음', `#${e.chirpId}`]);

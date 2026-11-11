@@ -15,7 +15,7 @@ private fun time(ms: Long) = clock.format(Instant.ofEpochMilli(ms))
 private val TRIGGER = mapOf(
     "AIRBAG" to "에어백 전개", "TEST_AIRBAG" to "시험용 에어백 신호", "DELTA_V" to "충격 감지", "SHORT_DELTA_V" to "충격 감지", "BRAKED_SPIKE" to "제동 중 충격 감지",
     "REAR_SHOVE" to "후방 추돌 (정차·제동 중)", "MANUAL" to "음성으로 보관", "HARD_BRAKE" to "급제동", "EVASIVE_STEER" to "급핸들",
-    "BRAKE_SWERVE" to "급제동하며 급핸들", "SHIFT_TO_NEUTRAL" to "주행 중 기어 중립(N)", "BRAKE_SPEED_RISE" to "브레이크를 밟았는데 속도 증가",
+    "BRAKE_SWERVE" to "급제동하며 급핸들", "LANE_CHANGE_NO_SIGNAL" to "방향지시등 없이 급차선 변경", "SHIFT_TO_NEUTRAL" to "주행 중 기어 중립(N)", "BRAKE_SPEED_RISE" to "브레이크를 밟았는데 속도 증가",
     "BRAKE_NO_DECEL" to "브레이크를 밟아도 속도가 안 줄어듦", "BRAKE_PUMPING" to "브레이크를 여러 번 밟음", "PARKING_BRAKE_MOVING" to "주행 중 주차 브레이크 작동",
     "LURCH" to "급출발", "HANDOVER" to "대리 운전 리포트", "POST_EVENT_EXIT" to "위험 순간 직후 하차", "ALERT_RESOLVED" to "급제동 후 정차",
 )
@@ -82,7 +82,7 @@ fun dashboardCards(service: MirrorService, sms: DemoSmsSender? = null): String {
                 "${capsules.filter { c -> CapsuleTrigger.entries.any { it.name == c.trigger && it.crash } }.maxByOrNull { it.firstSeq }?.let { TRIGGER[it.trigger] } ?: "충격 감지"} · 기록 보관", "bad",
                 "차가 기록을 봉인하고 바로 보내는 중입니다.",
             )
-            s.level == EscalationLevel.ALERT -> Triple("급제동 감지", "warn", "급제동이 감지되어 기록을 생기는 대로 바로 받고 있습니다.")
+            s.level == EscalationLevel.ALERT -> Triple("위험 감지", "warn", "위험한 순간이 감지되어 기록을 생기는 대로 바로 받고 있습니다.")
             silentS != null && silentS < 30 -> Triple("기록 중", "good", "정상적으로 데이터를 받고 있습니다.")
             s.records > 0 -> Triple("꺼짐", "", "차가 꺼져 있습니다. 받은 데이터는 안전하게 보관하고 있습니다.")
             else -> Triple("기록 없음", "", "아직 받은 데이터가 없습니다.")

@@ -493,7 +493,7 @@ function renderReport(c, data, events, t, v, trigger) {
   const facts = [
     ['일시', WB.when(causeWall)],
     ['장소', place ? `위도 ${place.e.lat.toFixed(5)}, 경도 ${place.e.lon.toFixed(5)} (±${Math.round(place.e.acc || 0)} m) · <a href="${WB.mapLink(place.e.lat, place.e.lon)}" target="_blank" rel="noopener">지도</a>` : '기록 없음'],
-    ['감지', esc(WBPacket.TRIGGER[c.trigger] || c.trigger) + (trigger ? ` (${esc(String(trigger.e.measured.toFixed ? trigger.e.measured.toFixed(1) : trigger.e.measured))}${DELTA_KMH.includes(trigger.e.trigger) ? ' km/h 속도 변화' : ''})` : '')],
+    ['감지', esc(WBPacket.TRIGGER[c.trigger] || c.trigger) + (trigger ? ` (${esc(String(trigger.e.measured.toFixed ? trigger.e.measured.toFixed(1) : trigger.e.measured))}${unitOf(trigger.e.trigger)})` : '')],
     ['기록 출처', '화이트박스(차량 내장 기록 앱)가 차에서 실시간으로 기록하고 봉인한 원본'],
   ];
   if (c.answer) facts.push(['운전자의 대답', esc(ANSWER[c.answer])]);
@@ -522,6 +522,10 @@ function renderReport(c, data, events, t, v, trigger) {
 /** The span each speed change was measured over, as the car's packet says it. */
 const WINDOW = { DELTA_V: '0.3초 만에', SHORT_DELTA_V: '0.2초 만에', BRAKED_SPIKE: '0.1초 만에', REAR_SHOVE: '0.2초 만에', HARD_BRAKE: '0.5초 만에', BRAKE_SPEED_RISE: '브레이크를 밟은 3초 동안', BRAKE_NO_DECEL: '브레이크를 밟은 3초 동안', LURCH: '출발 1초 만에' };
 const DELTA_KMH = ['DELTA_V', 'SHORT_DELTA_V', 'BRAKED_SPIKE', 'REAR_SHOVE', 'HARD_BRAKE', 'BRAKE_SPEED_RISE', 'BRAKE_NO_DECEL', 'ALERT_RESOLVED', 'LURCH'];
+// The trigger's measured value in its own unit, as the car shows it.
+const AT_KMH = ['SHIFT_TO_NEUTRAL', 'PARKING_BRAKE_MOVING', 'LANE_CHANGE_NO_SIGNAL'];
+const DPS = ['EVASIVE_STEER', 'BRAKE_SWERVE'];
+const unitOf = (t) => DELTA_KMH.includes(t) ? ' km/h 속도 변화' : AT_KMH.includes(t) ? ' km/h에서' : DPS.includes(t) ? '°/s' : t === 'BRAKE_PUMPING' ? '회' : '';
 
 function render(c, data, upToCause, events, t, v, trigger) {
   WB.show('loading', false);

@@ -343,6 +343,123 @@ class EscalationEngineTest {
         assertTrue(tr.triggers.none { it.trigger == CapsuleTrigger.EVASIVE_STEER || it.trigger == CapsuleTrigger.BRAKE_SWERVE })
     }
 
+    /**
+     * Drives at [kmh] for [ms] with speed and steering both sampled every 100 ms; the wheel follows one full sine of
+     * [amplitude]° (out and back: a lane change's steering) when [periodMs] is set, else holds [hold]°.
+     */
+    private fun Trace.drive(ms: Long, kmh: Float, amplitude: Float = 0f, periodMs: Long = 0, hold: Float = 0f) {
+        val t0 = t
+        while (t - t0 < ms) {
+            speed(kmh)
+            val k = t - t0
+            steer(if (periodMs > 0) if (k <= periodMs) amplitude * kotlin.math.sin(2 * Math.PI * k / periodMs).toFloat() else 0f else hold)
+            t += 100
+        }
+    }
+
+    private fun Trace.signalOff() = signal(VehicleSignal.TurnSignal(TurnSignalState.OFF))
+
+    @Test
+    fun suddenLaneChangeWithoutSignalIsKeptAndAsked() {
+        val tr = Trace()
+        tr.signalOff()
+        tr.drive(3_000, 80f)
+        tr.drive(2_000, 80f, amplitude = 20f, periodMs = 2_000) // 3.5 m over in 2 s: ≈ 11°/s heading rate
+        tr.drive(8_000, 80f)
+        val trig = tr.triggers.single()
+        assertEquals(CapsuleTrigger.LANE_CHANGE_NO_SIGNAL, trig.trigger)
+        assertEquals(80f, trig.measured, 0.5f)
+        assertEquals(EscalationLevel.ALERT, tr.levels.first())
+        assertEquals(1, tr.prompts.size) // still driving 5 s later: "방금 상황 보관할까요?"
+    }
+
+    @Test
+    fun laneChangeIsFoundWhenTheWheelReportsOnlyWhileMoving() {
+        val tr = Trace()
+        tr.signalOff()
+        tr.steer(0f)
+        tr.ramp(3_000, 80f) // speed only: the wheel is still
+        for (i in 0..20) { // 2 s, wheel samples only while it turns
+            tr.speed(80f)
+            tr.steer(20f * kotlin.math.sin(2 * Math.PI * i / 20).toFloat())
+            tr.t += 100
+        }
+        tr.ramp(8_000, 80f)
+        assertEquals(listOf(CapsuleTrigger.LANE_CHANGE_NO_SIGNAL), tr.triggers.map { it.trigger })
+    }
+
+    @Test
+    fun laneChangeRateFollowsTheTransportSafetyAuthorityRule() {
+        val quick = Trace().apply { signalOff(); drive(3_000, 40f); drive(6_000, 40f, amplitude = 30f, periodMs = 3_000) }
+        assertEquals(listOf(CapsuleTrigger.LANE_CHANGE_NO_SIGNAL), quick.triggers.map { it.trigger }) // 3 s at 40: ≈ 10°/s
+        val calm = Trace().apply { signalOff(); drive(3_000, 40f); drive(9_000, 40f, amplitude = 11f, periodMs = 5_000) }
+        assertTrue(calm.triggers.isEmpty()) // 5 s at 40: ≈ 4°/s
+        val afterCurve = Trace().apply {
+            signalOff(); drive(3_000, 80f); drive(2_000, 80f, hold = 15f); drive(1_000, 80f)
+            drive(6_000, 80f, amplitude = 20f, periodMs = 2_000)
+        }
+        assertEquals(listOf(CapsuleTrigger.LANE_CHANGE_NO_SIGNAL), afterCurve.triggers.map { it.trigger })
+    }
+
+    @Test
+    fun signalledLaneChangeIsNotADetection() {
+        val tr = Trace()
+        tr.signalOff()
+        tr.drive(2_000, 80f)
+        tr.signal(VehicleSignal.TurnSignal(TurnSignalState.LEFT))
+        tr.drive(1_000, 80f)
+        tr.drive(1_000, 80f, amplitude = 20f, periodMs = 2_000)
+        tr.signalOff() // switched off half-way through
+        tr.drive(5_000, 80f, amplitude = 20f, periodMs = 1_000)
+        assertTrue(tr.triggers.isEmpty())
+    }
+
+    @Test
+    fun signalSwitchedOffShortlyBeforeStillCounts() {
+        val tr = Trace()
+        tr.signal(VehicleSignal.TurnSignal(TurnSignalState.RIGHT))
+        tr.drive(1_000, 80f)
+        tr.signalOff()
+        tr.drive(2_000, 80f) // off 2 s before the move (< 3 s)
+        tr.drive(6_000, 80f, amplitude = 20f, periodMs = 2_000)
+        assertTrue(tr.triggers.isEmpty())
+    }
+
+    @Test
+    fun ordinaryLaneChangesCurvesWobblesAndSlowSpeedsAreNot() {
+        val cases = mapOf<String, Trace.() -> Unit>(
+            "ordinary lane change in 5 s (≈ 2°/s)" to { drive(8_000, 80f, amplitude = 3.5f, periodMs = 5_000) },
+            "a curve: the heading does not come back" to { drive(4_000, 80f, hold = 20f); drive(6_000, 80f) },
+            "a wobble: back at once, well under a lane over" to { drive(5_000, 80f, amplitude = 20f, periodMs = 600) },
+            "town speed" to { drive(5_000, 25f, amplitude = 60f, periodMs = 2_000) },
+        )
+        for ((name, moves) in cases) {
+            val tr = Trace()
+            tr.signalOff()
+            tr.drive(3_000, if (name == "town speed") 25f else 80f)
+            tr.moves()
+            assertTrue(name, tr.triggers.isEmpty())
+        }
+    }
+
+    @Test
+    fun anEvasiveSwerveAndRecoverIsNotAlsoALaneChange() {
+        val tr = Trace()
+        tr.signalOff()
+        tr.drive(3_000, 58f)
+        tr.drive(6_000, 58f, amplitude = 120f, periodMs = 1_200) // the brake-and-swerve S of the console script
+        assertTrue(tr.triggers.isNotEmpty())
+        assertTrue(tr.triggers.all { it.trigger == CapsuleTrigger.EVASIVE_STEER })
+    }
+
+    @Test
+    fun laneChangeWithUnknownSignalStateIsNotClaimed() {
+        val tr = Trace()
+        tr.drive(3_000, 80f)
+        tr.drive(6_000, 80f, amplitude = 20f, periodMs = 2_000)
+        assertTrue(tr.triggers.isEmpty())
+    }
+
     @Test
     fun shiftToNeutralWhileMovingIsKept() {
         val tr = Trace()

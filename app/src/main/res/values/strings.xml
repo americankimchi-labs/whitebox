@@ -20,7 +20,7 @@
     <string name="none">–</string>
 
     <string name="level_normal">기록 중</string>
-    <string name="level_alert">급제동 감지</string>
+    <string name="level_alert">위험 감지</string>
     <!-- While a moment is sealed the banner names it, in the same words as its record (e.g. 충격 감지 · 기록 보관). -->
     <string name="level_triggered">%1$s · 기록 보관</string>
     <string name="row_level_triggered">▶ 기록 보관</string>
@@ -254,6 +254,7 @@
     <string name="trigger_hard_brake">급제동</string>
     <string name="trigger_evasive_steer">급핸들</string>
     <string name="trigger_brake_swerve">급제동하며 급핸들</string>
+    <string name="trigger_lane_change_no_signal">방향지시등 없이 급차선 변경</string>
     <string name="trigger_shift_to_neutral">주행 중 기어 중립(N)</string>
     <string name="trigger_brake_speed_rise">브레이크를 밟았는데 속도 증가</string>
     <string name="trigger_brake_no_decel">브레이크를 밟아도 속도가 안 줄어듦</string>

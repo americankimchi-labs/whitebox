@@ -14,13 +14,14 @@ emulator's accelerometer does not follow the drive), parking brake while moving 
 telltale and PARKING_BRAKE_ON stays false; `parking-brake` shows it). OFFER is the keep question, asked when the car is
 still driving 5 s after a near-miss.
 """
+import math
 import os
 import subprocess
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from demo import controls, gear, put, reset, say, speed, state, steer  # noqa: E402
+from demo import controls, gear, put, reset, say, speed, state, steer, turn  # noqa: E402
 
 PKG = "com.americankimchilabs.whitebox"
 CHAIN = "files/chain/live/chain.log"
@@ -82,6 +83,39 @@ def evasive():
     say("sharp swerve 0 → 150° → 0 in 0.6 s, brake off")
     steer(0.6, 150)
     say("drive on 7 s (keep question at 5 s)")
+    speed(7, step=0.2)
+    stop_and_seal()
+
+
+def lane_wheel(seconds, peak):
+    """One full sine of the wheel (out, then back past centre, then straight): a lane change's steering."""
+    n = round(seconds / 0.1)
+    for i in range(1, n + 1):
+        controls(steering=round(peak * math.sin(2 * math.pi * i / n)))
+        time.sleep(0.1)
+    controls(steering=0)
+
+
+def lane_change():
+    """LANE_CHANGE_NO_SIGNAL, then OFFER (still driving 5 s later)"""
+    start_rest()
+    turn("Off")
+    cruise(80)
+    say("lane change in 2 s with no turn signal: wheel ±20° (≈ 11°/s heading rate, 3.5 m over)")
+    lane_wheel(2, 20)
+    say("drive on 7 s (keep question at 5 s)")
+    speed(7, step=0.2)
+    stop_and_seal()
+
+
+def lane_signalled():
+    """nothing (the same lane change with the turn signal on)"""
+    start_rest()
+    cruise(80)
+    turn("BlinkLeft")
+    speed(1, step=0.2)
+    lane_wheel(2, 20)
+    turn("Off")
     speed(7, step=0.2)
     stop_and_seal()
 
@@ -191,7 +225,7 @@ def parking_brake():
 
 
 SCENARIOS = {
-    "evasive": evasive, "brake-swerve": brake_swerve, "neutral": neutral, "brake-rise": brake_rise,
+    "evasive": evasive, "brake-swerve": brake_swerve, "lane-change": lane_change, "lane-signalled": lane_signalled, "neutral": neutral, "brake-rise": brake_rise,
     "pumping": pumping, "lurch": lurch, "rear-shove": rear_shove, "exit": exit_after, "parking-brake": parking_brake,
 }
 

@@ -94,6 +94,7 @@ class Labels(private val res: Resources) {
             CapsuleTrigger.HARD_BRAKE -> R.string.trigger_hard_brake
             CapsuleTrigger.EVASIVE_STEER -> R.string.trigger_evasive_steer
             CapsuleTrigger.BRAKE_SWERVE -> R.string.trigger_brake_swerve
+            CapsuleTrigger.LANE_CHANGE_NO_SIGNAL -> R.string.trigger_lane_change_no_signal
             CapsuleTrigger.SHIFT_TO_NEUTRAL -> R.string.trigger_shift_to_neutral
             CapsuleTrigger.BRAKE_SPEED_RISE -> R.string.trigger_brake_speed_rise
             CapsuleTrigger.BRAKE_NO_DECEL -> R.string.trigger_brake_no_decel

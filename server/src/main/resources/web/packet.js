@@ -145,7 +145,7 @@
   const TRIGGER = {
     AIRBAG: '에어백 전개', TEST_AIRBAG: '시험용 에어백 신호', DELTA_V: '충격 감지', SHORT_DELTA_V: '충격 감지', BRAKED_SPIKE: '제동 중 충격 감지',
     REAR_SHOVE: '후방 추돌 (정차·제동 중)', ALERT_RESOLVED: '급제동 후 정차', MANUAL: '음성으로 보관', HARD_BRAKE: '급제동',
-    EVASIVE_STEER: '급핸들', BRAKE_SWERVE: '급제동하며 급핸들', SHIFT_TO_NEUTRAL: '주행 중 기어 중립(N)', BRAKE_SPEED_RISE: '브레이크를 밟았는데 속도 증가',
+    EVASIVE_STEER: '급핸들', BRAKE_SWERVE: '급제동하며 급핸들', LANE_CHANGE_NO_SIGNAL: '방향지시등 없이 급차선 변경', SHIFT_TO_NEUTRAL: '주행 중 기어 중립(N)', BRAKE_SPEED_RISE: '브레이크를 밟았는데 속도 증가',
     BRAKE_NO_DECEL: '브레이크를 밟아도 속도가 안 줄어듦', BRAKE_PUMPING: '브레이크를 여러 번 밟음', PARKING_BRAKE_MOVING: '주행 중 주차 브레이크 작동', LURCH: '급출발',
     POST_EVENT_EXIT: '위험 순간 직후 하차', SERVER_SEAL: '충격 뒤 연결 끊김 (서버 봉인)', HANDOVER: '대리 운전 리포트',
   };

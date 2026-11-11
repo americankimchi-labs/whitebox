@@ -124,6 +124,9 @@ enum class CapsuleTrigger(val crash: Boolean, val unit: MeasureUnit = MeasureUni
     /** Evasive steering with the brake on (the classic avoidance move). */
     BRAKE_SWERVE(false, MeasureUnit.DEG_PER_S),
 
+    /** A sudden lane change with no turn signal (급진로변경 without 방향지시등); measured: the speed at the time. */
+    LANE_CHANGE_NO_SIGNAL(false, MeasureUnit.KMH),
+
     /** Gear to N while moving. */
     SHIFT_TO_NEUTRAL(false, MeasureUnit.KMH),
 

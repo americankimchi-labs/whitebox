@@ -84,6 +84,40 @@ object Tuning {
     /** Brake on (or released) within this of an evasive steer makes it brake + swerve. */
     const val SWERVE_BRAKE_WINDOW_MS = 1000
 
+    /**
+     * Sudden lane change without the turn signal (급진로변경, the Korea Transportation Safety Authority's digital
+     * tachograph rule): at ≥ 30 km/h the heading turns at ≥ 8°/s to one side, and within 5 s it is back within ±2° of
+     * where it started. A lane change done in about 2.3 s at 80 km/h (or 3 s at 40 km/h) reaches 8°/s; an ordinary
+     * one in 4–6 s stays under 3°/s. The car's lateral shift over the manoeuvre must be at least LANE_MIN_SHIFT_M (a
+     * lane is 3–3.5 m wide), so a steering wobble that returns at once is not a lane change.
+     *
+     * The heading is not read: no yaw rate or accelerometer is available to apps, so it is estimated from the
+     * steering-wheel angle and speed with the kinematic bicycle model, yaw rate = v · tan(wheel angle / steering ratio)
+     * / wheelbase. STEERING_RATIO and WHEELBASE_M are typical values for a mid-size Hyundai/Kia car; on a real vehicle
+     * they should come from the model (both vary by about ±15 %, which moves the 8°/s line by the same amount), and
+     * the estimate degrades on slippery roads, where the car turns less than the wheel says.
+     */
+    const val LANE_YAW_DPS = 8f
+    const val LANE_WINDOW_MS = 5_000
+    const val LANE_NET_HEADING_DEG = 2f
+    const val LANE_MIN_SHIFT_M = 2f
+    const val LANE_MIN_SPEED_KMH = 30f
+
+    /**
+     * Heading rate below which the car counts as driving straight; it must hold for LANE_SETTLE_MS before the
+     * manoeuvre and after it (so the moment a lane change swings from one side to the other does not count).
+     */
+    const val LANE_STRAIGHT_DPS = 2f
+    const val LANE_SETTLE_MS = 500
+
+    /** Heading tracking restarts across a gap in both speed and steering longer than this. */
+    const val LANE_MAX_GAP_MS = 1_000
+
+    /** A turn signal (or hazard lamps) on at any time from this long before the manoeuvre to its end counts as signalled. */
+    const val LANE_SIGNAL_LOOKBACK_MS = 3_000
+    const val STEERING_RATIO = 14f
+    const val WHEELBASE_M = 2.85f
+
     /** Gear to N while moving at least this fast (the advised response to unintended acceleration). */
     const val NEUTRAL_MIN_SPEED_KMH = 20
 

@@ -32,7 +32,7 @@ fun main(args: Array<String>) {
     val seal = SealStore(original).all().last { it.final }
     val c = seal.capsule
     println("White Box 변조 검증 데모 / tamper demo")
-    println("  기록: $source  ·  캡슐 ${c.id} ${c.trigger}  #${c.firstSeq}–#${c.lastSeq}")
+    println("  기록: $source  ·  보관 기록 ${c.id} ${c.trigger}  #${c.firstSeq}–#${c.lastSeq}")
     println()
     report("원본 / original", verifyCapsule(seal, FileEventStore(original)))
 
@@ -64,7 +64,7 @@ fun main(args: Array<String>) {
 private fun checkEvidence(file: File) {
     val r = EvidenceFile.verify(file.readText())
     println("White Box 증거 파일 검증 / evidence file check")
-    println("  파일: ${file.path}  ·  캡슐 ${r.capsuleId} ${r.trigger}  #${r.firstSeq}–#${r.lastSeq}")
+    println("  파일: ${file.path}  ·  보관 기록 ${r.capsuleId} ${r.trigger}  #${r.firstSeq}–#${r.lastSeq}")
     println("  체인: ${if (r.chainOk) "[PASS] 기록 ${r.recordsChecked}건 해시·연결 일치" else "[FAIL] ${r.chainProblem}"}")
     println("  차량 봉인: ${if (r.seals > 0 && r.sealsValid == r.seals) "[PASS]" else "[FAIL]"} ${r.sealsValid}/${r.seals}건 서명 유효, 헤드 일치")
     println("  서버 서명: ${if (r.anchorsValid == r.anchors) "[PASS]" else "[FAIL]"} ${r.anchorsValid}/${r.anchors}건")

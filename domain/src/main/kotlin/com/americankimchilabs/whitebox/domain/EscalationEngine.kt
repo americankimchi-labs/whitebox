@@ -1,6 +1,9 @@
 package com.americankimchilabs.whitebox.domain
 
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.tan
 
 /** What the engine asks the recorder to do after an entry. */
 sealed interface EngineOutput {
@@ -46,6 +49,15 @@ class EscalationEngine {
     private class SpikeCandidate(val seq: Long, val kmh: Float, val dropKmh: Float)
     private class SteerPoint(val tNs: Long, val degrees: Float)
 
+    /** Estimated heading (°), heading rate (°/s), position (m, in the frame where tracking began) and speed. */
+    private class HeadPoint(val tNs: Long, val headingDeg: Float, val yawDps: Float, val x: Float, val y: Float, val kmh: Float) {
+        /** How far [to] lies to the side of this point's direction of travel (m). */
+        fun sideways(to: HeadPoint): Float {
+            val h = Math.toRadians(headingDeg.toDouble())
+            return ((to.y - y) * cos(h) - (to.x - x) * sin(h)).toFloat()
+        }
+    }
+
     var level = EscalationLevel.NORMAL
         private set
 
@@ -67,6 +79,12 @@ class EscalationEngine {
     private var lurchFired = false
     private var steer: SteerPoint? = null
     private var steerOver = false
+    private val heading = ArrayDeque<HeadPoint>()
+    private var wheelDeg: Float? = null
+    private var evasiveNs: Long? = null
+    private var turnSignal: TurnSignalState? = null
+    private var signalSeenNs: Long? = null
+    private var hazard = false
     private var gear: GearPosition? = null
     private var parkingBrake: Boolean? = null
     private var lastDangerNs: Long? = null
@@ -88,6 +106,8 @@ class EscalationEngine {
             speeds.clear()
             spike = null
             steer = null
+            heading.clear()
+            wheelDeg = null
             lastSpeedKmh = null
             val gap = (entry.event as RecorderEvent.RecordingStarted).gap
             if (gap == null || gap.acrossBoots) timeline.clear()
@@ -102,6 +122,14 @@ class EscalationEngine {
                 is VehicleSignal.AirbagDeployed -> if (s.deployed) trigger(if (s.test) CapsuleTrigger.TEST_AIRBAG else CapsuleTrigger.AIRBAG, event.seq, 0f, nowNs, out)
                 is VehicleSignal.Speed -> onSpeed(event.seq, entry.sample, out)
                 is VehicleSignal.SteeringAngle -> onSteering(s.degrees, event.seq, entry.sample, out)
+                is VehicleSignal.TurnSignal -> {
+                    if (s.state != TurnSignalState.OFF || turnSignal.let { it != null && it != TurnSignalState.OFF }) signalSeenNs = nowNs
+                    turnSignal = s.state
+                }
+                is VehicleSignal.Light -> if (s.lamp == Lamp.HAZARD) {
+                    if (s.on || hazard) signalSeenNs = nowNs
+                    hazard = s.on
+                }
                 is VehicleSignal.Gear -> {
                     val kmh = currentKmh(nowNs)
                     val severe = lastSevereNs
@@ -179,6 +207,7 @@ class EscalationEngine {
         val prev = steer
         if (prev != null && tNs > prev.tNs && ms(tNs - prev.tNs) < MIN_STEER_GAP_MS) return // too close to difference
         steer = SteerPoint(tNs, degrees)
+        onHeading(degrees, seq, sample.receivedAt.elapsedNanos, out)
         if (prev == null || tNs <= prev.tNs || ms(tNs - prev.tNs) > Tuning.STEER_MAX_SAMPLE_GAP_MS) {
             steerOver = false
             return
@@ -189,7 +218,72 @@ class EscalationEngine {
         val kmh = currentKmh(sample.receivedAt.elapsedNanos) ?: return
         if (!steerOver || wasOver || kmh < Tuning.STEER_MIN_SPEED_KMH) return
         val braking = brakeOn || brakeReleasedNs?.let { ms(sample.receivedAt.elapsedNanos - it) <= Tuning.SWERVE_BRAKE_WINDOW_MS } ?: false
+        evasiveNs = sample.receivedAt.elapsedNanos
         trigger(if (braking) CapsuleTrigger.BRAKE_SWERVE else CapsuleTrigger.EVASIVE_STEER, seq, rate, sample.receivedAt.elapsedNanos, out)
+    }
+
+    /**
+     * Sudden lane change without a signal ([Tuning.LANE_YAW_DPS]). The heading is integrated from the steering angle,
+     * held between steering samples (the wheel may report only when it moves), and stepped on every steering and
+     * speed sample: [degrees] is a new wheel angle, or null on a speed sample. Times are receive times, so the two
+     * signals share one clock.
+     */
+    private fun onHeading(degrees: Float?, seq: Long, tNs: Long, out: MutableList<EngineOutput>) {
+        val held = wheelDeg
+        if (degrees != null) wheelDeg = degrees
+        val kmh = currentKmh(tNs)
+        if (held == null || kmh == null || kmh < Tuning.LANE_MIN_SPEED_KMH) {
+            heading.clear()
+            return
+        }
+        heading.lastOrNull()?.let { if (tNs < it.tNs || ms(tNs - it.tNs) > Tuning.LANE_MAX_GAP_MS) heading.clear() }
+        val heldYaw = yawDps(held, kmh)
+        val base = heading.lastOrNull() ?: HeadPoint(tNs, 0f, heldYaw, 0f, 0f, kmh).also { heading.addLast(it) }
+        val dtS = (tNs - base.tNs) / 1e9f
+        val headingDeg = base.headingDeg + heldYaw * dtS
+        val mid = Math.toRadians(((base.headingDeg + headingDeg) / 2).toDouble())
+        val x = base.x + kmh / 3.6f * cos(mid).toFloat() * dtS
+        val y = base.y + kmh / 3.6f * sin(mid).toFloat() * dtS
+        if (dtS > 0f) heading.addLast(HeadPoint(tNs, headingDeg, heldYaw, x, y, kmh)) // the old angle held up to now
+        if (degrees != null) heading.addLast(HeadPoint(tNs, headingDeg, yawDps(degrees, kmh), x, y, kmh))
+        while (ms(tNs - heading.first().tNs) > Tuning.LANE_WINDOW_MS) heading.removeFirst()
+        if (abs(heading.last().yawDps) > Tuning.LANE_STRAIGHT_DPS) return
+
+        // Evaluated once the car has driven straight for LANE_SETTLE_MS after the last sharp heading change. The
+        // manoeuvre runs from a settled straight point before a sharp change to the first point of that straight run,
+        // ends on (nearly) the heading it started on, and moved the car at least a lane over. Earlier sharp changes
+        // in the window (a curve) are skipped.
+        val straight = { k: Int -> abs(heading[k].yawDps) <= Tuning.LANE_STRAIGHT_DPS }
+        var end = heading.size - 1
+        while (end > 0 && straight(end - 1)) end--
+        if (ms(tNs - heading[end].tNs) < Tuning.LANE_SETTLE_MS) return
+        val settled = { k: Int ->
+            straight(k) && (k downTo 0).takeWhile { ms(heading[k].tNs - heading[it].tNs) <= Tuning.LANE_SETTLE_MS }.all(straight)
+        }
+        val startNs = (0 until end).asSequence()
+            .filter { abs(heading[it].yawDps) >= Tuning.LANE_YAW_DPS && (it == 0 || abs(heading[it - 1].yawDps) < Tuning.LANE_YAW_DPS) }
+            .mapNotNull { sharp -> (sharp - 1 downTo 0).firstOrNull(settled) }
+            .firstOrNull { start ->
+                val from = heading[start]
+                abs(heading[end].headingDeg - from.headingDeg) <= Tuning.LANE_NET_HEADING_DEG &&
+                    abs(from.sideways(heading[end])) >= Tuning.LANE_MIN_SHIFT_M &&
+                    (start..end).all { heading[it].kmh >= Tuning.LANE_MIN_SPEED_KMH }
+            }
+            ?.let { heading[it].tNs } ?: return
+        heading.clear() // one manoeuvre, one detection
+        // An evasive swerve-and-recover is already its own detection.
+        if (evasiveNs?.let { it >= startNs } == true) return
+        // Signalled, or the signal state is unknown: not a lane change "without a signal".
+        val signalled = turnSignal == null || turnSignal != TurnSignalState.OFF || hazard ||
+            signalSeenNs?.let { ms(startNs - it) <= Tuning.LANE_SIGNAL_LOOKBACK_MS } == true
+        if (signalled) return
+        trigger(CapsuleTrigger.LANE_CHANGE_NO_SIGNAL, seq, kmh, tNs, out)
+    }
+
+    /** Kinematic bicycle model: heading rate (°/s) from the steering-wheel angle at [kmh]. */
+    private fun yawDps(wheelDeg: Float, kmh: Float): Float {
+        val roadWheel = Math.toRadians((wheelDeg / Tuning.STEERING_RATIO).toDouble())
+        return Math.toDegrees(kmh / 3.6 * tan(roadWheel) / Tuning.WHEELBASE_M).toFloat()
     }
 
     private fun onSpeed(seq: Long, sample: SignalSample, out: MutableList<EngineOutput>) {
@@ -197,6 +291,7 @@ class EscalationEngine {
         val kmh = abs((sample.signal as VehicleSignal.Speed).metersPerSecond) * 3.6f
         lastSpeedKmh = kmh
         lastSpeedReceivedNs = sample.receivedAt.elapsedNanos
+        onHeading(null, seq, sample.receivedAt.elapsedNanos, out)
         speeds.lastOrNull()?.let { last ->
             if (tNs <= last.tNs || ms(tNs - last.tNs) > Tuning.TRIGGER_MAX_SAMPLE_GAP_MS) {
                 speeds.clear()

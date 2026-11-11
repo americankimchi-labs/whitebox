@@ -73,8 +73,8 @@ class MirrorService(
     private fun levelSeen(stream: StreamId, level: EscalationLevel, atMs: Long) {
         if (lastLevel.put(stream, level) == level) return
         note(stream, atMs, when (level) {
-            EscalationLevel.NORMAL -> "기록 중 (급제동 감지 해제)"
-            EscalationLevel.ALERT -> "급제동 감지 — 기록을 바로바로 받는 중"
+            EscalationLevel.NORMAL -> "기록 중 (위험 감지 해제)"
+            EscalationLevel.ALERT -> "위험 감지 — 기록을 바로바로 받는 중"
             EscalationLevel.TRIGGERED -> "기록 보관 — 차가 기록을 봉인하고 보내는 중"
         })
     }
