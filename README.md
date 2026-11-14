@@ -14,10 +14,10 @@
 
 ### 방법 1: APK 설치 (권장)
 
-APK 파일 위치: `apk/JeffreyMinjaeKim_WhiteBox_release.apk`
+APK 파일 위치: `apk/다본_WhiteBox_release.apk`
 
 ```bash
-adb install -r apk/JeffreyMinjaeKim_WhiteBox_release.apk
+adb install -r apk/다본_WhiteBox_release.apk
 adb shell am start --user 10 -n com.americankimchilabs.whitebox/.MainActivity
 ```
 
