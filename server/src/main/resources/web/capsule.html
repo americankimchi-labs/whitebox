@@ -22,11 +22,14 @@ table.log{font-size:12px;font-variant-numeric:tabular-nums}table.log td{padding:
 .form table.grid th{background:#f2f2f2;font-weight:600;width:23%;word-break:keep-all}.form table.grid td:empty{height:1.6em}
 .form .sentence{font-size:15px;line-height:2;margin:12px 0 2px}.form .fill{display:inline-block;border-bottom:1px solid #000;height:1.1em;vertical-align:bottom}
 .form ol.draft{margin:4px 0 6px 1.3em;padding:0;font-size:14px;line-height:1.6}.form .lines div{border-bottom:1px solid #000;height:2em}
-.form td.title{text-align:center}.form td.title h1{margin:2px 0 8px}.form .foot{font-size:14px;margin:12px 0 0}
+.form .origin{font-size:12px;margin:0 0 3px}.form .official{border:2px solid #000;font-size:15px}.form .official .cell{border-top:1px solid #000;padding:9px 10px;line-height:1.7}.form .official .cell:first-child{border-top:0}
+.form .official .title{text-align:center}.form .official .title h1{margin:4px 0 6px;letter-spacing:.5em}.form .official .title h1 small{font-size:14px;letter-spacing:0;font-weight:400}
+.form .official .two{display:flex}.form .official .two span{flex:1}.form .official .body{min-height:200px}.form .official .consent{font-size:13px}.form .official .consent table{margin-top:6px;font-size:12px}.form .official .consent th{width:auto;text-align:center}
+.form .official .signs{text-align:center;line-height:2.4}.form .official.back{margin-top:16px}.form .official > table.grid{border-top:1px solid #000}.form .official > table.grid th{width:42%;text-align:center}
 .form .sketch{border:1px solid #000;height:230px;margin:4px 0}.form .sketch.small{height:150px}.form table.sign{margin-top:14px}
 .tabs{display:flex;gap:8px}.tabs button{flex:1}
 #report[data-doc=police] .insurer,#report[data-doc=insurer] .police{display:none}
-@media print{#report .card{break-inside:avoid-page}table.log{font-size:9px}.form{border:0;padding:0;margin:0;break-after:page}.form h2.back{break-before:page}.form .sketch{height:260px}}
+@media print{#report .card{break-inside:avoid-page}.form.insurer{font-size:12.5px}.form.insurer tr{break-inside:avoid}.form.insurer h2{break-after:avoid;margin:10px 0 4px}.form.insurer .grid th,.form.insurer .grid td{padding:4px 7px}.form.insurer .sketch.small{height:110px}.form.insurer p{margin:5px 0}table.log{font-size:9px}.form{border:0;padding:0;margin:0;break-after:page}.form .official.back{break-before:page;margin-top:0}.form .official{font-size:13.5px}.form .official .cell{padding:4px 10px;line-height:1.45}.form .official .title h1{font-size:18px;margin:2px 0 4px}.form .official .body{min-height:60px}.form .official .consent{font-size:11.5px}.form .official .consent table{font-size:11px}.form .official .consent td,.form .official .consent th{padding:3px 5px}.form .official .consent,.form .official .signs{break-inside:avoid}.form .official .signs{line-height:1.75}.form ol.draft{line-height:1.4;font-size:13px}.form .hint{margin:2px 0}.form .sketch{height:260px}}
 </style>
 </head>
 <body><main>
@@ -490,11 +493,20 @@ function offerReport(c, data, events, t, v, trigger) {
   const box = document.createElement('div');
   box.className = 'card noprint';
   box.innerHTML = plan && plan.accidentReport
-    ? '<button class="wide" id="open-report">보험·경찰 제출용 사고 경위서</button><p class="msg">경찰에 내는 교통사고 발생상황 진술서와 보험회사에 내는 사고 접수서, 두 가지를 차량 기록으로 채워 드립니다. 차량 운행 기록이 첨부로 붙습니다.</p>'
+    ? '<button class="wide" id="open-report">보험·경찰 제출용 사고 경위서</button><p class="msg">경찰에 내는 진술서(교통사고 발생상황)와 보험회사에 내는 사고 접수서, 두 가지를 차량 기록으로 채워 드립니다. 차량 운행 기록이 첨부로 붙습니다.</p>'
     : `<button class="wide secondary" disabled>보험·경찰 제출용 사고 경위서</button><p class="msg">프로 요금제에서 쓸 수 있습니다.</p><div class="actions">${WB.upgrades(['PRO'])}</div>`;
   WB.$('sync-card').after(box);
   const open = WB.$('open-report');
   if (open) open.onclick = () => renderReport(c, data, events, t, v, trigger);
+}
+
+/** The speed the record shows for the moment, in plain words: a detected change as "before → after", otherwise the speed then. */
+function speedText(upTo, causeWall, trigger, W) {
+  const speeds = upTo.filter((x) => x.e.type === 'S' && x.e.kind === 'SPEED' && !x.e.locked);
+  if (!speeds.length) return null;
+  const after = speeds[speeds.length - 1].e.value * 3.6;
+  const dv = trigger && !W.request && DELTA_KMH.includes(trigger.e.trigger) ? trigger.e.measured : null;
+  return dv != null ? `시속 ${(after - dv).toFixed(0)} km → ${after.toFixed(0)} km` : `시속 ${after.toFixed(0)} km`;
 }
 
 function renderReport(c, data, events, t, v, trigger) {
@@ -514,7 +526,7 @@ function renderReport(c, data, events, t, v, trigger) {
   const el = WB.$('report');
   // Two documents from the same record: the statement a driver writes for the police, and an accident report for the
   // driver's own insurer. Each prints by itself, with the car's record attached behind it.
-  const model = { causeWall, place: place ? place.e : null, readings };
+  const model = { causeWall, place: place ? place.e : null, readings, speed: speedText(upTo, causeWall, trigger, W) };
   el.dataset.doc = 'police';
   el.innerHTML = `
     <div class="card noprint"><h1>사고 경위서</h1><p class="msg">경찰과 보험회사에 내는 문서 두 가지입니다. 날짜와 시각, 차량 기록에서 옮긴 내용은 채워 두었고, 이름과 연락처처럼 본인만 아는 칸은 비워 두었습니다. 인쇄한 뒤 직접 적고 서명해 주세요.</p>

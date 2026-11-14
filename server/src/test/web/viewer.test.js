@@ -204,14 +204,19 @@ test('the two documents carry the official items, the record\'s time and reading
   const Report = require(path.join(web, 'report.js'));
   const wall = new Date(2026, 10, 14, 20, 6, 21).getTime();
   const m = { causeWall: wall, place: { lat: 37.4979, lon: 127.0276, acc: 5 }, readings: [{ text: '방향지시등(왼쪽)을 요청 17.9초 전에 켜서 5.1초 동안 켜 두었습니다.' }, { text: '<b>x</b>' }] };
-  const police = Report.statement(m);
-  assert.match(police, /<h1>교통사고 발생상황 진술서<\/h1>/);
-  // The official form's own printed items, in its order.
-  const printed = ['□ 가해자', '□ 피해자', '□ 목격자', '□ 참고인', '□ 기타관계자', '성 명', '한자(', '주민번호', '주 소', '전화번호', '휴대', '자택', '운전면허번호', '직업', '남 □', '여 □', '위 본인은', '진술일시', '진술인', '(서명날인)', '조사경찰관', '경찰서', '계급'];
+  const police = Report.statement({ ...m, speed: '시속 50 km' });
+  // The current official form (교통사고 조사규칙 별지 제2호서식, 2025-11-13): its printed items, in its order.
+  assert.match(police, /<h1>진 술 서 <small>\(교통사고발생상황\)<\/small><\/h1>/);
+  const printed = ['■ 교통사고조사규칙 [별지 제2호서식]', '□ 사고 당사자', '□ 목격자', '□ 참고인', '□ 기타관계자', '전화번호 :', '주 &nbsp; 소 :', '주 &nbsp; 거 :', '성 &nbsp; 명 :', '주민등록번호 :', '차량번호 :', '직 &nbsp; 업 :', '위 본인은', '에서 발생한 교통사고에 대하여 아래와 같이 진술합니다.', '보험사 :', '소유자 :', '행선지 :', '속 &nbsp; 도 :',
+    '본 사고에 대해「교통사고처리 특례법」제4조에 따른 보험 가입 여부를 확인하기 위해', '보험사에 제공하는 정보', '사고차량 번호, 사고일자, 운전자 생년월일 및 성별', '회신 즉시 삭제', '동의 □ / 미동의 □', '보험사 확인 후 회신정보', '수사서류에 첨부', '진술일시 :', '진술인', '경찰관',
+    '수사 과정 확인서', '1. 조사 장소 도착시각', '6. 조사과정 기재사항에 대한 이의제기나 의견진술 여부 및 그 내용', '확 인 자 :', '사법경찰관 :'];
   let at = -1;
   for (const label of printed) { const i = police.indexOf(label, at + 1); assert.ok(i > at, `${label} in order`); at = i; }
+  // The superseded form's items are gone.
+  for (const old of ['가해자', '운전면허번호', '한자(', '임의로 진술하다', '뒷면에 사고모습']) assert.ok(!police.includes(old), old);
   assert.match(police, /위 본인은 <b>2026\. 11\. 14\. 20:06<\/b>경/, 'the date and time come from the record');
-  assert.match(police, /앞 지점에서 발생한 교통사고에 대하여 다음과 같이 임의로 진술하다\. \(뒷면에 사고모습을 그려주세요\)/);
+  assert.match(police, /속 &nbsp; 도 : <b>시속 50 km<\/b>/, 'and so does the speed');
+  assert.ok(!Report.statement(m).includes('<b>시속'), 'no speed is written when the record has none');
   assert.ok(police.includes('방향지시등(왼쪽)을 요청 17.9초 전에 켜서 5.1초 동안 켜 두었습니다.'), 'the car\'s readings are the draft');
   assert.ok(police.includes('&lt;b&gt;x&lt;/b&gt;') && !police.includes('<b>x</b>'), 'record text is never markup');
   assert.ok(police.includes('위도 37.49790, 경도 127.02760'));
@@ -220,7 +225,12 @@ test('the two documents carry the official items, the record\'s time and reading
   // witnesses; any claim received.
   for (const label of ['사고가 발생한 때, 곳, 상황', '손해의 정도', '피해자', '가해자', '증인', '손해배상 청구를 받은 내용']) assert.ok(insurer.includes(label), label);
   // And what the large insurers' own claim forms print.
-  for (const label of ['차량번호', '차명 (연식)', '피보험자', '실제 소유자', '소유자와의 관계', '주민등록번호', '면허번호', '면허종별', '사고일시', '사고장소', '진행방향', '사고경위', '사고현장 약도', '경찰서 신고', '치료병원', '피해물', '수리처', '피해상황', '견인', '청구자 주소', '피보험자와의 관계', '작성일자']) assert.ok(insurer.includes(label), label);
+  for (const label of ['차량번호', '차명 (연식)', '피보험자', '실제 소유자', '소유자와의 관계', '주민등록번호', '면허번호', '면허종별', '사고일시', '사고장소', '진행방향', '사고경위', '사고현장 약도', '경찰서 신고', '치료병원', '피해물', '수리처', '피해상황', '견인', '청구자 주소', '피보험자와의 관계', '청구 일자']) assert.ok(insurer.includes(label), label);
+  // The union leaves nothing out: one insurer's lanes, occupants and serious-violation list, another's purpose and
+  // route, the items for damage found on a parked car, the cover claimed, and the power of attorney.
+  for (const label of ['등록증상 소유자', '차량의 용도', '운행경위', '사고 당시 면허', '도로형태', '본인 주행차로', '타차 주행차로', '차선없음', '탑승 인원', '중대사고 여부', '음주', '신호위반', '중앙선침범', '사고후도주', '횡단보도', '속도위반', '앞지르기위반', '철길건널목', '보도침범', '개문발차', '차량 외 피해물', '복구업체', '최종 주차장소', '최초 파손 발견자', '청구 담보', '대인Ⅰ·Ⅱ', '무보험차상해', '위임장', '합의 및 손해배상금 지급 등의 권한 일체', '청구권과 영수권']) assert.ok(insurer.includes(label), label);
+  // The record never ticks a violation: the speed is in the draft, the judgement is the person's.
+  assert.ok(!/☑ (음주|신호위반|속도위반)/.test(insurer));
   assert.match(insurer, /2026년 11월 14일 20시 06분/);
   // A record without a place says so instead of leaving a made-up one.
   assert.ok(Report.statement({ ...m, place: null }).includes('차량 기록에 위치가 없습니다'));
