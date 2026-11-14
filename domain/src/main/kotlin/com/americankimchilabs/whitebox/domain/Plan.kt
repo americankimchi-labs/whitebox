@@ -10,13 +10,13 @@ enum class Tier { FREE, PLUS, PRO }
 /** What a [tier] includes. */
 data class Entitlements(val tier: Tier) {
     /** Monthly price in won (Free is free). */
-    val monthlyWon: Int get() = when (tier) { Tier.FREE -> 0; Tier.PLUS -> 2_000; Tier.PRO -> 4_000 }
+    val monthlyWon: Int get() = when (tier) { Tier.FREE -> 0; Tier.PLUS -> 4_900; Tier.PRO -> 8_900 }
 
     /** Days of everyday driving the cloud keeps and the phone shows. */
     val historyDays: Int get() = when (tier) { Tier.FREE -> 7; Tier.PLUS -> 14; Tier.PRO -> 30 }
 
     /** Kept moments, crashes without an airbag and handover reports in the library at once (extended ones count). */
-    val librarySlots: Int get() = when (tier) { Tier.FREE -> 3; Tier.PLUS -> 12; Tier.PRO -> 120 }
+    val librarySlots: Int get() = when (tier) { Tier.FREE -> 3; Tier.PLUS -> 12; Tier.PRO -> 50 }
 
     /** Saved dashcam clips at once (extended ones count): clips are what storage costs. */
     val clipSlots: Int get() = when (tier) { Tier.FREE -> 2; Tier.PLUS -> 4; Tier.PRO -> 10 }

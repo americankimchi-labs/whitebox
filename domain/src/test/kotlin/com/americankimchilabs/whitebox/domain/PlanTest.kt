@@ -13,8 +13,9 @@ class PlanTest {
 
     @Test
     fun plansDifferOnlyInAmountsAndExtras() {
+        assertEquals(listOf(0, 4_900, 8_900), Tier.entries.map { Entitlements(it).monthlyWon })
         assertEquals(listOf(7, 14, 30), Tier.entries.map { Entitlements(it).historyDays })
-        assertEquals(listOf(3, 12, 120), Tier.entries.map { Entitlements(it).librarySlots })
+        assertEquals(listOf(3, 12, 50), Tier.entries.map { Entitlements(it).librarySlots })
         assertEquals(listOf(2, 4, 10), Tier.entries.map { Entitlements(it).clipSlots })
         assertEquals(listOf(listOf(Tier.PLUS, Tier.PRO), listOf(Tier.PRO), emptyList()), Tier.entries.map { Entitlements.above(it) })
         assertEquals(listOf(false, true, true), Tier.entries.map { Entitlements(it).handover })
