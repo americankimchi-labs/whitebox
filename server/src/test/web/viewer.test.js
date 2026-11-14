@@ -228,7 +228,12 @@ test('the two documents carry the official items, the record\'s time and reading
   for (const label of ['차량번호', '차명 (연식)', '피보험자', '실제 소유자', '소유자와의 관계', '주민등록번호', '면허번호', '면허종별', '사고일시', '사고장소', '진행방향', '사고경위', '사고현장 약도', '경찰서 신고', '치료병원', '피해물', '수리처', '피해상황', '견인', '청구자 주소', '피보험자와의 관계', '청구 일자']) assert.ok(insurer.includes(label), label);
   // The union leaves nothing out: one insurer's lanes, occupants and serious-violation list, another's purpose and
   // route, the items for damage found on a parked car, the cover claimed, and the power of attorney.
-  for (const label of ['등록증상 소유자', '차량의 용도', '운행경위', '사고 당시 면허', '도로형태', '본인 주행차로', '타차 주행차로', '차선없음', '탑승 인원', '중대사고 여부', '음주', '신호위반', '중앙선침범', '사고후도주', '횡단보도', '속도위반', '앞지르기위반', '철길건널목', '보도침범', '개문발차', '차량 외 피해물', '복구업체', '최종 주차장소', '최초 파손 발견자', '청구 담보', '대인Ⅰ·Ⅱ', '무보험차상해', '위임장', '합의 및 손해배상금 지급 등의 권한 일체', '청구권과 영수권']) assert.ok(insurer.includes(label), label);
+  for (const label of ['등록증상 소유자', '차량의 용도', '운행경위', '사고 당시 면허', '도로형태', '본인 주행차로', '타차 주행차로', '차선없음', '탑승 인원', '중대사고 여부', '음주', '신호위반', '중앙선침범', '사고후도주', '횡단보도', '속도위반', '앞지르기위반', '철길건널목', '보도(인도)침범', '개문발차', '차량 외 피해물', '복구업체', '최종 주차장소', '최초 파손 발견자', '청구 담보', '대인Ⅰ·Ⅱ', '무보험차상해', '위임장', '합의 및 손해배상금 지급 등의 권한 일체', '청구권과 영수권']) assert.ok(insurer.includes(label), label);
+  // A fourth insurer's form: date of birth instead of the resident number, the injured person's sex and age, the
+  // damaged thing's owner, and the confirmation that the claims process was explained.
+  for (const label of ['또는 생년월일', '성별', '나이', '소유자 ', '설명의무', '보험사기']) assert.ok(insurer.includes(label), label);
+  // A fifth insurer prints no motor claim form and takes the report online: what its screens ask for is here too.
+  for (const label of ['면허 없음', '견인업체', 'CCTV 영상']) assert.ok(insurer.includes(label), label);
   // The record never ticks a violation: the speed is in the draft, the judgement is the person's.
   assert.ok(!/☑ (음주|신호위반|속도위반)/.test(insurer));
   assert.match(insurer, /2026년 11월 14일 20시 06분/);

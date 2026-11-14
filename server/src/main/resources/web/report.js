@@ -374,7 +374,7 @@
     return `<section class="form insurer">
       <h1>자동차 사고 접수서</h1>
       <p class="sub">보험회사 제출용 · 화이트박스 양식</p>
-      <p class="hint noprint">보험회사마다 청구서 양식이 달라, 주요 보험회사 청구서에 인쇄된 항목 전부와 자동차보험 약관 「사고발생 시 의무」가 알리도록 한 사항을 한 문서에 모았습니다. 그대로 내거나 보험회사 양식에 옮겨 적을 때 쓰세요. 해당하지 않는 칸은 비워 두면 됩니다.</p>
+      <p class="hint noprint">보험회사마다 청구서 양식이 달라, 주요 보험회사 청구서에 인쇄된 항목 전부, 청구서 없이 온라인으로 사고를 접수받는 보험회사가 묻는 항목, 그리고 자동차보험 약관 「사고발생 시 의무」가 알리도록 한 사항을 한 문서에 모았습니다. 그대로 내거나 보험회사 양식에 옮겨 적을 때 쓰세요. 해당하지 않는 칸은 비워 두면 됩니다.</p>
       <h2>① 사고 차량과 피보험자</h2>
       <table class="grid">
         <tr><th>보험회사</th><td></td><th>증권번호</th><td></td></tr>
@@ -386,9 +386,9 @@
       <h2>② 운전자</h2>
       <table class="grid">
         <tr><th>성명</th><td></td><th>소유자와의 관계</th><td></td></tr>
-        <tr><th>주민등록번호</th><td></td><th>연락처</th><td>자택 ${blank(6)}<br>직장 ${blank(6)}</td></tr>
+        <tr><th>주민등록번호 (또는 생년월일)</th><td></td><th>연락처</th><td>자택 ${blank(6)}<br>직장 ${blank(6)}</td></tr>
         <tr><th>면허번호</th><td></td><th>면허종별 · 유효기간</th><td>${blank(3)}종 · ${blank(6)}까지</td></tr>
-        <tr><th>사고 당시 면허</th><td colspan="3">□ 정상 &nbsp; □ 정지 중 &nbsp; □ 취소</td></tr>
+        <tr><th>사고 당시 면허</th><td colspan="3">□ 정상 &nbsp; □ 정지 중 &nbsp; □ 취소 &nbsp; □ 면허 없음</td></tr>
       </table>
       <h2>③ 사고가 발생한 때, 곳, 상황</h2>
       <table class="grid">
@@ -406,14 +406,14 @@
         <tr><th>도로형태</th><td colspan="3">□ 직선도로 &nbsp; □ 골목길 &nbsp; □ 사거리 &nbsp; □ 삼거리 &nbsp; □ 기타</td></tr>
         <tr><th>본인 주행차로</th><td>□ 1차로 □ 2차로 □ 3차로 □ (${blank(1)})차로 □ 차선없음</td><th>타차 주행차로</th><td>□ 1차로 □ 2차로 □ 3차로 □ (${blank(1)})차로 □ 차선없음</td></tr>
         <tr><th>탑승 인원</th><td>자차: □ 유 (운전자 외 ${blank(2)}명) □ 무</td><th></th><td>타차: □ 유 (운전자 외 ${blank(2)}명) □ 무</td></tr>
-        <tr><th>중대사고 여부</th><td colspan="3">□ 음주 (${blank(2)}%) &nbsp; □ 신호위반 &nbsp; □ 중앙선침범 &nbsp; □ 사고후도주 &nbsp; □ 횡단보도 &nbsp; □ 속도위반 (${blank(2)}km/h) &nbsp; □ 앞지르기위반 &nbsp; □ 철길건널목 &nbsp; □ 보도침범 &nbsp; □ 개문발차<br><span class="hint">해당하는 경우에만 본인이 표시합니다. 차량 기록은 이 칸을 채우지 않습니다.</span></td></tr>
+        <tr><th>중대사고 여부</th><td colspan="3">□ 음주 (${blank(2)}%) &nbsp; □ 신호위반 &nbsp; □ 중앙선침범 &nbsp; □ 사고후도주 &nbsp; □ 횡단보도 &nbsp; □ 속도위반 (${blank(2)}km/h) &nbsp; □ 앞지르기위반 &nbsp; □ 철길건널목 &nbsp; □ 보도(인도)침범 &nbsp; □ 개문발차<br><span class="hint">해당하는 경우에만 본인이 표시합니다. 차량 기록은 이 칸을 채우지 않습니다.</span></td></tr>
       </table>
       <h2>⑤ 피해자와 가해자, 손해의 정도</h2>
       <table class="grid">
-        <tr><th>피해자</th><td colspan="3">성명 ${blank(6)} 외 ${blank(2)}명 &nbsp; 전화번호 ${blank(8)}<br>주소 ${blank(18)}<br>치료병원 ${blank(8)} (Tel: ${blank(7)})</td></tr>
+        <tr><th>피해자</th><td colspan="3">성명 ${blank(6)} 외 ${blank(2)}명 &nbsp; 성별 ${blank(2)} &nbsp; 나이 ${blank(2)} &nbsp; 전화번호 ${blank(8)}<br>주소 ${blank(18)}<br>치료병원 ${blank(8)} (Tel: ${blank(7)})</td></tr>
         <tr><th>가해자</th><td colspan="3">성명 ${blank(6)} &nbsp; 전화번호 ${blank(8)}<br>주소 ${blank(18)}<br>차량번호 ${blank(6)} &nbsp; 보험회사 ${blank(6)}</td></tr>
-        <tr><th>피해물</th><td colspan="3">차량번호(기타) ${blank(8)} 외 ${blank(2)}대 &nbsp; 수리처(차명) ${blank(8)} (Tel: ${blank(7)})<br>차량 외 피해물 ${blank(8)} 외 ${blank(2)}건 &nbsp; 복구업체 ${blank(8)} (Tel: ${blank(7)})</td></tr>
-        <tr><th>피해상황</th><td colspan="3">본인 차량 파손 부위 ${blank(10)} (견인: 유 · 무)<br>상대 차량 파손 부위 ${blank(10)} (견인: 유 · 무)</td></tr>
+        <tr><th>피해물</th><td colspan="3">차량번호(기타) ${blank(8)} 외 ${blank(2)}대 &nbsp; 소유자 ${blank(5)} &nbsp; 연락처 ${blank(7)}<br>수리처(차명) ${blank(8)} (Tel: ${blank(7)})<br>차량 외 피해물 ${blank(8)} 외 ${blank(2)}건 &nbsp; 복구업체 ${blank(8)} (Tel: ${blank(7)})</td></tr>
+        <tr><th>피해상황</th><td colspan="3">본인 차량 파손 부위 ${blank(10)} (견인: 유 · 무)<br>상대 차량 파손 부위 ${blank(10)} (견인: 유 · 무)<br>견인업체 ${blank(8)} (Tel: ${blank(7)})</td></tr>
       </table>
       <h2>⑥ 증인</h2>
       <table class="grid"><tr><th>성명</th><td></td><th>전화번호</th><td></td></tr><tr><th>주소</th><td colspan="3"></td></tr></table>
@@ -427,13 +427,13 @@
         <tr><th>최초 파손 상태 목격자</th><td colspan="3">□ CCTV &nbsp; □ 경비 &nbsp; □ 주민 &nbsp; □ 기타 (${blank(6)})</td></tr>
       </table>
       <h2>⑨ 함께 내는 자료</h2>
-      <p>☑ 차량 운행 기록 (화이트박스, 다음 장) &nbsp; □ 블랙박스 영상 &nbsp; □ 현장 사진 &nbsp; □ 교통사고 사실 확인원 &nbsp; □ 기타 ${blank(6)}</p>
+      <p>☑ 차량 운행 기록 (화이트박스, 다음 장) &nbsp; □ 블랙박스 영상 &nbsp; □ CCTV 영상 &nbsp; □ 현장 사진 &nbsp; □ 교통사고 사실 확인원 &nbsp; □ 기타 ${blank(6)}</p>
       <h2>⑩ 보험금 청구</h2>
       <p>청구 담보: □ 대인Ⅰ·Ⅱ &nbsp; □ 대물 &nbsp; □ 자손 &nbsp; □ 차량 &nbsp; □ 무보험차상해 &nbsp; □ 특별약관 (${blank(6)})</p>
       <p>위와 같이 사고경위를 작성하고 보험금을 청구합니다. 위 내용은 사실과 다름이 없으며, 사실과 다른 경우에는 이미 받은 보험금을 즉시 반환하겠습니다.</p>
       <table class="grid sign">
         <tr><th>청구자 주소</th><td colspan="3"></td></tr>
-        <tr><th>성명</th><td>${blank(8)} (인)</td><th>주민등록번호</th><td></td></tr>
+        <tr><th>성명</th><td>${blank(8)} (인)</td><th>주민등록번호 (또는 생년월일)</th><td></td></tr>
         <tr><th>피보험자와의 관계</th><td></td><th>청구 일자</th><td>20${blank(2)}.&nbsp;${blank(2)}.&nbsp;${blank(2)}.</td></tr>
       </table>
       <h2>⑪ 위임장 (필요한 경우에만)</h2>
@@ -441,9 +441,12 @@
       <p>2. 위 사고로 인한 [치료비 · 대물 원상복구비 · 자차 수리비]의 청구권과 영수권을 ${blank(8)} (치료병원, 수리업체)에 위임합니다.</p>
       <table class="grid sign">
         <tr><th>위임자 주소</th><td colspan="3"></td></tr>
-        <tr><th>성명</th><td>${blank(8)} (인)</td><th>주민등록번호</th><td></td></tr>
+        <tr><th>성명</th><td>${blank(8)} (인)</td><th>주민등록번호 (또는 생년월일)</th><td></td></tr>
         <tr><th>피보험자와의 관계</th><td></td><th>위임 일자</th><td>20${blank(2)}.&nbsp;${blank(2)}.&nbsp;${blank(2)}.</td></tr>
       </table>
+      <h2>⑫ 설명을 들었다는 확인 (보험회사가 요구하는 경우)</h2>
+      <p>□ 본인은 보험업법 제95조의2(설명의무 등)에 따라 보험회사로부터 사고처리 과정(보험금 청구 이후 지급 시까지)에 대해 충분히 설명을 듣고 이해하였음을 확인합니다.</p>
+      <p class="hint">보험사기(고의사고, 허위사고, 피해과장, 운전자 바꿔치기, 음주·무면허 운전을 숨긴 청구 등)는 범죄이며, 보험사기방지 특별법에 따라 처벌됩니다.</p>
       <p class="hint">보험금을 받을 계좌, 개인정보 동의서 같은 보험회사 고유의 서류는 보험회사의 양식을 따릅니다.</p>
     </section>`;
   }
