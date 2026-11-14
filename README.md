@@ -345,7 +345,7 @@ python3 -I tools/virtual-console/dashcam.py make cut-in --data server-data
 
 앱 마켓 심사용 권한 목록(매니페스트 그대로): `pleos.car.permission.CAR_DRIVE`, `CAR_LIGHTS`, `CAR_SAFETY`, `CAR_DOORS`, `CAR_SEATS`, `CAR_WINDOWS`, `CAR_ENERGY`, `STT_SERVICE`, `TTS_SERVICE`, `android.car.permission.CAR_SPEED`(실행 중 허용), `CAR_POWERTRAIN`, 위치(정확·대략·항상 허용), `FOREGROUND_SERVICE`(+`LOCATION`, `SPECIAL_USE`), `RECEIVE_BOOT_COMPLETED`, `INTERNET`, `ACCESS_NETWORK_STATE`, 그리고 Vehicle SDK가 스스로 선언하는 `ai.pleos.playground.service.vehicle.VEHICLE_BINDING`. 제출 APK는 디버깅이 꺼져 있고(`debuggable` 없음), 버전은 제출마다 바뀝니다(지금 0.9.0, 코드 2). 앱은 스스로 업데이트하지 않고, 서버가 알려 주는 최신 버전이 더 높으면 주차 중에 앱 마켓 링크를 보여 줍니다.
 
-**성능(에뮬레이터 측정, 4코어)**: 제출 APK로 주행 중 앱 화면을 켠 채 CPU 평균 0.7%(최대 2.3%), 주차 중 0.2%, 메모리(PSS) 약 75 MB. Pleos 기준은 주행 중 5% 미만, 주차 중 25% 이하, 400 MB 이하입니다.
+**성능(에뮬레이터 측정, 4코어)**: 제출 APK로 주행 중 앱 화면을 켠 채 CPU 평균 0.3%(정속 주행)~1.6%(가속·감속·회전이 쉬지 않고 이어지는 시내 주행 3분, 1초 단위 최대 4.3%), 주차 중 0.3%, 메모리(PSS) 약 70 MB. Pleos 기준은 주행 중 5% 미만, 주차 중 25% 이하, 400 MB 이하입니다.
 
 ## 모듈 구조
 
