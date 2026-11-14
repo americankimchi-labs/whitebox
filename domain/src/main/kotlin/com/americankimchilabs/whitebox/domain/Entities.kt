@@ -78,8 +78,7 @@ sealed interface EscalationEvent {
 }
 
 /**
- * Why a capsule exists. Telltales are unreadable without PRIVATE_CAR_SAFETY, so there is no
- * telltale trigger.
+ * Why a capsule exists.
  *
  * [crash]: a crash-level event, answered as a crash (sealed at once, burst and priority upload, the server's seal if
  * the car goes silent, no keep question). [severe]: an airbag crash (큰 사고) — kept ten years free, never counts
@@ -148,6 +147,12 @@ enum class CapsuleTrigger(val crash: Boolean, val unit: MeasureUnit = MeasureUni
 
     /** Sudden jump from standstill. */
     LURCH(false),
+
+    /**
+     * An ABS or ESC warning lamp came on (or began to blink) while moving; measured: the speed at the time. Lamps are
+     * readable only where the car lets a third-party app read them, so on today's platform this never fires.
+     */
+    WARNING_LAMP(false, MeasureUnit.KMH),
 
     /** A door opened while stopped shortly after a dangerous moment. */
     POST_EVENT_EXIT(false, MeasureUnit.NONE),

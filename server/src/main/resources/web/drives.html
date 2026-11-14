@@ -42,7 +42,7 @@ async function detail(drive, el) {
     <polyline fill="none" stroke="var(--accent,#6750a4)" stroke-width="1.5" points="${pts.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')}"/>${marks}
     <text x="${w / 2}" y="${h - 2}" text-anchor="middle" fill="var(--muted,#5f6368)">최고 ${Math.max(...pts.map((p) => p.v)).toFixed(0)} km/h</text>
     <text x="4" y="${h - 2}" fill="var(--muted,#5f6368)">${WB.clock(t0)}</text><text x="${w - 50}" y="${h - 2}" fill="var(--muted,#5f6368)">${WB.clock(t1)}</text></svg>
-    ${capsules.filter((c) => drive.capsules.includes(c.id)).map((c) => `<a class="row" href="/capsule#d=${d}&s=${s}&id=${encodeURIComponent(c.id)}"><span>${esc(WBPacket.TRIGGER[c.trigger] || c.trigger)}<br><span class="sub">${WB.when(c.sealedAtMs)}</span></span><span class="badge ${c.crash ? 'bad' : 'warn'}">${c.severe ? '큰 사고' : c.crash ? '충돌' : '위험 순간'}</span></a>`).join('')}`;
+    ${capsules.filter((c) => drive.capsules.includes(c.id)).map((c) => `<a class="row" href="/capsule#d=${d}&s=${s}&id=${encodeURIComponent(c.id)}"><span>${esc(WBPacket.TRIGGER[c.trigger] || c.trigger)}<br><span class="sub">${WB.when(c.eventMs || c.sealedAtMs)}</span></span><span class="badge ${c.crash ? 'bad' : c.trigger === 'MANUAL' ? '' : 'warn'}">${c.severe ? '큰 사고' : c.crash ? '충돌' : c.trigger === 'MANUAL' ? '음성 보관' : '위험 순간'}</span></a>`).join('')}`;
 }
 
 async function load() {

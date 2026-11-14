@@ -14,6 +14,26 @@
   const POST_MS = 5000;
   const FLASH_MAX_MS = 1500;
   const SUBSCRIBE_MS = 3000;
+  /** A record the driver asked for shows everything kept before the request, up to this long. */
+  const REQUEST_PRE_MAX_MS = 120000;
+
+  /** A record saved on the driver's word, not by a detection: its moment is the request (요청), not a detection (감지). */
+  const isRequest = (trigger) => trigger === 'MANUAL';
+  /** The moment's name on a lane mark or in "N초 전". */
+  const word = (request) => (request ? '요청' : '감지');
+
+  /**
+   * The lanes' span for a record, as the car's EvidenceTimeline.span: a detection is read around its instant; a
+   * request reaches back to the first kept record (whole seconds, at least PRE_MS, at most REQUEST_PRE_MAX_MS).
+   */
+  function span(events, causeSeq, request) {
+    if (!request || !events.length) return { pre: PRE_MS, post: POST_MS };
+    let cause = null;
+    for (const ev of events) if (ev.seq <= causeSeq) cause = ev;
+    cause = cause || events[0];
+    const backMs = Math.trunc((cause.e.at.ns - events[0].e.at.ns) / 1e6);
+    return { pre: Math.min(REQUEST_PRE_MAX_MS, Math.max(PRE_MS, Math.floor((backMs + 999) / 1000) * 1000)), post: POST_MS };
+  }
 
   /** A control's state at the cause and how long before it was set (null: held throughout the range). */
   function lastChange() {
@@ -146,7 +166,7 @@
     AIRBAG: '에어백 전개', TEST_AIRBAG: '시험용 에어백 신호', DELTA_V: '충격 감지', SHORT_DELTA_V: '충격 감지', BRAKED_SPIKE: '제동 중 충격 감지',
     REAR_SHOVE: '후방 추돌 (정차·제동 중)', ALERT_RESOLVED: '급제동 후 정차', MANUAL: '음성으로 보관', HARD_BRAKE: '급제동',
     EVASIVE_STEER: '급핸들', BRAKE_SWERVE: '급제동하며 급핸들', LANE_CHANGE_NO_SIGNAL: '방향지시등 없이 급차선 변경', SHIFT_TO_NEUTRAL: '주행 중 기어 중립(N)', BRAKE_SPEED_RISE: '브레이크를 밟았는데 속도 증가',
-    BRAKE_NO_DECEL: '브레이크를 밟아도 속도가 안 줄어듦', BRAKE_PUMPING: '브레이크를 여러 번 밟음', PARKING_BRAKE_MOVING: '주행 중 주차 브레이크 작동', LURCH: '급출발',
+    BRAKE_NO_DECEL: '브레이크를 밟아도 속도가 안 줄어듦', BRAKE_PUMPING: '브레이크를 여러 번 밟음', PARKING_BRAKE_MOVING: '주행 중 주차 브레이크 작동', LURCH: '급가속', WARNING_LAMP: '주행 중 경고등 켜짐',
     POST_EVENT_EXIT: '위험 순간 직후 하차', SERVER_SEAL: '충격 뒤 연결 끊김 (서버 봉인)', HANDOVER: '대리 운전 리포트',
   };
   const GEAR = { PARK: 'P', REVERSE: 'R', NEUTRAL: 'N', DRIVE: 'D', MANUAL: 'M', UNKNOWN: '?' };
@@ -162,13 +182,13 @@
   const area = (a) => AREA[a] || a;
   const sec = (ms) => (ms / 1000).toFixed(1);
 
-  function lineText(l) {
+  function lineText(l, request = false) {
     const what = l.type === 'BRAKE' ? (l.value ? '브레이크 밟음' : '브레이크 뗌')
       : l.type === 'TURN' ? `방향지시등 ${TURN[l.value] || l.value}`
       : l.type === 'GEAR' ? `기어 ${GEAR[l.value] || l.value}`
       : l.type === 'STEERING_PEAK' ? `최대 조향각 ${degrees(l.value)}`
       : '상향등 깜빡임';
-    return l.beforeMs == null ? `${what} · 기록 내내 그대로` : `${what} · 감지 ${sec(l.beforeMs)}초 전`;
+    return l.beforeMs == null ? `${what} · 기록 내내 그대로` : `${what} · ${word(request)} ${sec(l.beforeMs)}초 전`;
   }
 
   /** Context rows as [label, text]; rows this car never reported are left out. Same rows and words as the car. */
@@ -198,12 +218,12 @@
    * the "N s before" marks of [t.lines]. [cursorMs] draws a playhead (the dashcam view).
    */
   /** [lane]: each lane's height in svg units (taller to fill a full-screen view; the width keeps the same scale). */
-  function svg(t, { width = LAYOUT.width, cursorMs = null, label = LAYOUT.label, lane = 30 } = {}) {
+  function svg(t, { width = LAYOUT.width, cursorMs = null, label = LAYOUT.label, lane = 30, request = false } = {}) {
     const gap = 5, top = 8, plotW = width - label - 6;
     const x = (ms) => label + ((ms + t.pre) / (t.pre + t.post)) * plotW;
     const names = ['속도', '조향', '브레이크', '방향지시등', '기어'];
     const h = top + names.length * (lane + gap) + 18;
-    const out = [`<svg viewBox="0 0 ${width} ${h}" width="100%" role="img" aria-label="감지 전후 조작 그래프" xmlns="http://www.w3.org/2000/svg" style="font:11px system-ui,sans-serif">`];
+    const out = [`<svg viewBox="0 0 ${width} ${h}" width="100%" role="img" aria-label="${word(request)} 전후 조작 그래프" xmlns="http://www.w3.org/2000/svg" style="font:11px system-ui,sans-serif">`];
     const y0 = (i) => top + i * (lane + gap);
     names.forEach((n, i) => {
       out.push(`<rect x="${label}" y="${y0(i)}" width="${plotW}" height="${lane}" fill="var(--lane,#f3f4f6)" rx="3"/>`);
@@ -245,14 +265,15 @@
     const all = names.length * (lane + gap) - gap;
     for (const l of t.lines) if (l.beforeMs != null && l.beforeMs <= t.pre) out.push(`<line x1="${x(-l.beforeMs)}" x2="${x(-l.beforeMs)}" y1="${top}" y2="${top + all}" stroke="var(--muted,#555)" stroke-dasharray="2 2"/>`);
     out.push(`<line x1="${x(0)}" x2="${x(0)}" y1="${top - 4}" y2="${top + all}" stroke="var(--bad,#c62828)" stroke-width="2"/>`);
-    out.push(`<text x="${x(0)}" y="${top + all + 12}" text-anchor="middle" fill="var(--bad,#c62828)">감지</text>`);
+    out.push(`<text x="${x(0)}" y="${top + all + 12}" text-anchor="middle" fill="var(--bad,#c62828)">${word(request)}</text>`);
     // Time marks, leaving out any that would sit on top of the detection label or of each other.
     const marks = [];
     for (const ms of [-t.pre, Math.round(-t.pre / 2 / 1000) * 1000, t.post]) {
       if (Math.abs(x(ms) - x(0)) < 26 || marks.some((m) => Math.abs(x(m) - x(ms)) < 34)) continue;
       marks.push(ms);
       const anchor = ms === -t.pre ? 'start' : ms === t.post ? 'end' : 'middle';
-      out.push(`<text x="${x(ms)}" y="${top + all + 12}" text-anchor="${anchor}" fill="var(--muted,#555)">${ms > 0 ? '+' : ''}${(ms / 1000).toFixed(0)}초</text>`);
+      const s = Math.abs(ms) / 1000, shown = s >= 60 && s % 60 === 0 ? `${s / 60}분` : `${s.toFixed(0)}초`;
+      out.push(`<text x="${x(ms)}" y="${top + all + 12}" text-anchor="${anchor}" fill="var(--muted,#555)">${ms > 0 ? '+' : ms < 0 ? '-' : ''}${shown}</text>`);
     }
     if (cursorMs != null && cursorMs >= -t.pre && cursorMs <= t.post) out.push(`<line class="cursor" x1="${x(cursorMs)}" x2="${x(cursorMs)}" y1="0" y2="${h}" stroke="var(--fg,#111)" stroke-width="1.5"/>`);
     out.push('</svg>');
@@ -269,6 +290,6 @@
     return ((frac * width - label) / (width - label - 6)) * (t.pre + t.post) - t.pre;
   }
 
-  const WBPacket = { SEATS_READ, build, svg, xFraction, msAtFraction, lineText, contextRows, degrees, TRIGGER, GEAR, TURN, PRE_MS, POST_MS };
+  const WBPacket = { SEATS_READ, build, span, isRequest, word, svg, xFraction, msAtFraction, lineText, contextRows, degrees, TRIGGER, GEAR, TURN, PRE_MS, POST_MS, REQUEST_PRE_MAX_MS };
   if (typeof module === 'object' && module.exports) module.exports = WBPacket; else root.WBPacket = WBPacket;
 })(typeof self !== 'undefined' ? self : globalThis);

@@ -12,9 +12,20 @@ table{width:100%;border-collapse:collapse;font-size:15px}td{padding:6px 0;border
 tr:first-child td{border-top:0}
 .actions{display:flex;flex-wrap:wrap;gap:8px}.actions button,.actions .button-like{margin-top:6px}
 .reading small{display:block;margin-top:2px}
-table.log{font-size:12px;font-variant-numeric:tabular-nums}table.log td{padding:2px 4px 2px 0;width:auto}table.log td:first-child{width:auto}
+table.log{font-size:12px;font-variant-numeric:tabular-nums}table.log td{padding:2px 4px 2px 0;width:auto}table.log td:nth-child(-n+3){white-space:nowrap}table.log td:first-child{width:auto}
 .blank td:last-child{height:2.2em;border-bottom:1px solid var(--line)}
-@media print{#report .card{break-inside:avoid-page}table.log{font-size:9px}}
+/* The two documents (Pro): paper forms, so plain black rules and room to write. */
+.form{background:#fff;color:#000;border:1px solid var(--line);border-radius:12px;padding:18px 16px;margin:12px 0}
+.form h1{font-size:20px;text-align:center;margin:4px 0 10px;letter-spacing:.08em}.form h2{font-size:15px;margin:16px 0 6px}
+.form .sub{text-align:center;font-size:12px;color:#444;margin:-6px 0 10px}.form .hint{font-size:12px;color:#555;margin:4px 0}
+.form table.grid{width:100%;border-collapse:collapse;font-size:14px}.form table.grid th,.form table.grid td{border:1px solid #000;padding:7px 6px;text-align:left;vertical-align:top;color:#000;width:auto}
+.form table.grid th{background:#f2f2f2;font-weight:600;white-space:nowrap;width:6.5em}.form table.grid td:empty{height:1.6em}
+.form .sentence{font-size:15px;line-height:2;margin:12px 0 2px}.form .fill{display:inline-block;border-bottom:1px solid #000;height:1.1em;vertical-align:bottom}
+.form ol.draft{margin:4px 0 6px 1.3em;padding:0;font-size:14px;line-height:1.6}.form .lines div{border-bottom:1px solid #000;height:2em}
+.form .sketch{border:1px solid #000;height:230px;margin:4px 0}.form .sketch.small{height:150px}.form table.sign{margin-top:14px}
+.tabs{display:flex;gap:8px}.tabs button{flex:1}
+#report[data-doc=police] .insurer,#report[data-doc=insurer] .police{display:none}
+@media print{#report .card{break-inside:avoid-page}table.log{font-size:9px}.form{border:0;padding:0;margin:0;break-after:page}.form .sketch{height:260px}}
 </style>
 </head>
 <body><main>
@@ -55,9 +66,9 @@ table.log{font-size:12px;font-variant-numeric:tabular-nums}table.log td{padding:
     <div id="trip-graph"></div>
   </div>
   <div class="card" id="lines-card">
-    <h2>감지 직전 운전자의 조작</h2>
+    <h2 id="lines-title">감지 직전 운전자의 조작</h2>
     <ul class="bullets" id="lines"></ul>
-    <h3>감지 전 10초 ~ 후 5초</h3>
+    <h3 id="graph-title">감지 전 10초 ~ 후 5초</h3>
     <div id="graph"></div>
   </div>
   <div class="card noprint" id="sync-card">
@@ -81,10 +92,10 @@ table.log{font-size:12px;font-variant-numeric:tabular-nums}table.log td{padding:
     <p class="msg" id="keep-msg"></p>
   </div>
   <details class="card" id="log-card" hidden><summary id="log-title">상세 기록</summary>
-    <h3>감지 순간의 차량 상태</h3>
+    <h3 id="context-title">감지 순간의 차량 상태</h3>
     <table id="context"></table>
     <h3>차가 기록한 모든 값</h3>
-    <p class="msg">시간은 감지 순간 기준(초)입니다.</p>
+    <p class="msg" id="log-note">시간은 감지 순간 기준(초)입니다.</p>
     <table class="log" id="log"></table>
   </details>
   <details class="card"><summary>자세히 (검증 정보)</summary><div id="tech" class="tech"></div></details>
@@ -181,7 +192,8 @@ async function show(data, ring) {
   const trigger = [...triggers].reverse().find((x) => x.e.trigger === c.trigger) || triggers[0];
   const alert = events.find((x) => x.e.type === 'E' && x.e.event === 'LEVEL' && x.e.level === 'ALERT');
   const causeSeq = trigger ? trigger.e.causeSeq : alert ? alert.e.causeSeq : c.lastSeq;
-  const t = WBPacket.build(events, causeSeq);
+  // A record saved on the driver's word is read over everything kept before the request, not around a detection.
+  const t = WBPacket.build(events, causeSeq, WBPacket.span(events, causeSeq, WBPacket.isRequest(c.trigger)));
   const verdict = await WBVerify.capsule(data);
   render(c, data, events.filter((x) => x.seq <= causeSeq), events, t, verdict, trigger);
   if (owner) offerReport(c, data, events, t, verdict, trigger);
@@ -477,7 +489,7 @@ function offerReport(c, data, events, t, v, trigger) {
   const box = document.createElement('div');
   box.className = 'card noprint';
   box.innerHTML = plan && plan.accidentReport
-    ? '<button class="wide" id="open-report">보험·경찰 제출용 사고 경위서</button><p class="msg">기록을 해석한 사고 경위와 당사자 기재란, 맨 아래에 상세 기록이 들어간 인쇄용 문서입니다.</p>'
+    ? '<button class="wide" id="open-report">보험·경찰 제출용 사고 경위서</button><p class="msg">경찰에 내는 교통사고 발생상황 진술서와 보험회사에 내는 사고 접수서, 두 가지를 차량 기록으로 채워 드립니다. 차량 운행 기록이 첨부로 붙습니다.</p>'
     : `<button class="wide secondary" disabled>보험·경찰 제출용 사고 경위서</button><p class="msg">프로 요금제에서 쓸 수 있습니다.</p><div class="actions">${WB.upgrades(['PRO'])}</div>`;
   WB.$('sync-card').after(box);
   const open = WB.$('open-report');
@@ -485,33 +497,47 @@ function offerReport(c, data, events, t, v, trigger) {
 }
 
 function renderReport(c, data, events, t, v, trigger) {
+  const W = words(c, t);
   const causeWall = t.causeWall;
   const upTo = events.filter((x) => x.e.at.wall <= causeWall);
   const place = upTo.filter((x) => x.e.type === 'L' && !x.e.locked).pop();
-  const readings = WBReport.interpret(events, causeWall, t.context);
+  const readings = WBReport.interpret(events, causeWall, t.context, W.request);
   const rows = WBReport.log(events, causeWall);
   const facts = [
     ['일시', WB.when(causeWall)],
     ['장소', place ? `위도 ${place.e.lat.toFixed(5)}, 경도 ${place.e.lon.toFixed(5)} (±${Math.round(place.e.acc || 0)} m) · <a href="${WB.mapLink(place.e.lat, place.e.lon)}" target="_blank" rel="noopener">지도</a>` : '기록 없음'],
-    ['감지', esc(WBPacket.TRIGGER[c.trigger] || c.trigger) + (trigger ? ` (${esc(String(trigger.e.measured.toFixed ? trigger.e.measured.toFixed(1) : trigger.e.measured))}${unitOf(trigger.e.trigger)})` : '')],
+    [W.request ? '보관' : '감지', esc(WBPacket.TRIGGER[c.trigger] || c.trigger) + (trigger && !W.request ? ` (${esc(String(trigger.e.measured.toFixed ? trigger.e.measured.toFixed(1) : trigger.e.measured))}${unitOf(trigger.e.trigger)})` : '')],
     ['기록 출처', '화이트박스(차량 내장 기록 앱)가 차에서 실시간으로 기록하고 봉인한 원본'],
   ];
   if (c.answer) facts.push(['운전자의 대답', esc(ANSWER[c.answer])]);
   const el = WB.$('report');
+  // Two documents from the same record: the statement a driver writes for the police, and an accident report for the
+  // driver's own insurer. Each prints by itself, with the car's record attached behind it.
+  const model = { causeWall, place: place ? place.e : null, readings };
+  el.dataset.doc = 'police';
   el.innerHTML = `
-    <div class="card"><h1>사고 경위서</h1><p class="msg">보험사·경찰 제출용 · 차량 기록에서 자동으로 작성 · 작성 ${esc(WB.when(Date.now()))}</p>
+    <div class="card noprint"><h1>사고 경위서</h1><p class="msg">경찰과 보험회사에 내는 문서 두 가지입니다. 날짜와 시각, 차량 기록에서 옮긴 내용은 채워 두었고, 이름과 연락처처럼 본인만 아는 칸은 비워 두었습니다. 인쇄한 뒤 직접 적고 서명해 주세요.</p>
       ${c.trigger === 'TEST_AIRBAG' ? '<p class="warn">시험용 에어백 신호로 만든 기록입니다. 실제 사고가 아니므로 제출하지 마세요.</p>' : ''}
+      <div class="tabs"><button id="doc-police">경찰 제출용 진술서</button><button id="doc-insurer" class="secondary">보험회사 제출용 접수서</button></div></div>
+    ${WBReport.statement(model)}
+    ${WBReport.claim(model)}
+    <div class="card"><h1>차량 운행 기록 <small>(첨부)</small></h1><p class="msg">화이트박스(차량 내장 기록 앱)가 차에서 실시간으로 기록하고 봉인한 원본에서 뽑았습니다 · 작성 ${esc(WB.when(Date.now()))}</p>
       <table>${facts.map(([k, val]) => `<tr><td>${k}</td><td>${val}</td></tr>`).join('')}</table></div>
-    <div class="card"><h2>기록으로 본 사고 경위</h2><ol class="bullets reading">${readings.map((r) => `<li>${esc(r.text)}${r.note ? `<small>${esc(r.note)}</small>` : ''}</li>`).join('') || '<li>해석할 기록이 없습니다.</li>'}</ol>
+    <div class="card"><h2>기록으로 본 상황</h2><ol class="bullets reading">${readings.map((r) => `<li>${esc(r.text)}${r.note ? `<small>${esc(r.note)}</small>` : ''}</li>`).join('') || '<li>해석할 기록이 없습니다.</li>'}</ol>
       <p class="msg">기록된 값만으로 쓴 문장입니다. "가능성"은 기록이 그렇게 보일 근거가 있다는 뜻이며, 단정이 아닙니다.</p></div>
-    <div class="card"><h2>감지 직전 운전자의 조작</h2><ul class="bullets">${t.lines.map((l) => `<li>${esc(WBPacket.lineText(l))}</li>`).join('') || '<li>감지 직전 바뀐 조작이 없습니다.</li>'}</ul>${WBPacket.svg(t)}</div>
+    <div class="card"><h2>${W.before}</h2><ul class="bullets">${t.lines.map((l) => `<li>${esc(WBPacket.lineText(l, W.request))}</li>`).join('') || `<li>${W.w} 전에 바뀐 조작이 없습니다.</li>`}</ul><h3>${W.span}</h3>${WBPacket.svg(t, { request: W.request })}</div>
     <div class="card"><h2>기록의 신뢰성</h2><p>${v.ok ? '✓ 원본 그대로입니다.' : '✗ 원본과 다릅니다.'} 데이터 ${v.chain.checked}개의 해시 체인, 차량 서명${v.anchors.length ? ', 서버 서명' : ''}을 확인했습니다.</p>
       <p class="msg">데이터는 차에서 생기는 즉시 하나씩 앞 데이터와 이어져 봉인되고, 사본이 서버에 보관됩니다. 한 글자만 바뀌어도 검증이 실패합니다. 원본 대조가 필요하면 증거 요약의 공유 링크나 증거 파일을 함께 제출해 주세요.</p></div>
-    <div class="card"><h2>당사자 기재란</h2><table class="blank">
-      ${['상대 차량 번호', '상대 운전자 이름·연락처', '상대 보험사·접수번호', '목격자', '사고 경위 (직접 작성)', '', '작성일', '작성자 서명'].map((k) => `<tr><td>${k}</td><td></td></tr>`).join('')}</table></div>
-    <div class="card"><h2>상세 데이터 (${rows.length}개)</h2><p class="msg">이 구간에 차가 기록한 모든 값입니다. 시간은 감지 순간 기준(초)입니다.</p>
-      <table class="log"><tr><td>#</td><td>시각</td><td>감지 기준</td><td>항목</td><td>값</td></tr>${rows.map(([seq, wall, rel, what, val]) => `<tr><td>${seq}</td><td>${hms(wall)}</td><td>${rel > 0 ? '+' : ''}${rel.toFixed(1)}</td><td>${esc(what)}</td><td>${esc(val)}</td></tr>`).join('')}</table></div>
-    <div class="card noprint actions"><button onclick="print()">인쇄 · PDF로 저장</button><button class="secondary" id="report-back">증거 요약으로 돌아가기</button></div>`;
+    <div class="card"><h2>상세 데이터 (${rows.length}개)</h2><p class="msg">이 구간에 차가 기록한 모든 값입니다. 시간은 ${W.at} 기준(초)입니다.</p>
+      <table class="log"><tr><td>#</td><td>시각</td><td>${W.w} 기준</td><td>항목</td><td>값</td></tr>${rows.map(([seq, wall, rel, what, val]) => `<tr><td>${seq}</td><td>${hms(wall)}</td><td>${rel > 0 ? '+' : ''}${rel.toFixed(1)}</td><td>${esc(what)}</td><td>${esc(val)}</td></tr>`).join('')}</table></div>
+    <div class="card noprint actions"><button onclick="print()">이 문서 인쇄 · PDF로 저장</button><button class="secondary" id="report-back">증거 요약으로 돌아가기</button></div>`;
+  const pick = (doc) => {
+    el.dataset.doc = doc;
+    WB.$('doc-police').className = doc === 'police' ? '' : 'secondary';
+    WB.$('doc-insurer').className = doc === 'insurer' ? '' : 'secondary';
+  };
+  WB.$('doc-police').onclick = () => pick('police');
+  WB.$('doc-insurer').onclick = () => pick('insurer');
   WB.show('packet', false);
   WB.show('report');
   WB.$('report-back').onclick = () => { WB.show('report', false); WB.show('packet'); };
@@ -523,11 +549,23 @@ function renderReport(c, data, events, t, v, trigger) {
 const WINDOW = { DELTA_V: '0.3초 만에', SHORT_DELTA_V: '0.2초 만에', BRAKED_SPIKE: '0.1초 만에', REAR_SHOVE: '0.2초 만에', HARD_BRAKE: '0.5초 만에', BRAKE_SPEED_RISE: '브레이크를 밟은 3초 동안', BRAKE_NO_DECEL: '브레이크를 밟은 3초 동안', LURCH: '출발 1초 만에' };
 const DELTA_KMH = ['DELTA_V', 'SHORT_DELTA_V', 'BRAKED_SPIKE', 'REAR_SHOVE', 'HARD_BRAKE', 'BRAKE_SPEED_RISE', 'BRAKE_NO_DECEL', 'ALERT_RESOLVED', 'LURCH'];
 // The trigger's measured value in its own unit, as the car shows it.
-const AT_KMH = ['SHIFT_TO_NEUTRAL', 'PARKING_BRAKE_MOVING', 'LANE_CHANGE_NO_SIGNAL'];
+const AT_KMH = ['SHIFT_TO_NEUTRAL', 'PARKING_BRAKE_MOVING', 'LANE_CHANGE_NO_SIGNAL', 'WARNING_LAMP'];
 const DPS = ['EVASIVE_STEER', 'BRAKE_SWERVE'];
 const unitOf = (t) => DELTA_KMH.includes(t) ? ' km/h 속도 변화' : AT_KMH.includes(t) ? ' km/h에서' : DPS.includes(t) ? '°/s' : t === 'BRAKE_PUMPING' ? '회' : '';
 
+/** The moment's words on this record: a detection (감지), or the driver's request to keep it (요청). */
+function words(c, t) {
+  const request = WBPacket.isRequest(c.trigger), w = WBPacket.word(request);
+  const s = t.pre / 1000, back = s >= 60 ? `${Math.floor(s / 60)}분${s % 60 ? ` ${s % 60}초` : ''}` : `${s}초`;
+  return { request, w, at: request ? '요청한 순간' : '감지 순간', span: `${w} 전 ${back} ~ 후 ${t.post / 1000}초`, before: request ? '요청 전 운전자의 조작' : '감지 직전 운전자의 조작' };
+}
+
 function render(c, data, upToCause, events, t, v, trigger) {
+  const W = words(c, t);
+  WB.$('lines-title').textContent = W.before;
+  WB.$('graph-title').textContent = W.span;
+  WB.$('context-title').textContent = `${W.at}의 차량 상태`;
+  WB.$('log-note').textContent = `시간은 ${W.at} 기준(초)입니다.`;
   WB.show('loading', false);
   WB.show('packet');
   WB.$('title').textContent = WBPacket.TRIGGER[c.trigger] || c.trigger;
@@ -551,7 +589,7 @@ function render(c, data, upToCause, events, t, v, trigger) {
     const w = WINDOW[trigger?.e.trigger] ? WINDOW[trigger.e.trigger] + ' ' : '';
     facts.push(['속도', dv != null
       ? `시속 ${(after - dv).toFixed(0)} km → ${after.toFixed(0)} km <small>(${w}${Math.abs(dv).toFixed(0)} km ${dv < 0 ? '줄어듦' : '늘어남'})</small>`
-      : `감지 순간 시속 ${after.toFixed(0)} km${ten != null && Math.abs(ten - after) >= 1 ? ` <small>(10초 전 시속 ${ten.toFixed(0)} km)</small>` : ''}`]);
+      : `${W.at} 시속 ${after.toFixed(0)} km${!W.request && ten != null && Math.abs(ten - after) >= 1 ? ` <small>(10초 전 시속 ${ten.toFixed(0)} km)</small>` : ''}`]);
   }
   if (c.answer) facts.push(['운전자의 대답', ANSWER[c.answer]]);
   WB.$('facts').innerHTML = facts.map(([k, val]) => `<tr><td>${k}</td><td>${val}</td></tr>`).join('');
@@ -563,10 +601,10 @@ function render(c, data, upToCause, events, t, v, trigger) {
     ? `데이터 ${v.chain.checked}개가 차의 해시 체인, 서명과 맞는지 이 휴대폰에서 직접 확인했습니다.`
     : `확인 결과: ${v.chain.reason || v.seals.find((x) => !x.ok)?.reason || '서버 서명이 맞지 않음'}. 원본은 차에 그대로 있습니다.`;
 
-  WB.$('lines').innerHTML = t.lines.map((l) => `<li>${esc(WBPacket.lineText(l))}</li>`).join('') || '<li>감지 직전 바뀐 조작이 없습니다.</li>';
-  WB.$('graph').innerHTML = WBPacket.svg(t);
+  WB.$('lines').innerHTML = t.lines.map((l) => `<li>${esc(WBPacket.lineText(l, W.request))}</li>`).join('') || `<li>${W.w} 전에 바뀐 조작이 없습니다.</li>`;
+  WB.$('graph').innerHTML = WBPacket.svg(t, { request: W.request });
   // What the records say first, in plain sentences (every plan); every value the car recorded last, folded.
-  const readings = WBReport.interpret(events, causeWall, t.context);
+  const readings = WBReport.interpret(events, causeWall, t.context, W.request);
   WB.show('readings-card', readings.length > 0);
   WB.$('readings').innerHTML = readings.map((r) => `<li>${esc(r.text)}${r.note ? `<small>${esc(r.note)}</small>` : ''}</li>`).join('');
   const ctx = WBPacket.contextRows(t.context);
@@ -574,7 +612,7 @@ function render(c, data, upToCause, events, t, v, trigger) {
   WB.show('log-card');
   WB.$('log-title').textContent = `상세 데이터 (${rows.length}개)`;
   WB.$('context').innerHTML = ctx.map(([k, val]) => `<tr><td>${esc(k)}</td><td>${esc(val)}</td></tr>`).join('') || '<tr><td>기록 없음</td></tr>';
-  WB.$('log').innerHTML = '<tr><td>#</td><td>시각</td><td>감지 기준</td><td>항목</td><td>값</td></tr>'
+  WB.$('log').innerHTML = `<tr><td>#</td><td>시각</td><td>${W.w} 기준</td><td>항목</td><td>값</td></tr>`
     + rows.map(([seq, wall, rel, what, val]) => `<tr><td>${seq}</td><td>${hms(wall)}</td><td>${rel > 0 ? '+' : ''}${rel.toFixed(1)}</td><td>${esc(what)}</td><td>${esc(val)}</td></tr>`).join('');
 
   // The dashcam view spans the whole capsule, not just the packet's −10 s … +5 s.
@@ -600,7 +638,7 @@ function render(c, data, upToCause, events, t, v, trigger) {
     ...v.anchors.map((a) => `서버 서명 기록 #${a.head} · ${WB.when(a.at)} · ${a.signed ? '서버 서명 유효' : '서명 오류'}${a.agrees === false ? ' · 해시 불일치' : ''}`),
     ...(v.attestation ? [`서버 봉인 (차 신호 끊김) · ${v.attestation.signed ? '서버 서명 유효' : '서명 오류'}`] : []),
     data.keys.length ? `서버에 맡겨 둔 이 사고 구간의 열쇠(${data.keys.length}분 분량)로 열었습니다 (평소 주행은 열리지 않음)` : '차주 휴대폰의 열쇠로 열었습니다',
-    `감지 기준 기록 #${t.causeSeq ?? ''}`,
+    `${W.w} 기준 기록 #${t.causeSeq ?? ''}`,
   ];
   WB.$('tech').innerHTML = tech.map(esc).join('<br>');
 }

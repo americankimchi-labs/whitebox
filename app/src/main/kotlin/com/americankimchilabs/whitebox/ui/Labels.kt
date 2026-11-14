@@ -24,6 +24,7 @@ import com.americankimchilabs.whitebox.domain.RecorderEvent
 import com.americankimchilabs.whitebox.domain.RecorderPermission
 import com.americankimchilabs.whitebox.domain.RoadContextType
 import com.americankimchilabs.whitebox.domain.TurnSignalState
+import com.americankimchilabs.whitebox.domain.TelltaleState
 import com.americankimchilabs.whitebox.domain.VehicleSignal
 import com.americankimchilabs.whitebox.domain.VoiceLine
 import java.text.SimpleDateFormat
@@ -101,6 +102,7 @@ class Labels(private val res: Resources) {
             CapsuleTrigger.BRAKE_PUMPING -> R.string.trigger_brake_pumping
             CapsuleTrigger.PARKING_BRAKE_MOVING -> R.string.trigger_parking_brake_moving
             CapsuleTrigger.LURCH -> R.string.trigger_lurch
+            CapsuleTrigger.WARNING_LAMP -> R.string.trigger_warning_lamp
             CapsuleTrigger.POST_EVENT_EXIT -> R.string.trigger_post_event_exit
             CapsuleTrigger.HANDOVER -> R.string.trigger_handover
         },
@@ -211,6 +213,10 @@ class Labels(private val res: Resources) {
             is VehicleSignal.ParkingBrake -> res.getString(R.string.row_parking_brake, res.getString(if (s.engaged) R.string.pbrake_on else R.string.pbrake_off))
             is VehicleSignal.Light -> res.getString(R.string.row_light, lamp(s.lamp), res.getString(if (s.on) R.string.state_on else R.string.state_off))
             is VehicleSignal.Wiper -> res.getString(R.string.row_wiper, wiper(s.mode))
+            is VehicleSignal.Telltale -> res.getString(
+                R.string.row_warning_lamp, s.name,
+                res.getString(when (s.state) { TelltaleState.OFF -> R.string.state_off; TelltaleState.ON -> R.string.state_on; TelltaleState.BLINK -> R.string.lamp_blink }),
+            )
             is VehicleSignal.CruiseControl -> res.getString(R.string.row_cruise, cruise(s.state))
             is VehicleSignal.RoadContext -> when {
                 s.type == RoadContextType.SPEED_LIMIT || s.type == RoadContextType.SPEED_ENFORCEMENT || s.value == "NONE" -> null
@@ -223,7 +229,7 @@ class Labels(private val res: Resources) {
                 else -> res.getString(R.string.row_road, roadContext(s.value))
             }
             // Not listed: continuous or slow-changing values the packet shows as context instead.
-            is VehicleSignal.SteeringAngle, is VehicleSignal.Speed, is VehicleSignal.Ignition, is VehicleSignal.Telltale,
+            is VehicleSignal.SteeringAngle, is VehicleSignal.Speed, is VehicleSignal.Ignition,
             is VehicleSignal.CruiseTargetSpeed, is VehicleSignal.Odometer, is VehicleSignal.SeatOccupancy, is VehicleSignal.Window,
             is VehicleSignal.RoadGrade, is VehicleSignal.EvEfficiency,
             is VehicleSignal.AcceleratorPedal, is VehicleSignal.BrakePressure -> null

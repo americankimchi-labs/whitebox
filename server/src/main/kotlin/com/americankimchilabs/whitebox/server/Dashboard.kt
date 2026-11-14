@@ -17,7 +17,7 @@ private val TRIGGER = mapOf(
     "REAR_SHOVE" to "후방 추돌 (정차·제동 중)", "MANUAL" to "음성으로 보관", "HARD_BRAKE" to "급제동", "EVASIVE_STEER" to "급핸들",
     "BRAKE_SWERVE" to "급제동하며 급핸들", "LANE_CHANGE_NO_SIGNAL" to "방향지시등 없이 급차선 변경", "SHIFT_TO_NEUTRAL" to "주행 중 기어 중립(N)", "BRAKE_SPEED_RISE" to "브레이크를 밟았는데 속도 증가",
     "BRAKE_NO_DECEL" to "브레이크를 밟아도 속도가 안 줄어듦", "BRAKE_PUMPING" to "브레이크를 여러 번 밟음", "PARKING_BRAKE_MOVING" to "주행 중 주차 브레이크 작동",
-    "LURCH" to "급출발", "HANDOVER" to "대리 운전 리포트", "POST_EVENT_EXIT" to "위험 순간 직후 하차", "ALERT_RESOLVED" to "급제동 후 정차",
+    "LURCH" to "급가속", "WARNING_LAMP" to "주행 중 경고등 켜짐", "HANDOVER" to "대리 운전 리포트", "POST_EVENT_EXIT" to "위험 순간 직후 하차", "ALERT_RESOLVED" to "급제동 후 정차",
 )
 
 /**
@@ -94,10 +94,11 @@ fun dashboardCards(service: MirrorService, sms: DemoSmsSender? = null): String {
             val tag = when {
                 c.severe -> "<span class='badge bad'>큰 사고</span>"
                 c.trigger == "HANDOVER" -> "<span class='badge'>대리 운전</span>"
+                c.trigger == "MANUAL" -> "<span class='badge'>음성 보관</span>"
                 runCatching { com.americankimchilabs.whitebox.domain.CapsuleTrigger.valueOf(c.trigger).crash }.getOrDefault(false) -> "<span class='badge bad'>충돌</span>"
                 else -> "<span class='badge warn'>위험 순간</span>"
             }
-            "<div class='row'><span>${esc(name)}<br><span class='sub'>${time(c.sealedAtMs)}${if (c.escrowed) " · 비상 연락처 열람 가능" else ""}</span></span>$tag</div>"
+            "<div class='row'><span>${esc(name)}<br><span class='sub'>${time(c.eventMs)}${if (c.escrowed) " · 비상 연락처 열람 가능" else ""}</span></span>$tag</div>"
         }.ifEmpty { "<p class='msg'>보관된 기록이 없습니다.</p>" }
         val history = s.events.asReversed().joinToString("") { (at, text) -> "<li><span class='t'>${time(at)}</span> ${esc(text)}</li>" }
         val seals = s.seals.takeLast(4).joinToString("<br>") { l -> l.split("|").let { f -> esc("${f[0]} ${f[1]} #${f[2]}–#${f[3]} ${if (f[5] == "true") "최종" else "임시"}") } }

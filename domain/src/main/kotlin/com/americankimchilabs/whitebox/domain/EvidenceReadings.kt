@@ -78,12 +78,21 @@ object EvidenceReadings {
         return if (seen) State(cur as T, since) else null
     }
 
-    /** All readings, in the order the phone shows them; [causeSeq] is the detection, [context] the packet's. */
-    fun of(events: List<DriveEvent>, causeSeq: Long, context: DrivingContext = DrivingContext()): List<Reading> {
+    /**
+     * All readings, in the order the phone shows them; [causeSeq] is the detection, [context] the packet's.
+     *
+     * [request]: the record was saved on the driver's word, not by a detection. The moment is then the request
+     * (요청한 순간), nothing happened at it, and what matters is everything kept before it: speed, braking, steering
+     * and the turn signal are read over the whole kept stretch instead of the last ten seconds.
+     */
+    fun of(events: List<DriveEvent>, causeSeq: Long, context: DrivingContext = DrivingContext(), request: Boolean = false): List<Reading> {
         if (events.isEmpty()) return emptyList()
         val cause = events.lastOrNull { it.seq <= causeSeq } ?: events.first()
         val causeWall = cause.entry.at.wallMillis
         val start = events.first().entry.at.wallMillis
+        // The moment's name in a sentence: "감지 3.2초 전", "감지 순간"; for a request "요청 3.2초 전", "요청한 순간".
+        val m = if (request) "요청" else "감지"
+        val mAt = if (request) "요청한 순간" else "감지 순간"
         val out = mutableListOf<Reading>()
         fun add(text: String, note: String? = null, weight: Int = 1) { out += Reading(text, note, weight) }
         // The states the window started with (written when the capsule opened) count as signals just before its start.
@@ -97,7 +106,19 @@ object EvidenceReadings {
         fun at(w: Long): Point<Double>? = speed.takeWhile { it.wall <= w }.lastOrNull()
         val now = at(causeWall)
         val before = at(causeWall - 10_000)
-        if (now != null) {
+        if (request) {
+            add("보관을 요청하기 ${ago(causeWall - start)} 전부터의 기록입니다.")
+            if (now != null) {
+                val v = kmh(now.v)
+                // The speed the stretch began with (carried in) and every speed up to the request.
+                val all = (listOfNotNull(at(start)) + speed.filter { it.wall in start..causeWall }).map { kmh(it.v) }
+                val lo = all.min()
+                val hi = all.max()
+                if (hi - lo < 3) add(if (v < 1) "이 구간 내내 차는 멈춰 있었습니다 (속도 0 km/h)." else "이 구간 내내 시속 약 ${f0(v)} km로 달렸습니다.", weight = 2)
+                else add("이 구간의 속도는 시속 ${f0(lo)}~${f0(hi)} km였고, ${mAt}에는 시속 ${f0(v)} km였습니다.", weight = 3)
+                speed.firstOrNull { it.wall > causeWall && it.v < 0.3 }?.let { add("요청 ${sec(it.wall - causeWall)}초 뒤 차가 멈췄습니다.", weight = 1) }
+            }
+        } else if (now != null) {
             val v = kmh(now.v)
             // Back from the moment while the speed was falling: a repeated value inside the fall (samples arrive
             // faster than the speed changes) does not end it; rising, or holding for over a second, does.
@@ -134,7 +155,23 @@ object EvidenceReadings {
         val brake = series { (it as? VehicleSignal.BrakePedal)?.pressed }
         val b = stateAt(brake, causeWall) { it }
         val pressedBefore = brake.filter { it.v && it.wall <= causeWall && it.wall >= causeWall - 10_000 }
-        when {
+        if (request) {
+            // Every time the pedal went down in the stretch (one held from before it counts from the stretch's start).
+            var presses = 0
+            var lastDown = start
+            var down = false
+            for (r in brake) {
+                if (r.wall > causeWall) break
+                if (r.v && !down) { presses++; lastDown = maxOf(r.wall, start) }
+                down = r.v
+            }
+            when {
+                brake.isEmpty() -> Unit
+                presses == 0 -> add("이 구간에서 브레이크를 밟은 기록이 없습니다.", weight = 2)
+                down -> add("이 구간에서 브레이크를 ${presses}번 밟았고, ${mAt}에도 밟고 있었습니다 (요청 ${sec(causeWall - lastDown)}초 전부터).", weight = 3)
+                else -> add("이 구간에서 브레이크를 ${presses}번 밟았습니다. 마지막으로 밟은 것은 요청 ${sec(causeWall - lastDown)}초 전입니다.", weight = 3)
+            }
+        } else when {
             b != null && b.v -> add(
                 if (b.since < start) "브레이크는 감지 ${ago(causeWall - start)} 전에 이미 밟고 있었고, 감지 순간에도 밟고 있었습니다."
                 else "브레이크는 감지 ${sec(causeWall - b.since)}초 전에 밟았고, 감지 순간에도 밟고 있었습니다.",
@@ -144,8 +181,15 @@ object EvidenceReadings {
             brake.isNotEmpty() -> add("감지 전 10초 동안 브레이크를 밟은 기록이 없습니다.", weight = 2)
         }
 
-        // Steering: the fastest turn of the wheel before the moment.
-        val steer = series { (it as? VehicleSignal.SteeringAngle)?.degrees?.toDouble() }.filter { it.wall in (causeWall - 10_000)..(causeWall + 1_000) }
+        // Steering: the fastest turn of the wheel before the moment; for a request, the widest angle in the stretch.
+        val wheel = series { (it as? VehicleSignal.SteeringAngle)?.degrees?.toDouble() }
+        if (request) {
+            var widest: Point<Double>? = null
+            for (r in wheel) if (r.wall in start..causeWall && (widest == null || abs(r.v) > abs(widest.v))) widest = r
+            if (widest != null && abs(widest.v) >= 10) add("핸들은 요청 ${sec(causeWall - widest.wall)}초 전에 가장 크게 돌렸습니다 (조향각 ${degrees(widest.v)}).", weight = 3)
+            else if (widest != null) add("이 구간에서 핸들을 크게 돌린 기록이 없습니다.")
+        }
+        val steer = if (request) emptyList() else wheel.filter { it.wall in (causeWall - 10_000)..(causeWall + 1_000) }
         var peakRate = -1.0
         var peakWall = 0L
         var peakAngle = 0.0
@@ -165,8 +209,34 @@ object EvidenceReadings {
             add("감지 전 10초 동안 핸들을 크게 돌린 기록이 없습니다.")
         }
 
-        // Turn signal.
-        val turn = stateAt(series { (it as? VehicleSignal.TurnSignal)?.state?.name }, causeWall) { it }
+        // Turn signal; for a request, when it was last put on in the stretch and for how long.
+        val turns = series { (it as? VehicleSignal.TurnSignal)?.state?.name }
+        if (request) {
+            var times = 0
+            var on = start
+            var off: Long? = null
+            var side = "OFF"
+            var prev = "OFF"
+            for (r in turns) {
+                if (r.wall > causeWall) break
+                if (r.v != "OFF" && r.v != prev) { times++; on = maxOf(r.wall, start); off = null; side = r.v }
+                else if (r.v == "OFF" && prev != "OFF") off = r.wall
+                prev = r.v
+            }
+            val name = if (side == "LEFT") "왼쪽" else "오른쪽"
+            val until = off
+            when {
+                turns.isEmpty() -> Unit
+                times == 0 -> add("이 구간에서 방향지시등을 켠 기록이 없습니다.", weight = 2)
+                until == null -> add("방향지시등($name)은 요청 ${sec(causeWall - on)}초 전부터 켜져 있었습니다.", weight = 3)
+                else -> add(
+                    "방향지시등($name)을 요청 ${sec(causeWall - on)}초 전에 켜서 ${sec(until - on)}초 동안 켜 두었습니다." +
+                        (if (times > 1) " 이 구간에서 방향지시등을 모두 ${times}번 켰습니다." else ""),
+                    weight = 3,
+                )
+            }
+        }
+        val turn = if (request) null else stateAt(turns, causeWall) { it }
         if (turn != null && turn.v != "OFF") {
             val since = if (turn.since < start) "감지 ${ago(causeWall - start)} 전에 이미" else "감지 ${sec(causeWall - turn.since)}초 전부터"
             add("방향지시등(${if (turn.v == "LEFT") "왼쪽" else "오른쪽"})은 $since 켜져 있었습니다.", weight = 3)
@@ -182,7 +252,7 @@ object EvidenceReadings {
         if (limit != null && limit > 0 && now != null) {
             val over = kmh(now.v) - limit
             add(
-                "내비게이션이 알려 준 이 도로의 제한속도는 시속 $limit km였고, 감지 순간 속도는 ${if (over > 0) "제한속도보다 ${f0(over)} km/h 빨랐습니다" else "제한속도 이내였습니다"}.",
+                "내비게이션이 알려 준 이 도로의 제한속도는 시속 $limit km였고, $mAt 속도는 ${if (over > 0) "제한속도보다 ${f0(over)} km/h 빨랐습니다" else "제한속도 이내였습니다"}.",
                 weight = if (over > 0) 3 else 1,
             )
         }
@@ -207,15 +277,15 @@ object EvidenceReadings {
             val how = if (fast(wiper.v)) "빠르게" else if (Regex("INTERMITTENT|AUTO").containsMatchIn(wiper.v)) "간헐적으로" else ""
             if (held >= 60_000 || since == null) {
                 add(
-                    "앞 유리 와이퍼가 감지 전 ${if (since == null) "최소 " else ""}${dur(held)} 동안 ${if (how.isNotEmpty()) "$how " else ""}작동하고 있었습니다.",
+                    "앞 유리 와이퍼가 $m 전 ${if (since == null) "최소 " else ""}${dur(held)} 동안 ${if (how.isNotEmpty()) "$how " else ""}작동하고 있었습니다.",
                     "와이퍼가 오래 작동했다는 것은 비나 눈이 오고 있었을 가능성이 높다는 뜻입니다${if (fast(wiper.v)) " (빠른 속도: 비가 많이 왔을 가능성)" else ""}. 노면이 젖어 제동 거리가 길어질 수 있습니다.",
                     weight = 3,
                 )
             } else {
-                add("앞 유리 와이퍼를 감지 ${dur(held)} 전에 켰습니다.", "잠깐 켠 와이퍼는 비 때문일 수도, 유리를 닦기 위해서일 수도 있습니다.", weight = 2)
+                add("앞 유리 와이퍼를 $m ${dur(held)} 전에 켰습니다.", "잠깐 켠 와이퍼는 비 때문일 수도, 유리를 닦기 위해서일 수도 있습니다.", weight = 2)
             }
         } else if (wipers.isNotEmpty()) {
-            add("감지 순간 와이퍼는 꺼져 있었습니다.", "비나 눈은 오지 않았을 가능성이 높습니다.")
+            add("$mAt 와이퍼는 꺼져 있었습니다.", "비나 눈은 오지 않았을 가능성이 높습니다.")
         }
 
         // Light.
@@ -224,8 +294,23 @@ object EvidenceReadings {
         if (low != null && low.v) add("전조등이 켜져 있었습니다.", "해가 진 뒤였거나 터널·비 등으로 어두웠을 가능성이 있습니다.")
         else if (low != null) add("전조등은 꺼져 있었습니다.")
         lamps(Lamp.HIGH_BEAM).firstOrNull { it.v && it.wall <= causeWall && it.wall >= causeWall - 10_000 }
-            ?.let { add("감지 ${sec(causeWall - it.wall)}초 전 상향등을 켰습니다.", "상대에게 보내는 경고 신호였을 가능성이 있습니다.", weight = 3) }
-        lamps(Lamp.HAZARD).firstOrNull { it.v && it.wall > causeWall }?.let { add("감지 ${sec(it.wall - causeWall)}초 뒤 비상등을 켰습니다.", weight = 2) }
+            ?.let { add("$m ${sec(causeWall - it.wall)}초 전 상향등을 켰습니다.", "상대에게 보내는 경고 신호였을 가능성이 있습니다.", weight = 3) }
+        lamps(Lamp.HAZARD).firstOrNull { it.v && it.wall > causeWall }?.let { add("$m ${sec(it.wall - causeWall)}초 뒤 비상등을 켰습니다.", weight = 2) }
+
+        // Warning lamps (brake and stability systems) that came on up to the moment.
+        val lampOn = LinkedHashMap<String, Point<String>>()
+        for ((w, s) in signals) {
+            if (w > causeWall || s !is VehicleSignal.Telltale) continue
+            if (s.state == TelltaleState.OFF) lampOn.remove(s.name) else if (s.name !in lampOn) lampOn[s.name] = Point(w, s.state.name)
+        }
+        for ((name, on) in lampOn) {
+            val since = if (on.wall < start) "$m ${ago(causeWall - start)} 전에 이미" else "$m ${sec(causeWall - on.wall)}초 전부터"
+            add(
+                "$name 경고등이 $since ${if (on.v == "BLINK") "깜빡이고" else "켜져"} 있었습니다.",
+                "ABS·ESC 경고등은 제동이나 자세 제어 장치가 개입했거나 이상이 있을 때 켜집니다.",
+                weight = 3,
+            )
+        }
 
         // People: belts and seats at the moment.
         val belts = LinkedHashMap<String, Boolean>()
@@ -245,7 +330,7 @@ object EvidenceReadings {
 
         // Right after: doors opening (someone got out).
         signals.firstOrNull { (w, s) -> s is VehicleSignal.Door && s.open && w > causeWall }?.let { (w, s) ->
-            add("감지 ${sec(w - causeWall)}초 뒤 ${area((s as VehicleSignal.Door).area)} 문이 열렸습니다.", "사고 직후 차에서 내렸을 가능성이 높습니다.", weight = 2)
+            add("$m ${sec(w - causeWall)}초 뒤 ${area((s as VehicleSignal.Door).area)} 문이 열렸습니다.", if (request) null else "사고 직후 차에서 내렸을 가능성이 높습니다.", weight = 2)
         }
         return out
     }

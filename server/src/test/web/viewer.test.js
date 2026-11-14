@@ -148,6 +148,39 @@ test('states carried into a capsule\'s window read as held throughout, on the ca
   assert.ok(Report.log(events, t.causeWall).some((row) => /구간 시작 때/.test(row[3])), 'the log shows them as the starting state');
 });
 
+test('a record saved by voice is read over everything kept before the request, on the car and the phone alike', async () => {
+  const Report = require(path.join(web, 'report.js'));
+  const ring = Codec.keyring({ roots });
+  const events = [];
+  for (const line of V.request.records) { const r = Codec.parseLine(line); events.push({ seq: r.seq, e: await Codec.decode(r.entry, ring) }); }
+  const span = Packet.span(events, V.request.causeSeq, true);
+  assert.deepEqual(span, { pre: V.request.pre, post: V.request.post });
+  assert.equal(span.pre, 120000, 'the lanes reach back the two minutes that were kept');
+  assert.deepEqual(Packet.span(events, V.request.causeSeq, false), { pre: 10000, post: 5000 }, 'a detection keeps its ten seconds');
+  const t = Packet.build(events, V.request.causeSeq, span);
+  const { pre, post, causeSeq, causeWall, ...mine } = t;
+  close(mine, V.request.timeline, 'request timeline');
+  assert.ok(t.turn.some((x) => x.value === 'LEFT' && x.atMs === -18200), 'the lane change is inside the lanes');
+  const readings = Report.interpret(events, t.causeWall, t.context, true).map((r) => ({ text: r.text, note: r.note ?? null }));
+  assert.deepEqual(readings, V.request.readings);
+  const texts = readings.map((r) => r.text);
+  assert.equal(texts[0], '보관을 요청하기 2분 전부터의 기록입니다.');
+  assert.ok(texts.includes('이 구간의 속도는 시속 40~50 km였고, 요청한 순간에는 시속 50 km였습니다.'), texts.join(' / '));
+  assert.ok(texts.includes('이 구간에서 브레이크를 1번 밟았습니다. 마지막으로 밟은 것은 요청 80.1초 전입니다.'), texts.join(' / '));
+  assert.ok(texts.includes('핸들은 요청 15.3초 전에 가장 크게 돌렸습니다 (조향각 -20°).'), texts.join(' / '));
+  assert.ok(texts.includes('방향지시등(왼쪽)을 요청 18.2초 전에 켜서 5.1초 동안 켜 두었습니다.'), texts.join(' / '));
+  assert.ok(!texts.some((x) => x.includes('감지')), 'nothing was detected, so nothing says 감지');
+  const svg = Packet.svg(t, { request: true });
+  assert.match(svg, />요청</);
+  assert.match(svg, />-2분</);
+  assert.ok(!svg.includes('감지'));
+  for (const l of t.lines) assert.ok(!Packet.lineText(l, true).includes('감지'));
+  const rows = Report.log(events, t.causeWall);
+  assert.equal(rows.length, events.length, 'every record has its row in the full list');
+  assert.ok(rows.some((r) => r[3] === '음성 보관 요청' && r[4] === 'Gleo'));
+  assert.ok(rows.some((r) => r[3] === '요청' && r[4] === '음성으로 보관'));
+});
+
 test('a fall with repeated speeds starts where the speed began to fall; lanes reach both edges; seats not yet read', async () => {
   const Report = require(path.join(web, 'report.js'));
   const ring = Codec.keyring({ roots });
@@ -161,8 +194,32 @@ test('a fall with repeated speeds starts where the speed began to fall; lanes re
   const readings = Report.interpret(events, t.causeWall, t.context).map((r) => ({ text: r.text, note: r.note ?? null }));
   assert.deepEqual(readings, V.fall.readings);
   assert.ok(readings.some((r) => /감지 1\.\d초 전부터 속도가 줄기 시작했습니다/.test(r.text)), readings.map((r) => r.text).join(' / '));
+  assert.ok(readings.some((r) => /^ESC 경고등이 감지 1\.0초 전부터 깜빡이고 있었습니다\.$/.test(r.text) && /자세 제어/.test(r.note)), 'the stability lamp is read');
+  assert.ok(Report.log(events, t.causeWall).some((row) => row[3] === '경고등' && row[4] === 'ESC 깜빡임'), 'and listed in the full data');
   // Seats are recorded but not put into words until a real car confirms which way the SDK reports them.
   assert.ok(!readings.some((r) => r.text.startsWith('사람이 앉아 있던 좌석')), 'no seat sentence yet');
+});
+
+test('the two documents carry the official items, the record\'s time and readings, and leave personal blanks empty', () => {
+  const Report = require(path.join(web, 'report.js'));
+  const wall = new Date(2026, 10, 14, 20, 6, 21).getTime();
+  const m = { causeWall: wall, place: { lat: 37.4979, lon: 127.0276, acc: 5 }, readings: [{ text: '방향지시등(왼쪽)을 요청 17.9초 전에 켜서 5.1초 동안 켜 두었습니다.' }, { text: '<b>x</b>' }] };
+  const police = Report.statement(m);
+  assert.match(police, /<h1>교통사고 발생상황 진술서<\/h1>/);
+  for (const label of ['□ 가해자', '□ 피해자', '□ 목격자', '□ 참고인', '□ 기타관계자', '성명(한자)', '주민등록번호', '주소', '전화번호', '운전면허번호', '직업', '진술일시', '진술인', '조사경찰관']) assert.ok(police.includes(label), label);
+  assert.match(police, /위 본인은 <b>2026\. 11\. 14\. 20:06<\/b>경/, 'the date and time come from the record');
+  assert.match(police, /발생한 교통사고에 대하여 다음과 같이 임의로 진술합니다/);
+  assert.ok(police.includes('방향지시등(왼쪽)을 요청 17.9초 전에 켜서 5.1초 동안 켜 두었습니다.'), 'the car\'s readings are the draft');
+  assert.ok(police.includes('&lt;b&gt;x&lt;/b&gt;') && !police.includes('<b>x</b>'), 'record text is never markup');
+  assert.ok(police.includes('위도 37.49790, 경도 127.02760'));
+  const insurer = Report.claim(m);
+  // What the policy's 사고발생 시 의무 clause says must be told: when, where, what happened, the damage; both parties;
+  // witnesses; any claim received.
+  for (const label of ['사고 일시', '사고 장소', '사고 상황', '손해의 정도', '피해자와 가해자', '증인', '손해배상 청구를 받은 내용', '경찰 신고', '보험회사', '증권번호', '차량번호', '운전면허번호', '작성자']) assert.ok(insurer.includes(label), label);
+  assert.match(insurer, /2026년 11월 14일 20시 06분/);
+  // A record without a place says so instead of leaving a made-up one.
+  assert.ok(Report.statement({ ...m, place: null }).includes('차량 기록에 위치가 없습니다'));
+  assert.ok(Report.claim({ ...m, readings: [] }).includes('옮길 기록이 없습니다'));
 });
 
 test('the log quotes the car\'s spoken words, never a code', async () => {

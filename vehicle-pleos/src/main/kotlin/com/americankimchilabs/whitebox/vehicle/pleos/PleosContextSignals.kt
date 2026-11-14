@@ -4,6 +4,7 @@ import ai.pleos.playground.vehicle.Vehicle
 import ai.pleos.playground.vehicle.api.model.area.DoorArea
 import ai.pleos.playground.vehicle.api.model.area.SeatArea
 import ai.pleos.playground.vehicle.api.model.area.WindowArea
+import ai.pleos.playground.vehicle.api.model.telltale.Telltales
 import ai.pleos.playground.vehicle.constant.control.CruiseControl
 import ai.pleos.playground.vehicle.constant.control.LightState
 import ai.pleos.playground.vehicle.constant.control.WiperState
@@ -15,12 +16,15 @@ import ai.pleos.playground.vehicle.listener.EvBatteryEfficiencyListener
 import ai.pleos.playground.vehicle.listener.LightStateListener
 import ai.pleos.playground.vehicle.listener.SeatBeltBuckledStateListener
 import ai.pleos.playground.vehicle.listener.SeatOccupancyListener
+import ai.pleos.playground.vehicle.listener.TelltaleInfoListener
 import ai.pleos.playground.vehicle.listener.WindowPositionListener
 import ai.pleos.playground.vehicle.listener.WiperStateListener
 import android.util.Log
 import com.americankimchilabs.whitebox.domain.CruiseState
 import com.americankimchilabs.whitebox.domain.Lamp
 import com.americankimchilabs.whitebox.domain.SignalKind
+import com.americankimchilabs.whitebox.domain.TelltaleState
+import com.americankimchilabs.whitebox.domain.Tuning
 import com.americankimchilabs.whitebox.domain.VehicleSignal
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
@@ -37,6 +41,10 @@ private const val TAG = "WhiteBox/PleosContext"
  *
  * The Pleos Connect emulator supports everything here except EV instantaneous efficiency (its capability check fails,
  * so nothing is subscribed). Where a car reports it, the value is recorded raw: its unit is not documented.
+ *
+ * Warning lamps (ABS, ESC) are read the same way, where the car lets a third-party app read them. Vehicle SDK 2.3.2
+ * refuses every telltale call without PRIVATE_CAR_SAFETY, a permission this app does not declare, so today the
+ * capability check is refused and nothing is subscribed: on the emulator and on a real car alike.
  */
 internal class PleosContextSignals(private val vehicle: Vehicle) {
 
@@ -52,6 +60,7 @@ internal class PleosContextSignals(private val vehicle: Vehicle) {
         val cruiseTarget: Boolean,
         val odometer: Boolean,
         val evEfficiency: Boolean,
+        val warningLamps: Boolean,
     )
 
     private var capabilities: Capabilities? = null
@@ -68,6 +77,7 @@ internal class PleosContextSignals(private val vehicle: Vehicle) {
             if (cruiseTarget) add(SignalKind.CRUISE_TARGET_SPEED)
             if (odometer) add(SignalKind.ODOMETER)
             if (evEfficiency) add(SignalKind.EV_EFFICIENCY)
+            if (warningLamps) add(SignalKind.TELLTALE)
         }
     }
 
@@ -201,6 +211,24 @@ internal class PleosContextSignals(private val vehicle: Vehicle) {
             battery.registerInstantaneousEvEfficiency(l)
             off += { battery.unregisterInstantaneousEvEfficiency(l) }
         }
+
+        if (c.warningLamps) {
+            val safety = vehicle.getSafety()
+            val l = object : TelltaleInfoListener {
+                override fun onTelltaleInfoUpdated(p0: Telltales?) {
+                    // The car reports every lamp it has; only the brake and stability lamps are recorded.
+                    for (t in p0?.telltales ?: return) {
+                        val name = t.type.name
+                        if (name in Tuning.WARNING_LAMPS) send("lamp $name", VehicleSignal.Telltale(name, runCatching { TelltaleState.valueOf(t.state.name) }.getOrDefault(TelltaleState.OFF)))
+                    }
+                }
+                override fun onFailed(p0: Exception) = fail("warning lamps", p0)
+            }
+            // Refused calls throw instead of answering, so the subscription is guarded like its capability check.
+            runCatching { safety.registerTelltales(l) }
+                .onSuccess { off += { runCatching { safety.unregisterTelltales(l) } } }
+                .onFailure { Log.i(TAG, "warning lamps not readable: ${it.message}") }
+        }
         return off
     }
 
@@ -228,16 +256,23 @@ internal class PleosContextSignals(private val vehicle: Vehicle) {
             evEfficiency = capability<Unit> { ok, fail ->
                 vehicle.getEvBattery().checkInstantaneousEvEfficiencyCapabilities({ ok(Unit) }, fail)
             } != null,
+            warningLamps = capability<Unit> { ok, fail -> vehicle.getSafety().checkTelltalesCapabilities({ ok(Unit) }, fail) } != null,
         ).also { capabilities = it }
     }
 
     /** One SDK capability call; null if it fails (unsupported on this vehicle, or not permitted). */
     private suspend fun <T> capability(call: (ok: (T) -> Unit, fail: (Exception) -> Unit) -> Unit): T? =
         suspendCancellableCoroutine { cont ->
-            call(
-                { if (cont.isActive) cont.resume(it) },
-                { e -> Log.i(TAG, "capability unavailable: ${e.message}"); if (cont.isActive) cont.resume(null) },
-            )
+            // A call the platform refuses outright (a permission the app does not hold) throws instead of answering.
+            try {
+                call(
+                    { if (cont.isActive) cont.resume(it) },
+                    { e -> Log.i(TAG, "capability unavailable: ${e.message}"); if (cont.isActive) cont.resume(null) },
+                )
+            } catch (e: Exception) {
+                Log.i(TAG, "capability refused: ${e.message}")
+                if (cont.isActive) cont.resume(null)
+            }
         }
 
     private fun fail(what: String, e: Exception) {

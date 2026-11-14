@@ -154,6 +154,16 @@ object Tuning {
     /** Parking brake engaged while moving at least this fast. */
     const val PARKING_BRAKE_MIN_KMH = 10
 
+    /**
+     * Warning lamps whose coming on while moving is a precursor: the brake and stability systems. ESC blinks while it
+     * intervenes (the car is sliding) and stays lit on a fault; ABS lights on a fault. Either one, mid-drive, is what a
+     * driver later needs to show. Names as the vehicle reports them.
+     */
+    val WARNING_LAMPS = setOf("ABS", "ESC")
+
+    /** A warning lamp counts only while moving at least this fast (at start-up every lamp lights for its bulb check). */
+    const val WARNING_LAMP_MIN_KMH = 10
+
     /** Lurch: from standstill to this speed within the window (scenario 2's '울컥'). */
     const val LURCH_KMH = 15
     const val LURCH_WINDOW_MS = 1000

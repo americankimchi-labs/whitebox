@@ -87,6 +87,8 @@ class EscalationEngine {
     private var hazard = false
     private var gear: GearPosition? = null
     private var parkingBrake: Boolean? = null
+    /** Warning lamps as last reported; a lamp never seen is unknown, so its first report is a baseline, not a change. */
+    private val lamps = HashMap<String, TelltaleState>()
     private var lastDangerNs: Long? = null
     private var lastSevereNs: Long? = null
     private var guided = false
@@ -109,6 +111,7 @@ class EscalationEngine {
             heading.clear()
             wheelDeg = null
             lastSpeedKmh = null
+            lamps.clear()
             val gap = (entry.event as RecorderEvent.RecordingStarted).gap
             if (gap == null || gap.acrossBoots) timeline.clear()
         }
@@ -150,6 +153,13 @@ class EscalationEngine {
                         trigger(CapsuleTrigger.PARKING_BRAKE_MOVING, event.seq, kmh, nowNs, out)
                     }
                     parkingBrake = s.engaged
+                }
+                is VehicleSignal.Telltale -> if (s.name in Tuning.WARNING_LAMPS) {
+                    val kmh = currentKmh(nowNs)
+                    val before = lamps.put(s.name, s.state)
+                    if (before == TelltaleState.OFF && s.state != TelltaleState.OFF && kmh != null && kmh >= Tuning.WARNING_LAMP_MIN_KMH) {
+                        trigger(CapsuleTrigger.WARNING_LAMP, event.seq, kmh, nowNs, out)
+                    }
                 }
                 is VehicleSignal.RoadGrade -> {
                     lastGradePct = s.percent

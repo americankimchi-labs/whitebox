@@ -45,6 +45,7 @@ import com.americankimchilabs.whitebox.R
 import com.americankimchilabs.whitebox.data.CapsuleCheck
 import com.americankimchilabs.whitebox.data.CapsuleSeal
 import com.americankimchilabs.whitebox.data.verifyCapsule
+import com.americankimchilabs.whitebox.domain.CapsuleTrigger
 import com.americankimchilabs.whitebox.domain.ChainEntry
 import com.americankimchilabs.whitebox.domain.EscalationEvent
 import com.americankimchilabs.whitebox.domain.EscalationLevel
@@ -78,6 +79,8 @@ private class Packet(
     val state: LiveState,
     val location: LocationFix?,
     val timeline: EvidenceTimeline,
+    /** Saved on the driver's word (a voice request), not by a detection: the moment is the request. */
+    val request: Boolean,
     /** The most telling plain readings (the phone shows them all, then every record). */
     val readings: List<Reading>,
     val eventCount: Int,
@@ -103,7 +106,10 @@ private fun buildPacket(seal: CapsuleSeal, session: ActiveSession): Packet {
     val causeWall = upToCause.last().entry.at.wallMillis
     var earlier = start
     upToCause.filter { it.entry.at.wallMillis <= causeWall - 10_000 }.forEach { earlier = earlier.with(it.entry) }
-    val timeline = EvidenceTimeline.build(events, causeSeq)
+    // A record the driver asked for is read over everything kept before the request, not around a detection.
+    val request = seal.capsule.trigger == CapsuleTrigger.MANUAL
+    val (pre, post) = EvidenceTimeline.span(events, causeSeq, request)
+    val timeline = EvidenceTimeline.build(events, causeSeq, pre, post)
     return Packet(
         causeWallMillis = causeWall,
         triggered = triggered,
@@ -115,7 +121,8 @@ private fun buildPacket(seal: CapsuleSeal, session: ActiveSession): Packet {
         state = state,
         location = upToCause.mapNotNull { (it.entry as? ChainEntry.Location)?.fix }.lastOrNull(),
         timeline = timeline,
-        readings = EvidenceReadings.top(EvidenceReadings.of(events, causeSeq, timeline.context)),
+        request = request,
+        readings = EvidenceReadings.top(EvidenceReadings.of(events, causeSeq, timeline.context, request)),
         eventCount = events.size,
         check = verifyCapsule(seal, session.store),
     )
@@ -171,8 +178,8 @@ fun EvidencePacket(labels: Labels, seal: CapsuleSeal, session: ActiveSession, on
                 Text(stringResource(R.string.packet_readings_more).bySentence(), style = MaterialTheme.typography.bodyMedium, color = Color.Gray, modifier = Modifier.padding(top = 16.dp))
             }
             Column(Modifier.fillMaxWidth().padding(top = 16.dp).ccpRow().padding(8.dp)) {
-                Section(stringResource(R.string.packet_lanes))
-                Lanes(labels, p.timeline)
+                Section(if (p.request) stringResource(R.string.packet_lanes_request, duration(p.timeline.pre)) else stringResource(R.string.packet_lanes))
+                Lanes(labels, p.timeline, p.request)
             }
             Details(labels, seal, p)
         }
@@ -184,16 +191,16 @@ fun EvidencePacket(labels: Labels, seal: CapsuleSeal, session: ActiveSession, on
 private fun Summary(labels: Labels, seal: CapsuleSeal, p: Packet) {
     VerificationBadge(p.check)
     Field(stringResource(R.string.packet_time), labels.dateTime(p.causeWallMillis))
-    Field(stringResource(R.string.packet_type), labels.trigger(seal.capsule.trigger))
+    Field(stringResource(if (p.request) R.string.packet_type_request else R.string.packet_type), labels.trigger(seal.capsule.trigger))
     Field(stringResource(R.string.packet_speed), speedText(labels, p))
     Field(
-        stringResource(R.string.packet_controls),
+        stringResource(if (p.request) R.string.packet_controls_request else R.string.packet_controls),
         stringResource(
             R.string.packet_controls_value,
             labels.brake(p.state.brake), labels.turn(p.state.turn), labels.gear(p.state.gear), labels.steering(p.state.steering),
         ),
     )
-    Field(stringResource(R.string.packet_range), stringResource(R.string.packet_range_value, duration(p.keptBeforeMs), duration(p.keptAfterMs)))
+    Field(stringResource(R.string.packet_range), stringResource(if (p.request) R.string.packet_range_value_request else R.string.packet_range_value, duration(p.keptBeforeMs), duration(p.keptAfterMs)))
 }
 
 /**
@@ -209,6 +216,7 @@ private fun speedText(labels: Labels, p: Packet): String {
         val window = labels.window(t.trigger)?.let { "$it " } ?: ""
         return stringResource(if (after < before) R.string.packet_speed_down else R.string.packet_speed_up, before, after, window, abs(t.measured))
     }
+    if (p.request) return stringResource(R.string.packet_speed_at_request, after)
     val ten = p.speedTenBefore
     return if (ten != null && abs(ten - after) >= 1f) stringResource(R.string.packet_speed_at_before, after, ten)
     else stringResource(R.string.packet_speed_at, after)
@@ -287,10 +295,6 @@ private val DetectionColor = Color(0xFFC62828)
 private val BrakeColor = Color(0xFF37474F)
 private val TurnColor = Color(0xFFE69F00)
 
-/** Window position of [ms] (relative to the cause) across a lane [width] px wide. */
-private fun x(ms: Long, width: Float) =
-    (ms + EvidenceTimeline.PRE_MS).toFloat() / (EvidenceTimeline.PRE_MS + EvidenceTimeline.POST_MS) * width
-
 /** Consecutive (from, to, value) spans of a step lane, closed at [endMs]. */
 private fun <T> spans(steps: List<LaneStep<T>>, endMs: Long) =
     steps.mapIndexedNotNull { i, s ->
@@ -303,7 +307,9 @@ private fun <T> spans(steps: List<LaneStep<T>>, endMs: Long) =
  * Shaded = outside the sealed range (no record there).
  */
 @Composable
-private fun Lanes(labels: Labels, tl: EvidenceTimeline) {
+private fun Lanes(labels: Labels, tl: EvidenceTimeline, request: Boolean) {
+    /** Window position of [ms] (relative to the cause) across a lane [width] px wide. */
+    fun x(ms: Long, width: Float) = (ms + tl.pre).toFloat() / (tl.pre + tl.post) * width
     val measurer = rememberTextMeasurer()
     val axis = MaterialTheme.colorScheme.outline
     val shade = MaterialTheme.colorScheme.surfaceVariant
@@ -313,7 +319,7 @@ private fun Lanes(labels: Labels, tl: EvidenceTimeline) {
     val faint = text.copy(color = Color.Gray)
     val left = stringResource(R.string.lane_left)
     val right = stringResource(R.string.lane_right)
-    val cause = stringResource(R.string.lane_cause)
+    val cause = stringResource(if (request) R.string.lane_request else R.string.lane_cause)
 
     @Composable
     fun Lane(label: String, height: Dp, draw: DrawScope.() -> Unit) {
@@ -321,8 +327,8 @@ private fun Lanes(labels: Labels, tl: EvidenceTimeline) {
             Text(label, style = MaterialTheme.typography.titleMedium, color = Color.Gray, modifier = Modifier.width(LANE_LABEL))
             Canvas(Modifier.weight(1f).height(height)) {
                 val w = size.width
-                if (tl.startMs > -EvidenceTimeline.PRE_MS) drawRect(shade, Offset.Zero, Size(x(tl.startMs, w), size.height))
-                if (tl.endMs < EvidenceTimeline.POST_MS) drawRect(shade, Offset(x(tl.endMs, w), 0f), Size(w - x(tl.endMs, w), size.height))
+                if (tl.startMs > -tl.pre) drawRect(shade, Offset.Zero, Size(x(tl.startMs, w), size.height))
+                if (tl.endMs < tl.post) drawRect(shade, Offset(x(tl.endMs, w), 0f), Size(w - x(tl.endMs, w), size.height))
                 drawLine(axis, Offset(0f, size.height), Offset(w, size.height), strokeWidth = 1f)
                 draw()
                 drawLine(DetectionColor, Offset(x(0, w), 0f), Offset(x(0, w), size.height), strokeWidth = 3f)
@@ -378,14 +384,19 @@ private fun Lanes(labels: Labels, tl: EvidenceTimeline) {
         }
     }
 
-    // Time axis: a tick per second, labelled every 5 s; 0 is the cause.
+    // Time axis: a tick per second, labelled every 5 s; over a long span (a request's two minutes) a tick per 10 s,
+    // labelled every 30 s. 0 is the cause.
+    val long = tl.pre + tl.post > 30_000
+    val tick = if (long) 10L else 1L
+    val named = if (long) 30L else 5L
     Row(Modifier.padding(top = 4.dp)) {
         Spacer(Modifier.width(LANE_LABEL))
         Canvas(Modifier.weight(1f).height(30.dp)) {
-            for (sec in -EvidenceTimeline.PRE_MS / 1000..EvidenceTimeline.POST_MS / 1000) {
+            for (sec in -tl.pre / 1000..tl.post / 1000) {
+                if (sec % tick != 0L) continue
                 val px = x(sec * 1000, size.width)
-                drawLine(axis, Offset(px, 0f), Offset(px, if (sec % 5 == 0L) 12f else 6f), strokeWidth = 2f)
-                if (sec % 5 == 0L) {
+                drawLine(axis, Offset(px, 0f), Offset(px, if (sec % named == 0L) 12f else 6f), strokeWidth = 2f)
+                if (sec % named == 0L) {
                     val s = if (sec == 0L) cause else "%+d s".format(sec)
                     val m = measurer.measure(s, faint)
                     drawText(m, topLeft = Offset((px - m.size.width / 2f).coerceIn(0f, size.width - m.size.width), 12f))

@@ -38,6 +38,7 @@ import com.americankimchilabs.whitebox.domain.RecorderPermission
 import com.americankimchilabs.whitebox.domain.RoadContextType
 import com.americankimchilabs.whitebox.domain.SignalSample
 import com.americankimchilabs.whitebox.domain.StartReason
+import com.americankimchilabs.whitebox.domain.TelltaleState
 import com.americankimchilabs.whitebox.domain.Timestamp
 import com.americankimchilabs.whitebox.domain.TurnSignalState
 import com.americankimchilabs.whitebox.domain.VehicleSignal
@@ -186,10 +187,41 @@ class WebVectorsTest {
         listOf("ROW_2_RIGHT", "ROW_1_RIGHT", "ROW_1_LEFT").forEachIndexed { i, seat -> add(ChainEntry.Signal(SignalSample(VehicleSignal.SeatOccupancy(seat, true), ts(100L + i)))) }
         add(ChainEntry.Signal(SignalSample(VehicleSignal.Gear(GearPosition.DRIVE), ts(200))))
         for (sec in 1..18) add(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(40f / 3.6f), ts(sec * 1_000L))))
+        // The stability lamp starts to blink as the braking begins (read by both rule sets).
+        add(ChainEntry.Signal(SignalSample(VehicleSignal.Telltale("ESC", TelltaleState.OFF), ts(300))))
+        add(ChainEntry.Signal(SignalSample(VehicleSignal.Telltale("ESC", TelltaleState.BLINK), ts(18_500))))
         add(ChainEntry.Signal(SignalSample(VehicleSignal.BrakePedal(true), ts(18_550))))
         for (i in 1..14) add(ChainEntry.Signal(SignalSample(VehicleSignal.Speed((40f - ((i + 1) / 2) * 1.5f) / 3.6f), ts(18_000L + i * 100))))
         add(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(8f / 3.6f), ts(19_500))))
         for (i in 1..30) add(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(8f / 3.6f), ts(19_500L + i * 100))))
+    }
+
+    /**
+     * A record saved on the driver's word: two minutes of ordinary driving around 50 km/h with one brake press, a
+     * signalled lane change (left signal 5.1 s, wheel out to −20° and back) and, 18 s after the signal went on, the
+     * voice request; the car drives on for 30 s. The states the window began with are written when it sealed.
+     */
+    private fun voiceSaved(): List<ChainEntry> = buildList {
+        fun sig(v: VehicleSignal, ms: Long) = add(ChainEntry.Signal(SignalSample(v, ts(ms))))
+        for (sec in 0..150) {
+            val ms = sec * 1_000L
+            sig(VehicleSignal.Speed((if (sec in 40..44) 50f - (sec - 39) * 2f else if (sec in 45..49) 40f + (sec - 44) * 2f else 50f) / 3.6f), ms)
+            if (sec == 40) sig(VehicleSignal.BrakePedal(true), ms + 100)
+            if (sec == 43) sig(VehicleSignal.BrakePedal(false), ms + 400)
+            if (sec == 102) sig(VehicleSignal.TurnSignal(TurnSignalState.LEFT), ms)
+            if (sec in 104..105) for (i in 0..9) sig(VehicleSignal.SteeringAngle(if (sec == 104) -2f * (i + 1) else -20f + 2f * (i + 1)), ms + i * 100L)
+            if (sec == 107) sig(VehicleSignal.TurnSignal(TurnSignalState.OFF), ms + 100)
+            if (sec == 120) {
+                add(ChainEntry.Audio(AudioEvent.Bookmark(BookmarkSource.ASSISTANT), ts(ms + 200)))
+                add(ChainEntry.Escalation(EscalationEvent.Triggered(CapsuleTrigger.MANUAL, 0, 0f), ts(ms + 200)))
+                val open = ts(ms + 250)
+                listOf(
+                    VehicleSignal.BrakePedal(false), VehicleSignal.Gear(GearPosition.DRIVE), VehicleSignal.TurnSignal(TurnSignalState.OFF),
+                    VehicleSignal.SteeringAngle(0f), VehicleSignal.SeatBelt("ROW_1_LEFT", true), VehicleSignal.Light(Lamp.LOW_BEAM, false),
+                    VehicleSignal.Wiper("FRONT_WINDSHIELD", "OFF"),
+                ).forEach { add(ChainEntry.Carried(it, 0, open)) }
+            }
+        }
     }
 
     @Test
@@ -257,6 +289,20 @@ class WebVectorsTest {
                     "causeSeq" to cause,
                     "timeline" to timelineJson(t),
                     "readings" to EvidenceReadings.of(events, cause, t.context).map { obj("text" to it.text, "note" to it.note) },
+                )
+            },
+            "request" to run {
+                val events = voiceSaved().mapIndexed { i, e -> DriveEvent(i.toLong(), e) }
+                val store = FileEventStore(tmp.newFolder(), cipher = EpochRecordCipher(ring) { wall })
+                events.forEach { store.append(it.entry) }
+                val cause = events.first { (it.entry as? ChainEntry.Audio)?.event is AudioEvent.Bookmark }.seq
+                val (pre, post) = EvidenceTimeline.span(events, cause, request = true)
+                val t = EvidenceTimeline.build(events, cause, pre, post)
+                obj(
+                    "records" to store.records(0, events.size - 1L),
+                    "causeSeq" to cause, "pre" to pre, "post" to post,
+                    "timeline" to timelineJson(t),
+                    "readings" to EvidenceReadings.of(events, cause, t.context, request = true).map { obj("text" to it.text, "note" to it.note) },
                 )
             },
             "capsule" to obj(

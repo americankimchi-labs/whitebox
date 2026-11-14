@@ -42,8 +42,8 @@ data class DrivingContext(
 )
 
 /**
- * The evidence packet's time axis: speed, steering, brake, turn signal and gear lanes over
- * [EvidenceTimeline.PRE_MS] before to [EvidenceTimeline.POST_MS] after the cause, the control lines ("N s before"),
+ * The evidence packet's time axis: speed, steering, brake, turn signal and gear lanes over [pre] before to [post]
+ * after the cause ([EvidenceTimeline.span]), the control lines ("N s before"),
  * and the driving context at the cause. Built from the sealed range alone, so it shows only what the chain proves.
  */
 class EvidenceTimeline(
@@ -57,10 +57,28 @@ class EvidenceTimeline(
     /** The part of the window the sealed range covers (a capsule sealed at the cause has nothing after it). */
     val startMs: Long,
     val endMs: Long,
+    /** The lanes' span: this long before the cause to this long after it. */
+    val pre: Long = PRE_MS,
+    val post: Long = POST_MS,
 ) {
     companion object {
         const val PRE_MS = 10_000L
         const val POST_MS = 5_000L
+
+        /** A record the driver asked for shows everything kept before the request, up to this long. */
+        const val REQUEST_PRE_MAX_MS = 120_000L
+
+        /**
+         * The lanes' span for a record. A detection is read around its instant ([PRE_MS] before to [POST_MS] after).
+         * A record saved on the driver's word ([request]) is about what came before the request, so its lanes reach
+         * back to the first kept record: whole seconds, at least [PRE_MS], at most [REQUEST_PRE_MAX_MS].
+         */
+        fun span(events: List<DriveEvent>, causeSeq: Long, request: Boolean): Pair<Long, Long> {
+            if (!request || events.isEmpty()) return PRE_MS to POST_MS
+            val cause = events.lastOrNull { it.seq <= causeSeq } ?: events.first()
+            val backMs = (cause.entry.at.elapsedNanos - events.first().entry.at.elapsedNanos) / 1_000_000
+            return ((backMs + 999) / 1000 * 1000).coerceIn(PRE_MS, REQUEST_PRE_MAX_MS) to POST_MS
+        }
 
         /** On and off again within this long counts as a flash. */
         const val FLASH_MAX_MS = 1_500L
@@ -72,17 +90,17 @@ class EvidenceTimeline(
          * [events] is the sealed range in chain order; [causeSeq] the entry the capsule's trigger points at. Step
          * lanes start with the state carried into the window (at −[PRE_MS]) when one was recorded before it.
          */
-        fun build(events: List<DriveEvent>, causeSeq: Long): EvidenceTimeline {
+        fun build(events: List<DriveEvent>, causeSeq: Long, pre: Long = PRE_MS, post: Long = POST_MS): EvidenceTimeline {
             val cause = events.lastOrNull { it.seq <= causeSeq } ?: events.first()
             val causeNs = cause.entry.at.elapsedNanos
             fun rel(e: DriveEvent) = (e.entry.at.elapsedNanos - causeNs) / 1_000_000
-            val inLanes = { ms: Long -> ms in -PRE_MS..POST_MS }
+            val inLanes = { ms: Long -> ms in -pre..post }
 
             val speed = mutableListOf<LanePoint>()
             val steering = mutableListOf<LanePoint>()
-            val brake = StepLane<Boolean>()
-            val turn = StepLane<TurnSignalState>()
-            val gear = StepLane<GearPosition>()
+            val brake = StepLane<Boolean>(pre, post)
+            val turn = StepLane<TurnSignalState>(pre, post)
+            val gear = StepLane<GearPosition>(pre, post)
             val brakeChange = LastChange<Boolean>()
             val turnChange = LastChange<TurnSignalState>()
             val gearChange = LastChange<GearPosition>()
@@ -95,8 +113,8 @@ class EvidenceTimeline(
 
             fun take(s: VehicleSignal, ms: Long, beforeCause: Boolean, initial: Boolean) {
                 when (s) {
-                    is VehicleSignal.Speed -> if (inLanes(ms)) speed += LanePoint(ms, s.metersPerSecond * 3.6f) else if (ms < -PRE_MS) speedBefore = s.metersPerSecond * 3.6f
-                    is VehicleSignal.SteeringAngle -> if (inLanes(ms)) steering += LanePoint(ms, s.degrees) else if (ms < -PRE_MS) steeringBefore = s.degrees
+                    is VehicleSignal.Speed -> if (inLanes(ms)) speed += LanePoint(ms, s.metersPerSecond * 3.6f) else if (ms < -pre) speedBefore = s.metersPerSecond * 3.6f
+                    is VehicleSignal.SteeringAngle -> if (inLanes(ms)) steering += LanePoint(ms, s.degrees) else if (ms < -pre) steeringBefore = s.degrees
                     is VehicleSignal.BrakePedal -> {
                         brake.add(ms, s.pressed)
                         if (beforeCause) brakeChange.report(ms, s.pressed, initial)
@@ -118,7 +136,7 @@ class EvidenceTimeline(
 
             // The states the window started with come first (written when the capsule opened, they stand for the
             // window's start): held throughout unless the window changes them.
-            for (e in events) (e.entry as? ChainEntry.Carried)?.let { take(it.signal, -PRE_MS - 1, beforeCause = true, initial = true) }
+            for (e in events) (e.entry as? ChainEntry.Carried)?.let { take(it.signal, -pre - 1, beforeCause = true, initial = true) }
             for (e in events) {
                 val ms = rel(e)
                 if ((e.entry as? ChainEntry.Recorder)?.event is RecorderEvent.RecordingStarted) startedMs = ms
@@ -134,23 +152,23 @@ class EvidenceTimeline(
                     ?.takeIf { it.value != 0f }
                     ?.let { add(ControlLine.SteeringPeak(it.value, -it.atMs)) }
                 highBeam.zipWithNext()
-                    .lastOrNull { (on, off) -> on.value && !off.value && off.atMs - on.atMs <= FLASH_MAX_MS && on.atMs >= -PRE_MS }
+                    .lastOrNull { (on, off) -> on.value && !off.value && off.atMs - on.atMs <= FLASH_MAX_MS && on.atMs >= -pre }
                     ?.let { (on, _) -> add(ControlLine.HighBeamFlash(-on.atMs)) }
             }
-            val startMs = rel(events.first()).coerceIn(-PRE_MS, 0)
-            val endMs = rel(events.last()).coerceIn(0, POST_MS)
+            val startMs = rel(events.first()).coerceIn(-pre, 0)
+            val endMs = rel(events.last()).coerceIn(0, post)
             return EvidenceTimeline(
-                held(speed, speedBefore, endMs), held(steering, steeringBefore, endMs), brake.steps(), turn.steps(), gear.steps(), lines, context,
-                startMs = startMs, endMs = endMs,
+                held(speed, speedBefore, endMs, pre), held(steering, steeringBefore, endMs, pre), brake.steps(), turn.steps(), gear.steps(), lines, context,
+                startMs = startMs, endMs = endMs, pre = pre, post = post,
             )
         }
 
         /**
          * A continuous lane across the whole kept span: values are written when they change, so the one before the lanes
-         * begin still held at −[PRE_MS], and the last one holds to [endMs].
+         * begin still held at the lanes' start, and the last one holds to [endMs].
          */
-        private fun held(points: List<LanePoint>, before: Float?, endMs: Long): List<LanePoint> = buildList {
-            if (before != null && (points.firstOrNull()?.atMs ?: Long.MAX_VALUE) > -PRE_MS) add(LanePoint(-PRE_MS, before))
+        private fun held(points: List<LanePoint>, before: Float?, endMs: Long, pre: Long): List<LanePoint> = buildList {
+            if (before != null && (points.firstOrNull()?.atMs ?: Long.MAX_VALUE) > -pre) add(LanePoint(-pre, before))
             addAll(points)
             lastOrNull()?.let { if (it.atMs < endMs) add(LanePoint(endMs, it.value)) }
         }
@@ -176,14 +194,14 @@ private class LastChange<T> {
 }
 
 /** A step lane clipped to the window, starting with the state carried in from before it. */
-private class StepLane<T> {
+private class StepLane<T>(private val pre: Long, private val post: Long) {
     private var carried: T? = null
     private val steps = mutableListOf<LaneStep<T>>()
 
     fun add(ms: Long, v: T) {
         when {
-            ms < -EvidenceTimeline.PRE_MS -> carried = v
-            ms > EvidenceTimeline.POST_MS -> Unit
+            ms < -pre -> carried = v
+            ms > post -> Unit
             steps.lastOrNull()?.value == v -> Unit
             steps.isEmpty() && carried == v -> Unit
             else -> steps += LaneStep(ms, v)
@@ -192,7 +210,7 @@ private class StepLane<T> {
 
     fun steps(): List<LaneStep<T>> {
         val start = carried ?: return steps
-        return listOf(LaneStep<T>(-EvidenceTimeline.PRE_MS, start)) + steps
+        return listOf(LaneStep<T>(-pre, start)) + steps
     }
 }
 

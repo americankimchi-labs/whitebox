@@ -620,6 +620,57 @@ class EscalationEngineTest {
     }
 
     @Test
+    fun aBrakeOrStabilityWarningLampComingOnWhileMovingIsKept() {
+        // ESC starts to blink at 60 km/h: the stability control is working, the car is sliding.
+        val esc = Trace()
+        esc.signal(VehicleSignal.Telltale("ESC", TelltaleState.OFF))
+        esc.ramp(3_000, 60f)
+        esc.signal(VehicleSignal.Telltale("ESC", TelltaleState.BLINK))
+        val trig = esc.triggers.single()
+        assertEquals(CapsuleTrigger.WARNING_LAMP, trig.trigger)
+        assertEquals(60f, trig.measured, 0.5f)
+        // Still blinking, then steady: the same lamp, no second detection until it has been off.
+        esc.ramp(2_500, 60f)
+        esc.signal(VehicleSignal.Telltale("ESC", TelltaleState.ON))
+        assertEquals(1, esc.triggers.size)
+        esc.signal(VehicleSignal.Telltale("ESC", TelltaleState.OFF))
+        esc.ramp(2_500, 60f)
+        esc.signal(VehicleSignal.Telltale("ABS", TelltaleState.OFF))
+        esc.signal(VehicleSignal.Telltale("ABS", TelltaleState.ON))
+        assertEquals(2, esc.triggers.size)
+    }
+
+    @Test
+    fun aWarningLampIsNoDetectionAtStartUpWhenFirstSeenOrWhenItIsAnotherLamp() {
+        // The bulb check: every lamp lights while the car stands.
+        val bulbCheck = Trace()
+        bulbCheck.signal(VehicleSignal.Telltale("ABS", TelltaleState.OFF))
+        bulbCheck.ramp(1_000, 0f)
+        bulbCheck.signal(VehicleSignal.Telltale("ABS", TelltaleState.ON))
+        bulbCheck.signal(VehicleSignal.Telltale("ABS", TelltaleState.OFF))
+        assertTrue(bulbCheck.triggers.isEmpty())
+        // A lamp already lit when the recorder first hears of it did not come on now.
+        val alreadyOn = Trace()
+        alreadyOn.ramp(3_000, 60f)
+        alreadyOn.signal(VehicleSignal.Telltale("ESC", TelltaleState.ON))
+        assertTrue(alreadyOn.triggers.isEmpty())
+        // After a restart the lamps are unknown again.
+        val restarted = Trace()
+        restarted.signal(VehicleSignal.Telltale("ESC", TelltaleState.OFF))
+        restarted.ramp(3_000, 60f)
+        restarted.restart()
+        restarted.ramp(3_000, 60f)
+        restarted.signal(VehicleSignal.Telltale("ESC", TelltaleState.ON))
+        assertTrue(restarted.triggers.isEmpty())
+        // The seat-belt lamp is not a precursor.
+        val other = Trace()
+        other.signal(VehicleSignal.Telltale("SEAT_BELT", TelltaleState.OFF))
+        other.ramp(3_000, 60f)
+        other.signal(VehicleSignal.Telltale("SEAT_BELT", TelltaleState.ON))
+        assertTrue(other.triggers.isEmpty())
+    }
+
+    @Test
     fun aLurchFromStandstillIsKeptButBriskPullingAwayIsNot() {
         val brisk = Trace()
         brisk.ramp(3_000, 0f)

@@ -428,10 +428,11 @@ private fun keptFor(labels: Labels, item: LibraryItem, now: Long): String {
             stringResource(if (Retention.warn(item.recordsUntil, now)) R.string.library_days_left_soon else R.string.library_days_left, days)
         }
     }
-    // 큰 사고 / 충돌 / 위험 순간: a handover report is named by its title alone.
+    // 큰 사고 / 충돌 / 음성 보관 / 위험 순간: a handover report is named by its title alone.
     return when {
         item.trigger == CapsuleTrigger.HANDOVER -> kept
         item.trigger.crash -> stringResource(R.string.library_kind_crash, kept)
+        item.trigger == CapsuleTrigger.MANUAL -> stringResource(R.string.library_kind_voice, kept)
         else -> stringResource(R.string.library_kind_moment, kept)
     }
 }
