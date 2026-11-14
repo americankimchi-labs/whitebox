@@ -20,6 +20,7 @@ import com.americankimchilabs.whitebox.R
 import com.americankimchilabs.whitebox.data.EpochRecordCipher
 import com.americankimchilabs.whitebox.data.RecordCipher
 import com.americankimchilabs.whitebox.data.CapsuleShares
+import com.americankimchilabs.whitebox.data.CarClips
 import com.americankimchilabs.whitebox.data.ClaimClient
 import com.americankimchilabs.whitebox.data.HandoverController
 import com.americankimchilabs.whitebox.data.LibraryController
@@ -43,6 +44,7 @@ import com.americankimchilabs.whitebox.domain.checkGrants
 import com.americankimchilabs.whitebox.domain.classifyStart
 import com.americankimchilabs.whitebox.platform.AndroidClock
 import com.americankimchilabs.whitebox.platform.FallbackSpeechOutput
+import com.americankimchilabs.whitebox.platform.HttpClipUpload
 import com.americankimchilabs.whitebox.platform.DataConsent
 import com.americankimchilabs.whitebox.platform.KeystoreKeyRing
 import com.americankimchilabs.whitebox.platform.PlatformAudioBeacon
@@ -58,6 +60,7 @@ import com.americankimchilabs.whitebox.platform.bootCount
 import com.americankimchilabs.whitebox.platform.recorderGrants
 import com.americankimchilabs.whitebox.ui.voiceLineText
 import com.americankimchilabs.whitebox.vehicle.pleos.GleoAssistant
+import com.americankimchilabs.whitebox.vehicle.pleos.PleosCamera
 import com.americankimchilabs.whitebox.vehicle.pleos.PleosCredentials
 import com.americankimchilabs.whitebox.vehicle.pleos.PleosPhraseListener
 import com.americankimchilabs.whitebox.vehicle.pleos.PleosSpeechOutput
@@ -210,9 +213,16 @@ class RecorderService : LifecycleService() {
         val channel = url.takeIf { it.isNotEmpty() }?.let { WebSocketMirrorChannel(it, stream, AppGraph.signer) }
         if (channel == null) Log.i(TAG, "no mirror configured; recording locally only") else Log.i(TAG, "mirror: $url")
         val outbox = channel?.let { Outbox(store, seals, it, dir, consent = { DataConsent.agreed(this) }, minuteKey = ::minuteKey, placeKey = ::placeKey) }
-        // A built-in camera's clips would be attached here (CarClips with HttpClipUpload, Plus and Pro): no head unit
-        // gives apps camera access today, so there is no CameraClipSource to give it.
-        val recorder = Recorder(store, seals, AppGraph.signer, AndroidClock) { outbox?.onSeal(it) }
+        // A built-in camera's clip is attached to each record when its final seal is made (Plus and Pro). No head
+        // unit gives apps camera access today, so PleosCamera has no source yet and carClips stays null.
+        var carClips: CarClips? = null
+        val recorder = Recorder(store, seals, AppGraph.signer, AndroidClock) { seal ->
+            outbox?.onSeal(seal)
+            // Never inside the record pipeline: reading the camera, encrypting and uploading take their own time.
+            carClips?.takeIf { seal.final }?.let { clips ->
+                lifecycleScope.launch(Dispatchers.IO) { Log.i(TAG, "camera clip for ${seal.capsule.id}: attached=${clips.attach(seal)}") }
+            }
+        }
         mirrorChannel = channel
         // The phone connection belongs to the car, not to one chain: one state for both sources.
         val claim = channel?.let { ClaimClient(it, keyRing, java.io.File(filesDir, "identity").apply { mkdirs() }) }
@@ -226,6 +236,12 @@ class RecorderService : LifecycleService() {
             defaultTier = TestBuild.tier(prefs.getString(PREF_TIER, null)) ?: Entitlements.DEFAULT,
         )
         val handover = HandoverController(recorder, store, dir, AndroidClock, channel, allowed = { library.entitlements.handover })
+        val carWeb = webBase(url, forPhones = false)
+        val camera = PleosCamera.clipSource(this)
+        if (camera != null && carWeb != null) {
+            val upload = HttpClipUpload(carWeb, MirrorProtocol.deviceId(AppGraph.signer.publicKey), stream)
+            carClips = CarClips(store, camera, upload, AppGraph.signer, ::minuteKey, dir, allowed = { library.entitlements.builtInCameraClips })
+        }
         handoverRef = handover
         mode = next
         inbox = Channel(Channel.UNLIMITED)

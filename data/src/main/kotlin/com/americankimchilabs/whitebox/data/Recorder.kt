@@ -198,6 +198,15 @@ class Recorder(
     }
 
     /**
+     * The newest value of every state recorded since this recorder started (gear, brake, turn signal, lamps…), in
+     * no particular order. A screen opened in the middle of a long drive learns the gear from here: its last change
+     * may lie further back than any recent stretch of the chain it reads.
+     */
+    suspend fun currentStates(): List<VehicleSignal> = mutex.withLock {
+        states.values.mapNotNull { (it.lastOrNull()?.entry as? ChainEntry.Signal)?.sample?.signal }
+    }
+
+    /**
      * When a capsule opens: each state as it stood when its window began ([firstSeq]), for the states that were last
      * recorded before the window and so would be missing from it.
      */

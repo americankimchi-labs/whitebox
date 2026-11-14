@@ -430,7 +430,7 @@ class MirrorService(
     /**
      * Applies the owner's history window to [stream]: records older than it go, except those of capsules still kept
      * (in the library, extended, airbag crashes, or held after leaving a full library until an upgrade may bring them
-     * back). Returns how many records were removed.
+     * back), and with them the server-readable copies of their signals. Returns how many records were removed.
      */
     fun retain(stream: StreamId): Int {
         val plans = plans ?: return 0
@@ -459,6 +459,12 @@ class MirrorService(
         val keep = all.filter { library(stream, it).let { i -> i.visible(now) || i.status(now) == LibraryStatus.LEFT } }.map { it.firstSeq..it.lastSeq }
         val n = store.remove(stream, through, keep, "${days}일 지난 주행 기록", now)
         if (n > 0) note(stream, now, "${days}일이 지난 주행 데이터 ${n}개 삭제 (보관 기록은 그대로)")
+        // The copies of danger-moment signals this server can read go with the records they belong to: they are
+        // not kept longer than the owner's own history, except inside a record that is still kept.
+        val copies = store.removeLogLines(stream, "signal-copies") { line ->
+            line.substringBefore('|').toLongOrNull()?.let { seq -> seq <= through && keep.none { seq in it } } ?: false
+        }
+        if (copies > 0) note(stream, now, "${days}일이 지난 위험 순간 신호 사본 ${copies}개 삭제")
         return n
     }
 

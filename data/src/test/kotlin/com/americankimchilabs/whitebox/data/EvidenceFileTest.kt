@@ -60,4 +60,40 @@ class EvidenceFileTest {
         val anchor = text.lines().first { it.startsWith("ANCHOR|") }
         assertFalse(EvidenceFile.verify(text.replace(anchor, anchor.replace("|25|", "|24|"))).ok)
     }
+
+    /** A crash whose car went silent: no seal from the car, the server's seal over what it received. */
+    private fun serverSealedFile(): String {
+        var wall = 1_700_000_000_000L
+        val store = FileEventStore(tmp.newFolder())
+        repeat(30) { wall += 1_000; store.append(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(20f - it / 2f), Timestamp(wall * 1_000, wall)))) }
+        val server = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+        fun signed(text: String) = "$text|sig=" + Base64.getEncoder().encodeToString(Signature.getInstance("SHA256withECDSA").run { initSign(server.private); update(text.toByteArray()); sign() })
+        return (
+            listOf(
+                "WHITEBOX-EVIDENCE|1", "CAPSULE|server-$wall|SERVER_SEAL|10|25|car1|live",
+                "ATTESTATION|" + signed("ATTEST|car1/live|10|25|${store.hashAt(25).toHex()}|25|0|DEADMAN|$wall"),
+                "ANCHOR|" + signed("ANCHOR|car1/live|25|${store.hashAt(25).toHex()}|$wall"),
+                "SERVERKEY|" + Base64.getEncoder().encodeToString(server.public.encoded),
+            ) + store.records(9, 25).map { "RECORD|$it" }
+            ).joinToString("\n")
+    }
+
+    @Test
+    fun aRecordOnlyTheServerSealedChecksAgainstTheServersKey() {
+        val text = serverSealedFile()
+        val r = EvidenceFile.verify(text)
+        assertTrue(r.ok)
+        assertEquals(0 to 0, r.seals to r.sealsValid)
+        assertEquals(1 to 1, r.serverSeals to r.serverSealsValid)
+        assertEquals(16, r.recordsChecked)
+        // A server seal moved to another record, or one whose signature does not match, is caught.
+        val seal = text.lines().first { it.startsWith("ATTESTATION|") }
+        assertFalse(EvidenceFile.verify(text.replace(seal, seal.replace("|10|25|", "|10|24|"))).ok)
+        assertFalse(EvidenceFile.verify(text.replace(seal, seal.replace("|DEADMAN|", "|OTHER|"))).ok)
+        // So is a changed record under it.
+        val record = text.lines().first { it.startsWith("RECORD|15\t") }
+        assertFalse(EvidenceFile.verify(text.replace(record, record.replaceRange(record.length - 3, record.length - 2, if (record[record.length - 3] == 'a') "b" else "a"))).ok)
+        // With neither a car seal nor a server seal nothing vouches for the file.
+        assertFalse(EvidenceFile.verify(text.lines().filterNot { it.startsWith("ATTESTATION|") }.joinToString("\n")).ok)
+    }
 }

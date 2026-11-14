@@ -71,7 +71,8 @@ fun dashboardCards(service: MirrorService, sms: DemoSmsSender? = null): String {
     val smsPanel = texts?.let {
         """<details class="card" data-key="sms" ${if (sms.recent().isNotEmpty()) "open" else ""}><summary><b>문자 (시연용)</b> — 실제로 보내지 않고 여기에 보여 줍니다: 인증번호, 차주 변경 확인</summary><ul class="history">$it</ul></details>"""
     } ?: ""
-    val cards = service.statuses().sortedByDescending { it.events.lastOrNull()?.first ?: 0 }.joinToString("") { s ->
+    val statuses = service.statuses()
+    val cards = statuses.sortedByDescending { it.events.lastOrNull()?.first ?: 0 }.joinToString("") { s ->
         val capsules = service.capsules(s.stream)
         val silentS = s.silentForMs?.div(1000)
         val (badge, cls, sentence) = when {
@@ -104,8 +105,11 @@ fun dashboardCards(service: MirrorService, sms: DemoSmsSender? = null): String {
         val key = esc("${s.stream.deviceId}-${s.stream.stream}")
         val owner = service.identity?.ownerOf(s.stream.deviceId)
         val plans = service.plans
+        // One switch per car: a test build's scripted drive shares its car (and so its owner) with that car's
+        // 실제 차량 card, which carries the switch. A simulated car has only this card, so it gets one here.
+        val twin = s.stream.stream == "replay" && statuses.any { it.stream.deviceId == s.stream.deviceId && it.stream.stream != "replay" }
         val planRow = when {
-            plans == null || s.stream.stream == "replay" -> ""
+            plans == null || twin -> ""
             owner == null -> "<p class='msg'>요금제: ${TIER[plans.defaultTier.name]} (기본값) · 휴대폰을 연결하면 차주별로 바꿀 수 있습니다.</p>"
             else -> {
                 val current = plans.tier(owner.id)

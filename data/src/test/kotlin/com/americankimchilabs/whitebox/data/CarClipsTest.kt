@@ -5,6 +5,8 @@ import com.americankimchilabs.whitebox.core.CameraClipSource
 import com.americankimchilabs.whitebox.core.ClipUpload
 import com.americankimchilabs.whitebox.domain.CapsuleTrigger
 import com.americankimchilabs.whitebox.domain.ChainEntry
+import com.americankimchilabs.whitebox.domain.EscalationEvent
+import com.americankimchilabs.whitebox.domain.EscalationLevel
 import com.americankimchilabs.whitebox.domain.IncidentCapsule
 import com.americankimchilabs.whitebox.domain.SignalSample
 import com.americankimchilabs.whitebox.domain.Timestamp
@@ -74,5 +76,62 @@ class CarClipsTest {
             update(ClipFormat.signedText("C1", clipId, s.offsetMs, MessageDigest.getInstance("SHA-256").digest(sealed).toHex()).toByteArray())
             verify(s.signature)
         })
+    }
+
+    @Test
+    fun attachMeasuresTheClipFromTheDetectionAndTriesAgainUntilTheCloudTakesIt() = runTest {
+        val ring = MemoryKeyRing()
+        var wall = 1_700_000_000_000L
+        val store = FileEventStore(tmp.newFolder(), cipher = EpochRecordCipher(ring) { wall })
+        fun at() = Timestamp(wall * 1_000, wall)
+        repeat(10) { wall += 1_000; store.append(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(20f - it), at()))) } // seq 0..9
+        val causeWall = wall // seq 9 is what the detection points at
+        wall += 5
+        store.append(ChainEntry.Escalation(EscalationEvent.LevelChanged(EscalationLevel.ALERT, 9), at())) // seq 10
+        store.append(ChainEntry.Escalation(EscalationEvent.Triggered(CapsuleTrigger.HARD_BRAKE, 9, 21f), at())) // seq 11
+        repeat(5) { wall += 1_000; store.append(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(0f), at()))) } // seq 12..16
+        val signer = JdkSigner()
+        val capsule = IncidentCapsule("C9", CapsuleTrigger.HARD_BRAKE, 0, 16)
+        val video = tmp.newFile("cam2.mp4").apply { writeBytes(ByteArray(4_000) { it.toByte() }) }
+        val offsets = mutableListOf<Double>()
+        var accept = false
+        var asked = 0
+        val clips = CarClips(
+            store,
+            object : CameraClipSource {
+                override suspend fun clip(fromWall: Long, toWall: Long): CameraClip { asked++; return CameraClip(video, causeWall - 3_000, "front.mp4") }
+            },
+            object : ClipUpload {
+                override suspend fun upload(capsuleId: String, clipId: String, offsetMs: Double, name: String, encrypted: File, signature: ByteArray): Boolean {
+                    offsets += offsetMs
+                    return accept.also { accept = true } // the cloud does not have the seal yet the first time
+                }
+            },
+            signer, { e, m -> ring.key(e)?.let { RecordCipher.minuteKey(it, m) } }, tmp.newFolder(), { true },
+        )
+        assertEquals(causeWall, causeWall(capsule, store.read(0, 16)))
+        // A provisional seal is not the end of the record: the camera is not asked.
+        assertFalse(clips.attach(CapsuleSeal.create(capsule, store.hashAt(16), false, wall, signer)))
+        assertEquals(0, asked)
+        assertTrue(clips.attach(CapsuleSeal.create(capsule, store.hashAt(16), true, wall, signer), tries = 3, retryMs = 10))
+        // Its first frame is 3 s before the detection, as a viewer will place it; refused once, taken the second time.
+        assertEquals(listOf(-3_000.0, -3_000.0), offsets)
+    }
+
+    @Test
+    fun theCauseIsTheTriggerThatNamesTheCapsuleElseTheFirstAlertElseItsLastRecord() = runTest {
+        var wall = 1_700_000_000_000L
+        val store = FileEventStore(tmp.newFolder())
+        fun at() = Timestamp(wall * 1_000, wall)
+        val walls = ArrayList<Long>()
+        repeat(6) { wall += 1_000; walls += wall; store.append(ChainEntry.Signal(SignalSample(VehicleSignal.Speed(10f), at()))) } // seq 0..5
+        store.append(ChainEntry.Escalation(EscalationEvent.LevelChanged(EscalationLevel.ALERT, 2), at())) // seq 6
+        assertEquals(walls[2], causeWall(IncidentCapsule("S", CapsuleTrigger.HARD_BRAKE, 0, 6), store.read(0, 6))) // no trigger: the alert
+        store.append(ChainEntry.Escalation(EscalationEvent.Triggered(CapsuleTrigger.HARD_BRAKE, 3, 20f), at())) // seq 7
+        store.append(ChainEntry.Escalation(EscalationEvent.Triggered(CapsuleTrigger.DELTA_V, 5, 18f), at())) // seq 8: a crash takes it over
+        val events = store.read(0, 8)
+        assertEquals(walls[5], causeWall(IncidentCapsule("C3", CapsuleTrigger.DELTA_V, 0, 8), events))
+        assertEquals(walls[3], causeWall(IncidentCapsule("C3", CapsuleTrigger.HARD_BRAKE, 0, 8), events))
+        assertEquals(walls[1], causeWall(IncidentCapsule("X", CapsuleTrigger.MANUAL, 0, 1), store.read(0, 1))) // nothing marked: its last record
     }
 }

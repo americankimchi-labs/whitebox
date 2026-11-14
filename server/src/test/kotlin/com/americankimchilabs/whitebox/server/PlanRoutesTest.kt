@@ -90,6 +90,27 @@ class PlanRoutesTest {
     }
 
     @Test
+    fun theDashboardOffersOnePlanSwitchPerCar() {
+        val car = FreeCar()
+        fun switches() = Regex("요금제 \\(관리자 전환, 결제 없음\\)").findAll(dashboardCards(car.service)).count()
+        // The emulator's car: its 실제 차량 card carries the switch.
+        assertEquals(1, switches())
+        // A test build's scripted drive is the same car and the same owner: a second card, no second switch.
+        car.store.appendLog(StreamId("car1", "replay"), "marker", "x")
+        assertTrue("데모 차량" in dashboardCards(car.service))
+        assertEquals(1, switches())
+        // A simulated car has only its 데모 차량 card: once a phone owns it, the switch is on that card.
+        val simulated = StreamId("sim1", "replay")
+        car.store.appendLog(simulated, "marker", "x")
+        assertEquals(1, switches())
+        car.now += 31_000
+        car.identity.sendOtp("01077778888", "claim", "01077778888")
+        car.identity.claim(car.identity.claimCode(simulated), "01077778888", car.texts.code("01077778888"), "KEY2", "MAC")
+        assertEquals(2, switches())
+        assertTrue("setPlan('sim1'" in dashboardCards(car.service))
+    }
+
+    @Test
     fun freeShowsWhatItIncludesAndUpgradingOpensTheRest() = testApplication {
         val car = FreeCar()
         application { whiteBox(car.service, tickMs = 60_000) }

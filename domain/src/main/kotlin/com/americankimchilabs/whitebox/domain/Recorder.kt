@@ -148,3 +148,15 @@ fun checkGrants(previous: Set<RecorderPermission>?, granted: Set<RecorderPermiss
 /** Permission prompts are a parked-only interaction (driving restrictions). */
 fun regrantPromptAllowed(missing: Set<RecorderPermission>, gear: GearPosition?): Boolean =
     missing.isNotEmpty() && gear == GearPosition.PARK
+
+/**
+ * Whether the car screen may show its full, touchable layout (driving restrictions): only when something says the
+ * car is parked. Park says so and any other gear says it is not. While the gear is not known (not reported yet, or
+ * a car without the property) the speed decides: a moving car is never parked. With neither known nothing says the
+ * car is moving, which is the first run before the speed grant, where the setup has to be reachable.
+ */
+fun screenParked(gear: GearPosition?, kmh: Float?): Boolean = when (gear) {
+    GearPosition.PARK -> true
+    null, GearPosition.UNKNOWN -> kmh == null || kmh < Tuning.STILL_SPEED_KMH
+    else -> false
+}

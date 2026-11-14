@@ -64,7 +64,7 @@ import com.americankimchilabs.whitebox.domain.EscalationLevel
 import com.americankimchilabs.whitebox.domain.GearPosition
 import com.americankimchilabs.whitebox.domain.TurnSignalState
 import com.americankimchilabs.whitebox.domain.VehicleSignal
-import com.americankimchilabs.whitebox.domain.regrantPromptAllowed
+import com.americankimchilabs.whitebox.domain.screenParked
 import com.americankimchilabs.whitebox.platform.recorderGrants
 import com.americankimchilabs.whitebox.recorder.ActiveSession
 import com.americankimchilabs.whitebox.platform.DataConsent
@@ -116,6 +116,8 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
         val head = withContext(Dispatchers.IO) { session.store.head() }
         if (head != null) {
             val recent = withContext(Dispatchers.IO) { session.store.read(maxOf(0, head.lastSeq - 2_000), head.lastSeq) }
+            // The gear's last change can be older than these records (a long drive in D): the recorder remembers it.
+            recorder.currentStates().forEach { live = live.with(it) }
             recent.forEach { live = live.with(it.entry) }
             rows += recent.filter { labels.row(it.entry) != null && filter.shows(it.entry) }.takeLast(TIMELINE_ROWS).reversed()
         }
@@ -151,7 +153,7 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
         val now = System.currentTimeMillis()
         allCapsules.filter { byId[it.capsule.id]?.visible(now) ?: true }
     }
-    val parked = live.gear == null || live.gear == GearPosition.PARK
+    val parked = screenParked(live.gear, live.kmh)
     var open by remember(session) { mutableStateOf<CapsuleSeal?>(null) }
     var tab by remember { mutableIntStateOf(0) }
     // The first-run setup returns at every start until it is finished (every grant given, the ready screen passed).
@@ -194,7 +196,7 @@ fun WhiteBoxApp(session: ActiveSession?, onSource: (SourceMode) -> Unit, onGrant
             }
             return@Column
         }
-        if (regrantPromptAllowed(missing, live.gear ?: GearPosition.PARK) && !regrantLater) {
+        if (missing.isNotEmpty() && !regrantLater) { // parked: the driving layout returned above
             RegrantBanner(missing.joinToString { labels.permission(it) }, onAllow = { setup = SetupMode.REGRANT }, onLater = { regrantLater = true })
         }
         if (handoverSheet && handoverPhase == HandoverPhase.OFF) {

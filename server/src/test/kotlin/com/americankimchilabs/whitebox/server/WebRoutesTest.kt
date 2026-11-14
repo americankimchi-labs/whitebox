@@ -130,6 +130,12 @@ class WebRoutesTest {
         }
         assertEquals(401, client.get("/v1/records?device=car1&stream=live&kind=L&last=5") { header("Cookie", "wb_contact=$token") }.status.value)
         assertEquals(401, client.get("/v1/drives?device=car1&stream=live") { header("Cookie", "wb_contact=$token") }.status.value)
+        // Each opening is on the car's log for its owner, although the server held no key for either crash.
+        assertEquals(listOf("C0", "C21"), car.service.log(car.stream, OPENED).map { it.substringAfterLast('|') })
+        // The owner opening their own record is nobody else's business: nothing is added.
+        val owner = car.login(Identity.OWNER, buyer)
+        assertTrue("\"records\"" in client.get("/v1/capsule?device=car1&stream=live&id=C21") { header("Cookie", "wb_owner=$owner") }.bodyAsText())
+        assertEquals(2, car.service.log(car.stream, OPENED).size)
     }
 
     @Test

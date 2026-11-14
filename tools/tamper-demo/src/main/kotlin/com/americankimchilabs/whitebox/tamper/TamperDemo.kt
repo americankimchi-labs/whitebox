@@ -66,7 +66,13 @@ private fun checkEvidence(file: File) {
     println("White Box 증거 파일 검증 / evidence file check")
     println("  파일: ${file.path}  ·  보관 기록 ${r.capsuleId} ${r.trigger}  #${r.firstSeq}–#${r.lastSeq}")
     println("  체인: ${if (r.chainOk) "[PASS] 기록 ${r.recordsChecked}건 해시·연결 일치" else "[FAIL] ${r.chainProblem}"}")
-    println("  차량 봉인: ${if (r.seals > 0 && r.sealsValid == r.seals) "[PASS]" else "[FAIL]"} ${r.sealsValid}/${r.seals}건 서명 유효, 헤드 일치")
+    // A crash whose car went silent carries the server's seal in place of the car's.
+    if (r.seals > 0 || r.serverSeals == 0) {
+        println("  차량 봉인: ${if (r.seals > 0 && r.sealsValid == r.seals) "[PASS]" else "[FAIL]"} ${r.sealsValid}/${r.seals}건 서명 유효, 헤드 일치")
+    }
+    if (r.serverSeals > 0) {
+        println("  서버 봉인: ${if (r.serverSealsValid == r.serverSeals) "[PASS]" else "[FAIL]"} ${r.serverSealsValid}/${r.serverSeals}건 서명 유효, 헤드 일치 (차가 연결이 끊겨 서버가 대신 봉인한 기록)")
+    }
     println("  서버 서명: ${if (r.anchorsValid == r.anchors) "[PASS]" else "[FAIL]"} ${r.anchorsValid}/${r.anchors}건")
     println("  열린 기록: ${r.opened}건 (파일 안의 열쇠로)")
     println(if (r.ok) "  결과: 원본 그대로입니다 / original, unaltered" else "  결과: 원본과 다릅니다 / NOT the original")

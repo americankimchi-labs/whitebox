@@ -245,6 +245,16 @@ class MirrorServiceTest {
         // The family's page shows what the server could read of it: the crash-signal copies, not the locked records.
         val c = r.service.capsules(s.stream!!).single()
         assertTrue(r.service.signalCopies(s.stream!!, c.firstSeq, c.lastSeq).any { it.second.startsWith("S|SPEED|") })
+        // Its evidence file, put together as the phone does, checks with the stand-alone verifier although no car
+        // seal exists: the server's seal stands in, and a file without it does not pass.
+        val evidence = listOf("WHITEBOX-EVIDENCE|1", "CAPSULE|${c.id}|${c.trigger}|${c.firstSeq}|${c.lastSeq}|${s.stream!!.deviceId}|${s.stream!!.stream}", "ATTESTATION|${c.attestation}") +
+            r.service.anchorsCovering(s.stream!!, c.lastSeq).map { "ANCHOR|$it" } +
+            ("SERVERKEY|" + java.util.Base64.getEncoder().encodeToString(r.service.serverPublicKey())) +
+            r.service.recordLines(s.stream!!, maxOf(0, c.firstSeq - 1), c.lastSeq).map { "RECORD|$it" }
+        val checked = com.americankimchilabs.whitebox.data.EvidenceFile.verify(evidence.joinToString("\n"))
+        assertTrue(checked.ok)
+        assertEquals(0 to 1, checked.seals to checked.serverSealsValid)
+        assertFalse(com.americankimchilabs.whitebox.data.EvidenceFile.verify(evidence.filterNot { it.startsWith("ATTESTATION|") }.joinToString("\n")).ok)
     }
 
     @Test

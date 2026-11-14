@@ -54,6 +54,9 @@ interface StreamStore {
 
     fun log(stream: StreamId, log: String): List<String>
 
+    /** Removes the lines of [log] that [gone] names (retention); returns how many went. */
+    fun removeLogLines(stream: StreamId, log: String, gone: (String) -> Boolean): Int
+
     fun streams(): List<StreamId>
 
     /** A pseudonymous capsule window (already encrypted at rest); not tied to any stream. */
@@ -212,6 +215,15 @@ class DurableStreamStore(private val durable: Durable) : StreamStore {
 
     @Synchronized
     override fun log(stream: StreamId, log: String): List<String> = durable.lines(path(stream, log))
+
+    @Synchronized
+    override fun removeLogLines(stream: StreamId, log: String, gone: (String) -> Boolean): Int {
+        val lines = durable.lines(path(stream, log))
+        val kept = lines.filterNot(gone)
+        // Replaced whole (a crash leaves the old or the new one).
+        if (kept.size < lines.size) durable.replace(path(stream, log), kept)
+        return lines.size - kept.size
+    }
 
     @Synchronized
     override fun streams(): List<StreamId> = (

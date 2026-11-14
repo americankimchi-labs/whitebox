@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.Closeable
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "WhiteBox/AAOS"
 
@@ -77,11 +78,13 @@ class CarPropertySignalSource(
     }
 
     override fun samples(): Flow<SignalSample> = callbackFlow {
+        val gearReported = AtomicBoolean(false)
         val callback = object : CarPropertyManager.CarPropertyEventCallback {
             override fun onChangeEvent(value: CarPropertyValue<*>) {
                 // Stamp receive time first; value.timestamp is the VHAL event time (elapsedRealtimeNanos).
                 val receivedAt = clock.now()
                 if (value.status != CarPropertyValue.STATUS_AVAILABLE) return
+                if (value.propertyId == VehiclePropertyIds.GEAR_SELECTION) gearReported.set(true)
                 val signal = when (value.propertyId) {
                     VehiclePropertyIds.PERF_VEHICLE_SPEED -> VehicleSignal.Speed(value.value as Float)
                     VehiclePropertyIds.GEAR_SELECTION -> VehicleSignal.Gear(gearOf(value.value as Int))
@@ -108,6 +111,15 @@ class CarPropertySignalSource(
                     Log.w(TAG, "CAR_SPEED not granted; speed disabled")
                 }
                 p.registerCallback(callback, VehiclePropertyIds.GEAR_SELECTION, CarPropertyManager.SENSOR_RATE_ONCHANGE)
+                // An on-change subscription is not bound to report the value it starts with (on a freshly booted
+                // Pleos Connect emulator it says nothing until the gear first moves), and a recorder that never
+                // heard the gear would not know whether the car is parked. Read it once, unless the subscription
+                // has already said it.
+                if (!gearReported.get()) {
+                    runCatching { p.getProperty<Any>(VehiclePropertyIds.GEAR_SELECTION, 0) }
+                        .onFailure { Log.w(TAG, "gear at start not readable: ${it.message}") }
+                        .getOrNull()?.let { if (!gearReported.get()) callback.onChangeEvent(it) }
+                }
                 for (id in listOf(VehiclePropertyIds.IGNITION_STATE, VehiclePropertyIds.PARKING_BRAKE_ON)) {
                     if (p.getCarPropertyConfig(id) != null) p.registerCallback(callback, id, CarPropertyManager.SENSOR_RATE_ONCHANGE)
                 }

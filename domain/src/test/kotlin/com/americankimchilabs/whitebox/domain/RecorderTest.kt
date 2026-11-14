@@ -89,4 +89,24 @@ class RecorderTest {
         assertFalse(regrantPromptAllowed(missing, null))
         assertFalse(regrantPromptAllowed(emptySet(), GearPosition.PARK))
     }
+
+    @Test
+    fun theFullScreenIsShownOnlyWhenSomethingSaysTheCarIsParked() {
+        assertTrue(screenParked(GearPosition.PARK, 0f))
+        assertTrue(screenParked(GearPosition.PARK, null))
+        // Any other gear is driving, even standing at a light.
+        for (gear in listOf(GearPosition.DRIVE, GearPosition.REVERSE, GearPosition.NEUTRAL, GearPosition.MANUAL)) {
+            assertFalse(screenParked(gear, 0f))
+            assertFalse(screenParked(gear, 13.9f))
+            assertFalse(screenParked(gear, null))
+        }
+        // Gear not known: a moving car is never treated as parked.
+        assertFalse(screenParked(null, 40f))
+        assertFalse(screenParked(null, 1f))
+        assertFalse(screenParked(GearPosition.UNKNOWN, 40f))
+        assertTrue(screenParked(null, 0f))
+        assertTrue(screenParked(GearPosition.UNKNOWN, 0.5f))
+        // Neither known (first run, before the speed grant): the setup must be reachable.
+        assertTrue(screenParked(null, null))
+    }
 }

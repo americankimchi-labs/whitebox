@@ -86,4 +86,28 @@ class CarriedStateTest {
         assertEquals(entry, EntryCodec.decode(sealed, cipher))
         assertEquals(entry.at, EntryCodec.timestamp(sealed))
     }
+
+    @Test
+    fun theRecorderRemembersTheGearThroughADriveLongerThanAnyRecentStretchOfTheChain() = runTest {
+        val dir = tmp.newFolder()
+        val store = FileEventStore(dir)
+        val recorder = Recorder(store, SealStore(dir), JdkSigner(), clock)
+
+        recorder.at(0, VehicleSignal.Gear(GearPosition.DRIVE))
+        recorder.at(10, VehicleSignal.BrakePedal(false))
+        // Ten minutes in D with the speed changing ten times a second: thousands of records since the gear moved.
+        var ms = 1_000L
+        while (ms < 600_000) { recorder.at(ms, VehicleSignal.Speed((50f + (ms / 100) % 7) / 3.6f)); ms += 100 }
+
+        val head = store.head()!!.lastSeq
+        assertTrue(head > 4_000)
+        // What a screen opened now would read back holds no gear record…
+        assertTrue(store.read(head - 2_000, head).none { (it.entry as? ChainEntry.Signal)?.sample?.signal is VehicleSignal.Gear })
+        // …but the recorder still knows the gear and the pedal, with their newest values.
+        val states = recorder.currentStates()
+        assertTrue(VehicleSignal.Gear(GearPosition.DRIVE) in states)
+        assertTrue(VehicleSignal.BrakePedal(false) in states)
+        recorder.at(600_000, VehicleSignal.Gear(GearPosition.NEUTRAL))
+        assertEquals(listOf(GearPosition.NEUTRAL), recorder.currentStates().filterIsInstance<VehicleSignal.Gear>().map { it.position })
+    }
 }

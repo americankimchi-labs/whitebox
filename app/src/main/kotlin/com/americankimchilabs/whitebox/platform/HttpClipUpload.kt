@@ -13,7 +13,8 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Uploads a clip the car attached by itself (built-in camera) to `<base>/v1/car/clips`, signed with the device key.
- * Ready for the day a head unit gives apps camera access; until then nothing produces clips for it.
+ * The recording service uses it as soon as the platform adapter has a camera source; until a head unit gives apps
+ * camera access there is none, so nothing is uploaded.
  */
 class HttpClipUpload(private val base: String, private val deviceId: String, private val stream: String) : ClipUpload {
     private val client = OkHttpClient.Builder().writeTimeout(5, TimeUnit.MINUTES).build()

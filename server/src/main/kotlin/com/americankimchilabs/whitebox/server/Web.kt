@@ -388,7 +388,9 @@ fun Route.phoneRoutes(service: MirrorService, identity: Identity) {
             ?: return@get call.fail("기록을 찾을 수 없습니다.")
         val wantsKeys = access.contact != null || q["keys"] == "1"
         val keys = if (wantsKeys && c.severe) service.minuteKeys(stream, c.id) else emptyList()
-        if (keys.isNotEmpty()) access.contactFor(c.epochs)?.let { service.logOpened(stream, it.id, c.id) }
+        // Whatever a contact is handed (the escrowed keys, or only the signal copies of a crash this server sealed
+        // because the car went silent), the owner sees that they opened it.
+        if (access.contact != null) access.contactFor(c.epochs)?.let { service.logOpened(stream, it.id, c.id) }
         call.json(
             obj(
                 "capsule" to capsuleJson(service, stream, c),

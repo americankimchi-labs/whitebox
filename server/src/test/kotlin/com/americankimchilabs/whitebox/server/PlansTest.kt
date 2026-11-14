@@ -3,6 +3,8 @@ package com.americankimchilabs.whitebox.server
 import com.americankimchilabs.whitebox.data.CapsuleSeal
 import com.americankimchilabs.whitebox.data.FileEventStore
 import com.americankimchilabs.whitebox.data.MirrorProtocol
+import com.americankimchilabs.whitebox.data.SealedBox
+import com.americankimchilabs.whitebox.data.EntryCodec
 import com.americankimchilabs.whitebox.data.MirrorProtocol.Frame
 import com.americankimchilabs.whitebox.data.SealStore
 import com.americankimchilabs.whitebox.data.Signer
@@ -94,6 +96,31 @@ class PlansTest {
         r.service.retain(s.stream!!)
         assertTrue(r.store.records(s.stream!!, 20, 25).isEmpty())
         assertEquals(2, r.store.records(s.stream!!, 30, 31).size)
+    }
+
+    @Test
+    fun theServersReadableCopiesGoWithTheRecordsTheyBelongTo() {
+        val r = Rig(Tier.FREE)
+        r.drive(240) // ten days, one record an hour
+        val (s, _) = r.connect()
+        s.send(Frame.Batch(EscalationLevel.NORMAL, r.chain.records(0, 239)))
+        // Danger moments on the first day (10..12), inside a moment that is kept (22) and yesterday (230): each
+        // record came with a copy this server can read.
+        for (seq in listOf(10L, 11L, 12L, 22L, 230L)) {
+            val plain = EntryCodec.encode(r.chain.read(seq, seq).single().entry)
+            s.send(Frame.Event(EscalationLevel.ALERT, r.chain.records(seq, seq).single(), SealedBox.seal(r.service.serverPublicKey(), plain.toByteArray(), SealedBox.INFO_SERVER)))
+        }
+        s.send(r.seal("moment", CapsuleTrigger.EVASIVE_STEER, 20, 25, r.start + 21 * 3_600_000))
+        assertEquals(listOf(10L, 11L, 12L, 22L, 230L), r.service.signalCopies(s.stream!!, 0, 239).map { it.first })
+        r.now = r.wall + 60_000
+
+        r.service.retain(s.stream!!)
+        // Free keeps seven days: the first day's copies go with its records; the kept moment's and the recent one stay.
+        assertEquals(listOf(22L, 230L), r.service.signalCopies(s.stream!!, 0, 239).map { it.first })
+        // Past thirty days the moment expires, and its copy with it.
+        r.now = r.start + 60 * DAY_MS
+        r.service.retain(s.stream!!)
+        assertTrue(r.service.signalCopies(s.stream!!, 0, 239).isEmpty())
     }
 
     @Test
