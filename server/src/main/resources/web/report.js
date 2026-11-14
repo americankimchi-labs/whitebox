@@ -305,84 +305,98 @@
     : '차량 기록에 위치가 없습니다';
 
   /**
-   * 「교통사고 발생상황 진술서」: the statement a driver writes for the police, laid out with that form's own items
-   * (who, the pre-printed sentence with the date, time and place, the free statement, the sketch, date and signature).
-   * The date and time come from the record; the statement starts as a draft of what the car recorded, under the points
-   * an investigator asks about, for the person to check, correct and continue in their own words. Names, numbers and
-   * addresses are never known to the app: those stay blank.
+   * 「교통사고 발생상황 진술서」: the statement a driver writes for the police, with that form's own printed items in
+   * its own order (who; name, resident number, address, telephone, licence, occupation, sex; the pre-printed sentence
+   * with the date, time and place; the ruled lines; date, signature and the officer's line; the sketch on the back).
+   * The date and time come from the record, and the lines start with what the car recorded, marked as such, for the
+   * person to check, correct and continue in their own words. Names, numbers and addresses are never known to the app.
    */
   function statement(m) {
     const t = stamp(m.causeWall);
     return `<section class="form police">
-      <h1>교통사고 발생상황 진술서</h1>
       <p class="hint noprint">경찰에 내는 진술서의 항목 그대로입니다. 날짜와 시각, 차량 기록에서 옮긴 내용은 채워 두었습니다. 확인하고 고친 뒤 나머지를 직접 적어 주세요.</p>
       <table class="grid">
-        <tr><th>구분</th><td colspan="3">□ 가해자 &nbsp; □ 피해자 &nbsp; □ 목격자 &nbsp; □ 참고인 &nbsp; □ 기타관계자</td></tr>
-        <tr><th>성명(한자)</th><td></td><th>주민등록번호</th><td></td></tr>
-        <tr><th>주소</th><td colspan="3"></td></tr>
-        <tr><th>전화번호</th><td>(휴대) &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; (자택)</td><th>성별</th><td>□ 남 &nbsp; □ 여</td></tr>
-        <tr><th>운전면허번호</th><td></td><th>직업</th><td></td></tr>
+        <tr><td colspan="4" class="title"><h1>교통사고 발생상황 진술서</h1>□ 가해자 &nbsp; □ 피해자 &nbsp; □ 목격자 &nbsp; □ 참고인 &nbsp; □ 기타관계자</td></tr>
+        <tr><th>성 명</th><td>${blank(5)} 한자(${blank(4)})</td><th>주민번호</th><td></td></tr>
+        <tr><th>주 소</th><td></td><th>전화번호</th><td>휴대<br>자택</td></tr>
+        <tr><th>운전면허번호</th><td></td><th>직업</th><td>${blank(4)} &nbsp; 남 □ &nbsp; 여 □</td></tr>
       </table>
-      <p class="sentence">위 본인은 <b>${t.y}. ${t.mo}. ${t.d}. ${t.h}:${t.mi}</b>경 ${blank(5)}시(구) ${blank(5)}동 ${blank(4)}번지 앞 지점에서 발생한 교통사고에 대하여 다음과 같이 임의로 진술합니다.</p>
+      <p class="sentence">위 본인은 <b>${t.y}. ${t.mo}. ${t.d}. ${t.h}:${t.mi}</b>경 ${blank(4)}시(구) ${blank(4)}동 ${blank(3)}번지 ${blank(6)} 앞 지점에서 발생한 교통사고에 대하여 다음과 같이 임의로 진술하다. (뒷면에 사고모습을 그려주세요)</p>
       <p class="hint">${esc(where(m))}</p>
-      <h2>진술 내용</h2>
-      <p class="hint">차량 기록에서 옮긴 내용 (화이트박스가 차에서 기록하고 봉인한 값. 사실과 다르면 고쳐 주세요)</p>
+      <p class="hint">차량 기록에서 옮긴 내용 (화이트박스가 차에서 기록하고 봉인한 값입니다. 사실과 다르면 고쳐 주세요)</p>
       ${draft(m)}
       <p class="hint">이어서 직접 적어 주세요: 진로와 속도, 상대를 발견한 때와 위치, 급제동·감속 등 사고를 피하려고 한 조치, 부딪힌 지점과 멈춘 지점.</p>
-      <div class="lines">${'<div></div>'.repeat(8)}</div>
-      <h2>사고 모습 (직접 그려 주세요)</h2>
+      <div class="lines">${'<div></div>'.repeat(7)}</div>
+      <p class="foot">진술일시&nbsp;:&nbsp;20${blank(2)}.&nbsp;${blank(2)}.&nbsp;${blank(2)}. &nbsp; &nbsp; 진술인&nbsp;${blank(8)}&nbsp;(서명날인)</p>
+      <p class="foot">조사경찰관 &nbsp; 소속 ${blank(6)} 경찰서 &nbsp; 계급 ${blank(4)} &nbsp; 성명 ${blank(6)} ㊞</p>
+      <h2 class="back">사고모습 (뒷면)</h2>
       <div class="sketch"></div>
-      <table class="grid sign">
-        <tr><th>진술일시</th><td>20${blank(2)}. ${blank(2)}. ${blank(2)}. ${blank(2)}:${blank(2)}</td><th>진술인</th><td>${blank(8)} (서명 또는 날인)</td></tr>
-        <tr><th>조사경찰관</th><td colspan="3">소속 ${blank(7)} 계급 ${blank(5)} 성명 ${blank(6)} (경찰 기재)</td></tr>
-      </table>
       <p class="hint">첨부: 차량 운행 기록 (화이트박스, 다음 장)</p>
     </section>`;
   }
 
   /**
-   * An accident report for the driver's own insurer. Insurers have no common form, so this one carries the items the
-   * policy's 사고발생 시 의무 clause says must be told (when, where, what happened, the damage; both parties; witnesses;
-   * any claim received) together with what insurers' own claim forms ask (policy, car, driver, police report, sketch).
-   * The time and the record's reading of what happened are filled in; the rest is the person's.
+   * An accident report for the driver's own insurer. Insurers have no common form, so this one is the union of what
+   * the large insurers' own claim forms print (car and insured, driver and licence, date, place, direction, how it
+   * happened, sketch, police report, the injured, damaged property and repairs, claimant) and of what the policy's
+   * 사고발생 시 의무 clause says must be told (when, where, what happened and the damage; both parties; witnesses; any
+   * claim received). The time and the record's reading of what happened are filled in; the rest is the person's.
    */
   function claim(m) {
     const t = stamp(m.causeWall);
     return `<section class="form insurer">
       <h1>자동차 사고 접수서</h1>
-      <p class="sub">보험회사 제출용 · 화이트박스 양식 (자동차보험 약관 「사고발생 시 의무」에서 알리도록 한 사항)</p>
-      <p class="hint noprint">보험회사마다 청구서 양식이 달라, 약관이 공통으로 알리도록 한 사항을 한 장에 모았습니다. 그대로 내거나 보험회사 양식에 옮겨 적을 때 쓰세요.</p>
-      <h2>① 계약과 차량</h2>
+      <p class="sub">보험회사 제출용 · 화이트박스 양식</p>
+      <p class="hint noprint">보험회사마다 청구서 양식이 달라, 주요 보험회사 청구서의 항목과 자동차보험 약관 「사고발생 시 의무」가 알리도록 한 사항을 한 문서에 모았습니다. 그대로 내거나 보험회사 양식에 옮겨 적을 때 쓰세요.</p>
+      <h2>① 사고 차량과 피보험자</h2>
       <table class="grid">
         <tr><th>보험회사</th><td></td><th>증권번호</th><td></td></tr>
-        <tr><th>계약자(피보험자)</th><td></td><th>연락처</th><td></td></tr>
-        <tr><th>차량번호</th><td></td><th>운전자 (관계)</th><td></td></tr>
-        <tr><th>운전면허번호</th><td colspan="3"></td></tr>
+        <tr><th>차량번호</th><td></td><th>차명 (연식)</th><td></td></tr>
+        <tr><th>피보험자</th><td></td><th>연락처 · E-mail</th><td></td></tr>
+        <tr><th>실제 소유자</th><td>${blank(5)} (관계: ${blank(3)})</td><th>차량의 용도</th><td></td></tr>
       </table>
-      <h2>② 사고가 발생한 때, 곳, 상황, 손해의 정도</h2>
+      <h2>② 운전자</h2>
       <table class="grid">
-        <tr><th>사고 일시</th><td colspan="3"><b>${t.y}년 ${t.mo}월 ${t.d}일 ${t.h}시 ${t.mi}분</b> (차량 기록)</td></tr>
-        <tr><th>사고 장소</th><td colspan="3">${blank(18)}<br><span class="hint">${esc(where(m))}</span></td></tr>
-        <tr><th>사고 상황</th><td colspan="3"><span class="hint">차량 기록에서 옮긴 내용 (사실과 다르면 고쳐 주세요)</span>${draft(m)}<span class="hint">누가, 언제, 어디서, 무엇을, 어떻게, 왜: 이어서 직접 적어 주세요.</span><div class="lines">${'<div></div>'.repeat(4)}</div></td></tr>
-        <tr><th>손해의 정도</th><td colspan="3">내 차 파손 부위: ${blank(12)}<br>상대 차·물건: ${blank(13)}<br>다친 사람: ${blank(14)}</td></tr>
+        <tr><th>성명</th><td></td><th>소유자와의 관계</th><td></td></tr>
+        <tr><th>주민등록번호</th><td></td><th>연락처</th><td></td></tr>
+        <tr><th>면허번호</th><td></td><th>면허종별 · 유효기간</th><td>${blank(3)}종 · ${blank(6)}까지</td></tr>
       </table>
-      <h2>③ 피해자와 가해자</h2>
+      <h2>③ 사고가 발생한 때, 곳, 상황</h2>
       <table class="grid">
-        <tr><th>구분</th><th>성명</th><th>주소</th><th>전화번호</th><th>차량번호 · 보험회사</th></tr>
-        <tr><td>□ 피해자 □ 가해자</td><td></td><td></td><td></td><td></td></tr>
-        <tr><td>□ 피해자 □ 가해자</td><td></td><td></td><td></td><td></td></tr>
+        <tr><th>사고일시</th><td colspan="3"><b>${t.y}년 ${t.mo}월 ${t.d}일 ${t.h}시 ${t.mi}분</b>경 (차량 기록)</td></tr>
+        <tr><th>사고장소</th><td colspan="3">${blank(18)}<br><span class="hint">${esc(where(m))}</span></td></tr>
+        <tr><th>진행방향</th><td colspan="3">(${blank(6)})방향에서 (${blank(6)})방향으로 진행 중</td></tr>
+        <tr><th>사고경위</th><td colspan="3"><span class="hint">차량 기록에서 옮긴 내용 (사실과 다르면 고쳐 주세요)</span>${draft(m)}<span class="hint">누가, 언제, 어디서, 무엇을, 어떻게, 왜: 이어서 직접 적어 주세요.</span><div class="lines">${'<div></div>'.repeat(4)}</div></td></tr>
+        <tr><th>경찰서 신고</th><td colspan="3">□ 유 (${blank(6)}경찰서) &nbsp; □ 무</td></tr>
       </table>
-      <h2>④ 증인</h2>
-      <table class="grid"><tr><th>성명</th><td></td><th>전화번호</th><td></td></tr><tr><th>주소</th><td colspan="3"></td></tr></table>
-      <h2>⑤ 손해배상 청구를 받은 내용</h2>
-      <div class="lines">${'<div></div>'.repeat(2)}</div>
-      <h2>⑥ 경찰 신고</h2>
-      <table class="grid"><tr><th>신고 여부</th><td>□ 신고함 &nbsp; □ 신고하지 않음</td><th>관할 경찰서</th><td></td></tr></table>
-      <h2>⑦ 사고 약도와 파손 부위 (직접 그려 주세요)</h2>
+      <h2>사고현장 약도 (직접 그려 주세요)</h2>
       <div class="sketch small"></div>
+      <p class="hint">내 차 · 상대 차 · 이륜차/자전거 · 사람 · 진행방향을 표시해 주세요.</p>
+      <h2>④ 피해자와 가해자, 손해의 정도</h2>
+      <table class="grid">
+        <tr><th>피해자</th><td colspan="3">성명 ${blank(6)} 외 ${blank(2)}명 &nbsp; 전화번호 ${blank(8)}<br>주소 ${blank(18)}<br>치료병원 ${blank(8)} (Tel: ${blank(7)})</td></tr>
+        <tr><th>가해자</th><td colspan="3">성명 ${blank(6)} &nbsp; 전화번호 ${blank(8)}<br>주소 ${blank(18)}<br>차량번호 ${blank(6)} &nbsp; 보험회사 ${blank(6)}</td></tr>
+        <tr><th>피해물</th><td colspan="3">차량번호(기타) ${blank(8)} 외 ${blank(2)}대 &nbsp; 수리처 ${blank(8)}</td></tr>
+        <tr><th>피해상황</th><td colspan="3">본인 차량 파손 부위 ${blank(10)} (견인: 유 · 무)<br>상대 차량 파손 부위 ${blank(10)} (견인: 유 · 무)</td></tr>
+      </table>
+      <h2>⑤ 증인</h2>
+      <table class="grid"><tr><th>성명</th><td></td><th>전화번호</th><td></td></tr><tr><th>주소</th><td colspan="3"></td></tr></table>
+      <h2>⑥ 손해배상 청구를 받은 내용</h2>
+      <div class="lines">${'<div></div>'.repeat(2)}</div>
+      <h2>⑦ 일부 보험회사가 더 묻는 사항</h2>
+      <table class="grid">
+        <tr><th>도로 형태</th><td colspan="3">□ 직선도로 &nbsp; □ 골목길 &nbsp; □ 사거리 &nbsp; □ 삼거리 &nbsp; □ 기타</td></tr>
+        <tr><th>주행 차로</th><td>본인 ${blank(2)}차로 · 상대 ${blank(2)}차로</td><th>탑승 인원</th><td>내 차 운전자 외 ${blank(2)}명 · 상대 차 ${blank(2)}명</td></tr>
+        <tr><th>청구 담보</th><td colspan="3">□ 대인 &nbsp; □ 대물 &nbsp; □ 자기신체사고 &nbsp; □ 자기차량손해 &nbsp; □ 무보험차상해</td></tr>
+      </table>
       <h2>⑧ 함께 내는 자료</h2>
-      <p>☑ 차량 운행 기록 (화이트박스, 다음 장) &nbsp; □ 블랙박스 영상 &nbsp; □ 현장 사진 &nbsp; □ 기타 ${blank(8)}</p>
-      <table class="grid sign"><tr><th>작성일</th><td>20${blank(2)}. ${blank(2)}. ${blank(2)}.</td><th>작성자</th><td>${blank(8)} (서명)</td></tr></table>
+      <p>☑ 차량 운행 기록 (화이트박스, 다음 장) &nbsp; □ 블랙박스 영상 &nbsp; □ 현장 사진 &nbsp; □ 교통사고 사실 확인원 &nbsp; □ 기타 ${blank(6)}</p>
+      <table class="grid sign">
+        <tr><th>청구자 주소</th><td colspan="3"></td></tr>
+        <tr><th>성명</th><td>${blank(8)} (인)</td><th>피보험자와의 관계</th><td></td></tr>
+        <tr><th>작성일자</th><td colspan="3">20${blank(2)}.&nbsp;${blank(2)}.&nbsp;${blank(2)}.</td></tr>
+      </table>
+      <p class="hint">보험금을 받을 계좌와 위임장은 보험회사의 양식을 따릅니다.</p>
     </section>`;
   }
 

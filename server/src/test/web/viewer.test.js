@@ -206,16 +206,21 @@ test('the two documents carry the official items, the record\'s time and reading
   const m = { causeWall: wall, place: { lat: 37.4979, lon: 127.0276, acc: 5 }, readings: [{ text: '방향지시등(왼쪽)을 요청 17.9초 전에 켜서 5.1초 동안 켜 두었습니다.' }, { text: '<b>x</b>' }] };
   const police = Report.statement(m);
   assert.match(police, /<h1>교통사고 발생상황 진술서<\/h1>/);
-  for (const label of ['□ 가해자', '□ 피해자', '□ 목격자', '□ 참고인', '□ 기타관계자', '성명(한자)', '주민등록번호', '주소', '전화번호', '운전면허번호', '직업', '진술일시', '진술인', '조사경찰관']) assert.ok(police.includes(label), label);
+  // The official form's own printed items, in its order.
+  const printed = ['□ 가해자', '□ 피해자', '□ 목격자', '□ 참고인', '□ 기타관계자', '성 명', '한자(', '주민번호', '주 소', '전화번호', '휴대', '자택', '운전면허번호', '직업', '남 □', '여 □', '위 본인은', '진술일시', '진술인', '(서명날인)', '조사경찰관', '경찰서', '계급'];
+  let at = -1;
+  for (const label of printed) { const i = police.indexOf(label, at + 1); assert.ok(i > at, `${label} in order`); at = i; }
   assert.match(police, /위 본인은 <b>2026\. 11\. 14\. 20:06<\/b>경/, 'the date and time come from the record');
-  assert.match(police, /발생한 교통사고에 대하여 다음과 같이 임의로 진술합니다/);
+  assert.match(police, /앞 지점에서 발생한 교통사고에 대하여 다음과 같이 임의로 진술하다\. \(뒷면에 사고모습을 그려주세요\)/);
   assert.ok(police.includes('방향지시등(왼쪽)을 요청 17.9초 전에 켜서 5.1초 동안 켜 두었습니다.'), 'the car\'s readings are the draft');
   assert.ok(police.includes('&lt;b&gt;x&lt;/b&gt;') && !police.includes('<b>x</b>'), 'record text is never markup');
   assert.ok(police.includes('위도 37.49790, 경도 127.02760'));
   const insurer = Report.claim(m);
   // What the policy's 사고발생 시 의무 clause says must be told: when, where, what happened, the damage; both parties;
   // witnesses; any claim received.
-  for (const label of ['사고 일시', '사고 장소', '사고 상황', '손해의 정도', '피해자와 가해자', '증인', '손해배상 청구를 받은 내용', '경찰 신고', '보험회사', '증권번호', '차량번호', '운전면허번호', '작성자']) assert.ok(insurer.includes(label), label);
+  for (const label of ['사고가 발생한 때, 곳, 상황', '손해의 정도', '피해자', '가해자', '증인', '손해배상 청구를 받은 내용']) assert.ok(insurer.includes(label), label);
+  // And what the large insurers' own claim forms print.
+  for (const label of ['차량번호', '차명 (연식)', '피보험자', '실제 소유자', '소유자와의 관계', '주민등록번호', '면허번호', '면허종별', '사고일시', '사고장소', '진행방향', '사고경위', '사고현장 약도', '경찰서 신고', '치료병원', '피해물', '수리처', '피해상황', '견인', '청구자 주소', '피보험자와의 관계', '작성일자']) assert.ok(insurer.includes(label), label);
   assert.match(insurer, /2026년 11월 14일 20시 06분/);
   // A record without a place says so instead of leaving a made-up one.
   assert.ok(Report.statement({ ...m, place: null }).includes('차량 기록에 위치가 없습니다'));
